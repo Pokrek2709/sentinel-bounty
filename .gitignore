@@ -1,0 +1,20 @@
+# Dependencies and test output
+node_modules/
+coverage/
+.nyc_output/
+
+# Runtime reports and local state
+storage/
+*.log
+npm-debug.log*
+
+# Secrets and workstation configuration
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

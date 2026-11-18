@@ -1,0 +1,14 @@
+{
+  "target_id": "local-lab",
+  "program_name": "Local test fixture",
+  "authorization_reference": "LOCAL-LAB-ONLY",
+  "allowed_domains": ["example.test", "*.example.test"],
+  "excluded_domains": ["admin.example.test"],
+  "excluded_paths": ["/account/remove"],
+  "rate_limit": {
+    "requests_per_second": 2,
+    "concurrency": 2
+  },
+  "request_budget": 1000,
+  "requires_approval": true
+}

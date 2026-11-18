@@ -1,0 +1,50 @@
+{
+  "CWE-79": {
+    "name": "Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')",
+    "category": "XSS",
+    "typical_severity": "medium",
+    "remediation": "Context-aware output encoding, strict Content-Security-Policy (CSP), and input validation."
+  },
+  "CWE-89": {
+    "name": "Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')",
+    "category": "Injection",
+    "typical_severity": "high",
+    "remediation": "Use parameterized queries (prepared statements), ORM abstractions, and stored procedures."
+  },
+  "CWE-639": {
+    "name": "Authorization Bypass Through User-Controlled Key ('Insecure Direct Object Reference - IDOR')",
+    "category": "Broken Access Control",
+    "typical_severity": "high",
+    "remediation": "Implement record-level authorization checks validating current user session against the requested object ID."
+  },
+  "CWE-918": {
+    "name": "Server-Side Request Forgery (SSRF)",
+    "category": "SSRF",
+    "typical_severity": "high",
+    "remediation": "Enforce strict allowlists of remote domains/IPs, block private IP ranges (RFC 1918), and disable unnecessary URI schemes."
+  },
+  "CWE-22": {
+    "name": "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')",
+    "category": "File Handling",
+    "typical_severity": "high",
+    "remediation": "Use strict path normalization, verify resolved paths reside within the designated root directory, or use indirect file keys."
+  },
+  "CWE-200": {
+    "name": "Exposure of Sensitive Information to an Unauthorized Actor",
+    "category": "Information Disclosure",
+    "typical_severity": "medium",
+    "remediation": "Remove stack traces from production error responses, restrict access to backup files and config endpoints."
+  },
+  "CWE-942": {
+    "name": "Permissive Cross-origin Resource Sharing Policy",
+    "category": "Security Misconfiguration",
+    "typical_severity": "medium",
+    "remediation": "Avoid returning 'Access-Control-Allow-Origin: *' with 'Access-Control-Allow-Credentials: true'. Validate Origin headers against a strict whitelist."
+  },
+  "CWE-16": {
+    "name": "Configuration",
+    "category": "Security Misconfiguration",
+    "typical_severity": "low",
+    "remediation": "Enforce security hardening baselines, remove default credentials, and set protective HTTP headers (HSTS, CSP, X-Frame-Options)."
+  }
+}

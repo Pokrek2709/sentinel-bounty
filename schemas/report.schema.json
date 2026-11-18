@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SentinelBountyReport",
+  "type": "object",
+  "required": [
+    "report_id",
+    "target_id",
+    "program_name",
+    "generated_at",
+    "executive_summary",
+    "findings_summary",
+    "findings"
+  ],
+  "properties": {
+    "report_id": { "type": "string" },
+    "target_id": { "type": "string" },
+    "session_id": { "type": "string" },
+    "program_name": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "executive_summary": { "type": "string" },
+    "findings_summary": {
+      "type": "object",
+      "properties": {
+        "critical": { "type": "integer" },
+        "high": { "type": "integer" },
+        "medium": { "type": "integer" },
+        "low": { "type": "integer" },
+        "informational": { "type": "integer" },
+        "total": { "type": "integer" }
+      }
+    },
+    "scope_details": { "type": "object" },
+    "attack_surface_summary": { "type": "object" },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "finding.schema.json" }
+    },
+    "methodology": { "type": "string" }
+  }
+}

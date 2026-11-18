@@ -1,0 +1,75 @@
+{
+  "version": "API-Security-Top-10-2023",
+  "items": [
+    {
+      "id": "API1:2023",
+      "name": "Broken Object Level Authorization (BOLA)",
+      "description": "Object IDs manipulated in request to access unauthorized data",
+      "cwe": "CWE-639",
+      "severity": "high"
+    },
+    {
+      "id": "API2:2023",
+      "name": "Broken Authentication",
+      "description": "Compromised auth tokens, missing password complexity, credential stuffing",
+      "cwe": "CWE-287",
+      "severity": "high"
+    },
+    {
+      "id": "API3:2023",
+      "name": "Broken Object Property Level Authorization",
+      "description": "Mass assignment or excessive data exposure in object properties",
+      "cwe": "CWE-915",
+      "severity": "medium"
+    },
+    {
+      "id": "API4:2023",
+      "name": "Unrestricted Resource Consumption",
+      "description": "Missing rate limiting or resource consumption bounds",
+      "cwe": "CWE-770",
+      "severity": "medium"
+    },
+    {
+      "id": "API5:2023",
+      "name": "Broken Function Level Authorization (BFLA)",
+      "description": "User can call administrative or higher-privileged functions",
+      "cwe": "CWE-285",
+      "severity": "high"
+    },
+    {
+      "id": "API6:2023",
+      "name": "Unrestricted Access to Sensitive Business Flows",
+      "description": "Automated exploitation of business flows (scalping, scraping)",
+      "cwe": "CWE-799",
+      "severity": "medium"
+    },
+    {
+      "id": "API7:2023",
+      "name": "Server Side Request Forgery (SSRF)",
+      "description": "API fetches remote resources from user-supplied URLs without validation",
+      "cwe": "CWE-918",
+      "severity": "high"
+    },
+    {
+      "id": "API8:2023",
+      "name": "Security Misconfiguration",
+      "description": "Verbose error messages, unnecessary HTTP methods, loose CORS",
+      "cwe": "CWE-16",
+      "severity": "medium"
+    },
+    {
+      "id": "API9:2023",
+      "name": "Improper Inventory Management",
+      "description": "Deprecated or shadow API endpoints exposed to the public",
+      "cwe": "CWE-1059",
+      "severity": "medium"
+    },
+    {
+      "id": "API10:2023",
+      "name": "Unsafe Consumption of APIs",
+      "description": "Trusting third-party APIs without proper data sanitization",
+      "cwe": "CWE-20",
+      "severity": "medium"
+    }
+  ]
+}

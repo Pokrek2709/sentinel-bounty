@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SentinelBountyTarget",
+  "type": "object",
+  "required": [
+    "target_id",
+    "program_name",
+    "allowed_domains",
+    "authorization_reference"
+  ],
+  "properties": {
+    "target_id": {
+      "type": "string",
+      "description": "Unique identifier for the target"
+    },
+    "program_name": {
+      "type": "string",
+      "description": "Authorized Bug Bounty Program name"
+    },
+    "authorization_reference": {
+      "type": "string",
+      "description": "Reference or URL proving authorization to test"
+    },
+    "allowed_domains": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of domains and wildcards in-scope (e.g. example.com, *.example.com)"
+    },
+    "excluded_domains": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Explicitly excluded subdomains or domains"
+    },
+    "allowed_cidrs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Allowed IP CIDR blocks (e.g. 192.168.1.0/24)"
+    },
+    "allowed_urls": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Specific URLs or endpoints in scope"
+    },
+    "excluded_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Specific URL paths excluded from testing (e.g. /logout, /delete-account)"
+    },
+    "allowed_methods": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["passive_recon", "dns_resolution", "http_probing", "crawling", "safe_scanning", "active_scanning"]
+      },
+      "default": ["passive_recon", "dns_resolution", "http_probing", "crawling", "safe_scanning"]
+    },
+    "rate_limit": {
+      "type": "object",
+      "properties": {
+        "requests_per_second": { "type": "number", "exclusiveMinimum": 0, "default": 2 },
+        "concurrency": { "type": "integer", "minimum": 1, "maximum": 2, "default": 2 }
+      },
+      "default": { "requests_per_second": 2, "concurrency": 2 }
+    },
+    "request_budget": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000,
+      "default": 1000,
+      "description": "Maximum number of total HTTP requests allowed for the session"
+    },
+    "requires_approval": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether active scanning or state-changing requests need user confirmation"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

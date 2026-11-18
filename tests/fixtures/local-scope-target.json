@@ -1,0 +1,8 @@
+{
+  "target_id": "local-lab",
+  "program_name": "Local test fixture",
+  "authorization_reference": "LOCAL-LAB-ONLY",
+  "allowed_domains": ["example.test", "*.example.test"],
+  "excluded_domains": ["admin.example.test"],
+  "excluded_paths": ["/account/remove"]
+}

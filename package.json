@@ -1,0 +1,29 @@
+{
+  "name": "sentinel-bounty",
+  "version": "1.0.0",
+  "description": "AI-Powered Bug Bounty Research Assistant - Modular multi-agent security tooling and research engine",
+  "main": "src/index.js",
+  "bin": {
+    "sentinel": "./bin/sentinel.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "cli": "node bin/sentinel.js",
+    "check-env": "node bin/sentinel.js check-env",
+    "check": "npm test"
+  },
+  "keywords": [
+    "bug-bounty",
+    "security",
+    "ai-agent",
+    "reconnaissance",
+    "vulnerability-assessment",
+    "cvss",
+    "owasp"
+  ],
+  "author": "Sentinel Bounty Team",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

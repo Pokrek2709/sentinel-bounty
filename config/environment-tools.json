@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "checker": {
+    "network_probe": false,
+    "security_tool_execution": false,
+    "probe_directory": "storage"
+  },
+  "tools": ["docker", "subfinder", "dnsx", "httpx", "katana"]
+}
