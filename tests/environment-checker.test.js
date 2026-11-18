@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { checkCommand, checkStorage, runEnvironmentCheck } = require('../src/environment/checker');
+const { checkCommand, checkFirstAvailableCommand, checkStorage, runEnvironmentCheck } = require('../src/environment/checker');
 
 test('reports unavailable when a command cannot be found', async () => {
   const result = await checkCommand('missing', 'missing', [], async () => {
@@ -12,6 +12,23 @@ test('reports unavailable when a command cannot be found', async () => {
     throw error;
   });
   assert.equal(result.status, 'unavailable');
+});
+
+test('uses python3 when python is unavailable', async () => {
+  const result = await checkFirstAvailableCommand('Python', [['python', ['--version']], ['python3', ['--version']]], async (command) => {
+    if (command === 'python') {
+      const error = new Error('not found');
+      error.code = 'ENOENT';
+      throw error;
+    }
+    return 'Python 3.12.3';
+  });
+  assert.equal(result.status, 'verified');
+  assert.equal(result.detail.command, 'python3');
+  assert.deepEqual(result.detail.attempts, [
+    { command: 'python', status: 'unavailable', reason: 'Command was not found on PATH.' },
+    { command: 'python3', status: 'verified' },
+  ]);
 });
 
 test('verifies local storage and verifies persistence on a subsequent invocation', async () => {

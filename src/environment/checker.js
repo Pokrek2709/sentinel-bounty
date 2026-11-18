@@ -44,6 +44,28 @@ async function checkCommand(name, command, args, commandRunner) {
   }
 }
 
+async function checkFirstAvailableCommand(name, candidates, commandRunner) {
+  const attempts = [];
+  for (const [command, args] of candidates) {
+    const result = await checkCommand(name, command, args, commandRunner);
+    attempts.push({
+      command,
+      status: result.status,
+      ...(result.status !== 'verified' && result.detail?.reason ? { reason: result.detail.reason } : {}),
+    });
+    if (result.status === 'verified') {
+      return status('verified', `${name} executed with a version command.`, {
+        ...result.detail,
+        attempts,
+      });
+    }
+  }
+  const indeterminate = attempts.find((attempt) => attempt.status === 'not_verified');
+  return status(indeterminate ? 'not_verified' : 'unavailable', `${name} could not be verified from supported command names.`, {
+    attempts,
+  });
+}
+
 async function checkStorage(probeDirectory, now = new Date()) {
   const probePath = path.join(probeDirectory, '.sentinel-environment-probe.json');
   const marker = { createdAt: now.toISOString(), nonce: crypto.randomUUID() };
@@ -94,7 +116,10 @@ async function runEnvironmentCheck({
   now = new Date(),
 } = {}) {
   const binaryExecution = await checkCommand('Node.js runtime', process.execPath, ['--version'], commandRunner);
-  const python = await checkCommand('Python', 'python', ['--version'], commandRunner);
+  const python = await checkFirstAvailableCommand('Python', [
+    ['python3', ['--version']],
+    ['python', ['--version']],
+  ], commandRunner);
   const tools = Object.fromEntries(await Promise.all(Object.entries(TOOL_COMMANDS).map(async ([name, [command, args]]) => [
     name,
     await checkCommand(name, command, args, commandRunner),
@@ -134,4 +159,4 @@ async function runEnvironmentCheck({
   };
 }
 
-module.exports = { checkCommand, checkStorage, runEnvironmentCheck };
+module.exports = { checkCommand, checkFirstAvailableCommand, checkStorage, runEnvironmentCheck };

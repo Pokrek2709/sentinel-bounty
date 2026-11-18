@@ -1,16 +1,17 @@
 # Sentinel Bounty skill contract (draft)
 
-Status: **not registered or verified with Meta Muse.** This file is a platform-neutral behavioral contract and is not evidence of a supported Meta Muse skill manifest.
+Status: **verified as a custom local Muse skill installation, not as an official Meta Muse integration.** The source file lives here; a custom-skill installation must place a copy named `SKILL.md` at the installed skill directory's root. This is not evidence of a supported Meta Muse skill manifest.
 
 ## Purpose
 
-Sentinel Bounty is a safety-first research assistant for authorized security work. Before a documented Muse integration exists, its only implemented command is the local environment check:
+Sentinel Bounty is a safety-first research assistant for authorized security work. Before a documented Muse integration exists, its implemented local commands are:
 
 ```text
 sentinel check-env [--output <path>] [--probe-dir <path>]
+sentinel check-scope --target <target.json> --url <url>
 ```
 
-This command makes no network request and executes no security scanner.
+These commands make no network request and execute no security scanner.
 
 ## Activation requirements
 
@@ -37,6 +38,6 @@ Until then, refuse execution and offer only non-networked functions such as `che
 Promote this draft to a Muse-specific integration only after recording:
 
 - The official supported manifest format and installation location.
-- A successful invocation in an actual Muse runtime.
+- A successful invocation through an official supported Muse integration, rather than the observed custom-skill shell invocation.
 - The supported tool/process/file/network permission model.
 - An approved local-lab test of the scope/policy gate and kill switch.

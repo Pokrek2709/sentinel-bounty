@@ -1,6 +1,6 @@
 # Sentinel Bounty
 
-Sentinel Bounty is an early-stage, safety-first foundation for an AI-assisted security research workflow. It is intended to become a Meta Muse skill, but it is **not currently a verified or installable Meta Muse integration**.
+Sentinel Bounty is an early-stage, safety-first foundation for an AI-assisted security research workflow. It has been tested as a **custom local Muse skill** that invokes its CLI through the shell, but it is **not an official or verified Meta Muse manifest integration**. See [Muse capability evidence](docs/muse-capability-evidence-2026-11-18.md).
 
 The repository is safe to clone and inspect as a private prototype. Its implemented commands perform local validation only: they do not resolve hosts, make network requests, or run security scanners.
 
@@ -51,15 +51,14 @@ node bin/sentinel.js check-env --probe-dir storage --output storage/environment-
 - `src/environment/` — local environment checker.
 - `src/scope/` — target registration and default-deny scope matching.
 - `src/policy/` — local request governor.
-- `skills/sentinel-bounty/SKILL.md` — platform-neutral draft skill contract, not a Muse manifest.
+- `skills/sentinel-bounty/SKILL.md` — source custom-skill contract, not an official Muse manifest.
 - `policies/` and `schemas/` — design policies and data contracts.
 - `docs/` — PoC, implementation, and sharing status.
 
 ## Sharing and Muse trial
 
-Read [GitHub prototype readiness](docs/github-prototype-readiness.md) before sharing. A Muse agent may download this repository and run the local Node commands above, but it cannot yet activate Sentinel Bounty as a verified Muse skill. That requires Meta's supported manifest format and a successful invocation in an actual Muse runtime.
+Read [GitHub prototype readiness](docs/github-prototype-readiness.md) before sharing. A Muse agent may download this repository and run the local Node commands above. Custom-skill discovery has been observed when `SKILL.md` is placed at the installed skill directory's root, but the project cannot yet activate as an official verified Muse skill. That requires Meta's supported manifest format and a successful official integration invocation.
 
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
-# sentinel-bounty
