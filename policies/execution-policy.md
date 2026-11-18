@@ -27,3 +27,5 @@
   - Authentication tests using non-sandbox credentials
   - Parameter fuzzing with high request counts (>500 reqs)
   - Any method flagged with `requires_approval: true`
+
+Approval must bind the target, action, request estimate, and scope fingerprint. Approval for a shell command alone is not sufficient Sentinel approval.

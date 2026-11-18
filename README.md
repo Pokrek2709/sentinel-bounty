@@ -1,6 +1,6 @@
 # Sentinel Bounty
 
-Sentinel Bounty is an early-stage, safety-first foundation for an AI-assisted security research workflow. It has been tested as a **custom local Muse skill** that invokes its CLI through the shell, but it is **not an official or verified Meta Muse manifest integration**. See [Muse capability evidence](docs/muse-capability-evidence-2026-11-18.md).
+Sentinel Bounty is an early-stage, safety-first foundation for an AI-assisted security research workflow. It has been tested as a **custom local Muse skill** that invokes its CLI through the shell, but it is **not an official or verified Meta Muse manifest integration**. See [initial Muse capability evidence](docs/muse-capability-evidence-2026-11-18.md) and its [follow-up](docs/muse-capability-followup-2026-11-19.md).
 
 The repository is safe to clone and inspect as a private prototype. Its implemented commands perform local validation only: they do not resolve hosts, make network requests, or run security scanners.
 
