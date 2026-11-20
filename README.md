@@ -16,10 +16,10 @@ Implemented locally:
 Not implemented yet:
 
 - Meta Muse manifest, installation, activation, or tool-permission integration.
-- Controlled network execution wrapper, DNS resolution guard, scanner integration, or crawling.
-- Human approval workflow, audit log, global kill switch, and evidence storage.
+- Network adapter, DNS resolution guard, scanner integration, or crawling.
+- Persistent approval/session state, audit log, and cross-process kill switch.
 
-An in-scope decision does not authorize execution. No real target may be tested unless authorization, scope enforcement, approval, kill switch, and the future execution wrapper are all in place.
+An in-scope decision does not authorize execution. No real target may be tested unless authorization, scope enforcement, approval, kill switch, audit, and a reviewed network adapter are all in place.
 
 ## Requirements
 

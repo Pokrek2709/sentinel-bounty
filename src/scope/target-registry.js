@@ -1,5 +1,6 @@
 const net = require('node:net');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const DEFAULT_EXCLUDED_PATHS = Object.freeze([
   '/logout',
@@ -125,6 +126,18 @@ function freezeTarget(target) {
   return Object.freeze(target);
 }
 
+function scopeFingerprint(target) {
+  const canonical = JSON.stringify({
+    targetId: target.targetId,
+    allowedDomains: target.allowedDomains,
+    excludedDomains: target.excludedDomains,
+    excludedPaths: target.excludedPaths,
+    allowedUrls: target.allowedUrls,
+    allowedMethods: target.allowedMethods,
+  });
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
 function normalizeTarget(target) {
   if (!target || typeof target !== 'object' || Array.isArray(target)) fail('target must be an object.');
   const targetId = requireNonEmptyString(target.target_id, 'target_id');
@@ -202,6 +215,16 @@ class TargetRegistry {
     const target = this.#targets.get(targetId);
     if (!target) return decision(false, 'TARGET_NOT_REGISTERED', { targetId });
     return evaluateTargetRequest(target, requestUrl);
+  }
+
+  getScopeFingerprint(targetId) {
+    const target = this.#targets.get(targetId);
+    return target ? scopeFingerprint(target) : null;
+  }
+
+  isMethodAllowed(targetId, method) {
+    const target = this.#targets.get(targetId);
+    return Boolean(target && typeof method === 'string' && target.allowedMethods.includes(method));
   }
 }
 

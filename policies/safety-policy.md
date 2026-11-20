@@ -18,7 +18,9 @@ Sentinel Bounty strictly prohibits and refuses the following behaviors:
 
 ## 3. Emergency Kill Switch
 
-- The user can trigger the emergency kill switch at any time via:
-  - CLI: `sentinel kill-switch trigger`
-  - Calling the internal `killSwitch.trigger()` API
-- When triggered, all in-flight workers, subprocesses, and requests terminate within 1 second.
+- The local policy core can be triggered through the internal `killSwitch.trigger()` API.
+- A CLI trigger is not implemented yet. Do not document or rely on `sentinel kill-switch trigger` until a persistent session controller exists.
+- Triggering the core immediately blocks new registered work and dispatches cancellation to registered workers. The fixed-command controlled wrapper now supplies a subprocess cancellation callback; persistent cross-process activation is still not implemented.
+- A Muse runtime lab test reported process-tree termination within a few seconds after runtime-level cancellation. This is not a Sentinel one-second termination guarantee.
+
+Current implementation note: the local policy core and fixed-command wrapper can cancel an in-process child through the wrapper callback. This is not a persistent kill switch and has no direct Muse runtime API binding.
