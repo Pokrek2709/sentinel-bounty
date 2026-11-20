@@ -38,12 +38,21 @@ async function harness(directory, transport = fakeTransport()) {
   const pending = approvals.request({ targetId: 'local-lab', action: 'http_probing', estimatedRequests: 1, scopeFingerprint: fingerprint, reason: 'GET-only localhost lab' });
   const approved = approvals.approve(pending.requestId, { approver: 'local-human' });
   const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill') });
+  const governor = new RequestGovernor({ requestBudget: 10 });
+  const recordedStatuses = [];
+  const originalRecordResponse = governor.recordResponse.bind(governor);
+  governor.recordResponse = (domain, statusCode) => {
+    recordedStatuses.push([domain, statusCode]);
+    return originalRecordResponse(domain, statusCode);
+  };
   return {
     fingerprint,
     approvalId: approved.approvalId,
     audit,
+    governor,
+    recordedStatuses,
     transport,
-    adapter: new LocalHttpAdapter({ registry, approvalGate: approvals, governor: new RequestGovernor({ requestBudget: 10 }), killSwitch: new KillSwitch(), auditLog: audit, requestGet: transport.requestGet }),
+    adapter: new LocalHttpAdapter({ registry, approvalGate: approvals, governor, killSwitch: new KillSwitch(), auditLog: audit, requestGet: transport.requestGet }),
   };
 }
 
@@ -76,6 +85,19 @@ test('rejects external hosts and does not follow redirects', async () => {
     const redirected = await second.adapter.get({ targetId: 'local-lab', url: 'http://localhost/redirect', approvalId: second.approvalId, estimatedRequests: 1, scopeFingerprint: second.fingerprint });
     assert.equal(redirected.statusCode, 302);
     assert.equal(redirectTransport.requests, 1);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('passes 429/503 response status to the request governor', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+  try {
+    const first = await harness(directory, fakeTransport({ statusCode: 429, body: 'busy' }));
+    const response = await first.adapter.get({ targetId: 'local-lab', url: 'http://localhost/busy', approvalId: first.approvalId, estimatedRequests: 1, scopeFingerprint: first.fingerprint });
+    assert.equal(response.statusCode, 429);
+    assert.deepEqual(first.recordedStatuses, [['localhost', 429]]);
+    assert.equal(first.governor.acquire('localhost').reason, 'SERVER_BACKOFF');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

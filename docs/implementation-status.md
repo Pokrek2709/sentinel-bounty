@@ -8,7 +8,7 @@ This status records repository evidence, not planned capabilities.
 | 1: Skill foundation | Partial | The platform-neutral [skill contract](../skills/sentinel-bounty/SKILL.md) was discovered as a custom local skill only when copied to the installed skill root, as confirmed in the [follow-up trial](muse-capability-followup-2026-11-19.md). No official Meta Muse manifest exists. |
 | 2: Environment checker | Implemented locally and trialed in Muse | `sentinel check-env` is non-networked; Python detection supports `python3` then `python`. |
 | 3: Scope manager and policy engine | Partial | Local target registration, default-deny scope matching, rate limiting, request budgets, server-pressure backoff, bound approval, a fixed-command wrapper, process-group cancellation on POSIX, persistent kill-switch state, and bounded audit logging exist. Operator reset protocol and public-target network adapters remain open. |
-| 4: Local HTTP adapter | Initial lab-only implementation | GET-only `localhost` adapter exists with policy checks, no redirect following, bounded output, redacted headers, and audit events. No public target support. |
+| 4: Local HTTP adapter | Initial lab-only implementation | GET-only `localhost` adapter exists with policy checks, governor response backoff, no redirect following, bounded output, redacted headers, and audit events. Muse real-run evidence is recorded in [HTTP adapter evidence](muse-http-adapter-evidence-2026-11-21.md). No public target support. |
 
 ## Local-only result
 

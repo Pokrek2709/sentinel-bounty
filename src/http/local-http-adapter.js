@@ -113,7 +113,10 @@ class LocalHttpAdapter {
           });
           response.once('end', async () => {
             try {
-              await this.#audit.append('HTTP_RESPONSE', { targetId, url, statusCode: response.statusCode, contentLength: bytes, redirected: [301, 302, 303, 307, 308].includes(response.statusCode) });
+              const pressure = typeof this.#governor.recordResponse === 'function'
+                ? this.#governor.recordResponse('localhost', response.statusCode)
+                : { action: 'UNSUPPORTED' };
+              await this.#audit.append('HTTP_RESPONSE', { targetId, url, statusCode: response.statusCode, contentLength: bytes, redirected: [301, 302, 303, 307, 308].includes(response.statusCode), pressureAction: pressure.action });
               const headers = Object.fromEntries(Object.entries(response.headers).map(([key, value]) => [key, redact(value, key)]));
               finishRun(result(true, 'HTTP_COMPLETED', { statusCode: response.statusCode, headers, body: body.join(''), truncated: bytes > this.#maxBodyBytes }));
             } catch {

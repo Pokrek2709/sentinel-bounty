@@ -84,8 +84,22 @@ class PersistentKillSwitch {
   async #readUnlocked() {
     try {
       const parsed = JSON.parse(await fs.readFile(this.#stateFile, 'utf8'));
-      if (parsed.version !== 1 || typeof parsed.active !== 'boolean') throw new Error('Invalid kill-switch state.');
-      return parsed;
+      if (parsed.version === 1 && typeof parsed.active === 'boolean') return parsed;
+      if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
+        const migrated = {
+          version: 1,
+          active: parsed.enabled,
+          trigger: parsed.enabled ? {
+            triggerId: 'legacy-state',
+            triggeredBy: 'legacy-state',
+            reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
+            triggeredAt: Number.isFinite(Date.parse(parsed.updatedAt)) ? Date.parse(parsed.updatedAt) : nowFrom(this.#clock),
+          } : null,
+        };
+        await this.#writeUnlocked(migrated);
+        return migrated;
+      }
+      throw new Error('Invalid kill-switch state.');
     } catch (error) {
       if (error.code === 'ENOENT') return { version: 1, active: false, trigger: null };
       throw error;

@@ -45,3 +45,23 @@ test('rejects state inside the reinstall-replaced skill directory', () => {
     skillDirectory: path.join(os.tmpdir(), 'skill'),
   }), /outside the skill directory/);
 });
+
+test('migrates the legacy enabled schema atomically without reviving approvals', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+  const skillDirectory = path.join(directory, 'skill');
+  const stateFile = path.join(directory, 'state', 'kill-switch.json');
+  try {
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(stateFile, JSON.stringify({ enabled: true, reason: 'legacy lab stop', updatedAt: '2026-11-20T00:00:00.000Z' }), { mode: 0o600 });
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory });
+    const status = await killSwitch.assertNotTriggered();
+    assert.equal(status.reason, 'KILL_SWITCH_ACTIVE');
+    const migrated = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+    assert.equal(migrated.version, 1);
+    assert.equal(migrated.active, true);
+    assert.equal(migrated.trigger.reason, 'legacy lab stop');
+    assert.equal((await fs.readdir(path.dirname(stateFile))).some((name) => name.endsWith('.tmp')), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
