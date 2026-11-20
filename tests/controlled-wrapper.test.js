@@ -107,8 +107,9 @@ test('polls persistent kill state so a fresh controller can cancel this process'
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-wrapper-'));
   try {
     const stateFile = path.join(directory, 'kill-switch.json');
-    const localKillSwitch = new PersistentKillSwitch({ stateFile });
-    const remoteKillSwitch = new PersistentKillSwitch({ stateFile });
+    const skillDirectory = path.join(directory, 'skill');
+    const localKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory });
+    const remoteKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory });
     let child;
     const context = setup({
       killSwitch: localKillSwitch,

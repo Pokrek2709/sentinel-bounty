@@ -1,4 +1,5 @@
 const { spawn } = require('node:child_process');
+const fs = require('node:fs/promises');
 
 function requireString(value, field) {
   if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${field} must be a non-empty string.`);
@@ -7,6 +8,36 @@ function requireString(value, field) {
 
 function result(allowed, reason, detail = {}) {
   return Object.freeze({ allowed, reason, ...detail });
+}
+
+async function collectDescendantPids(rootPid) {
+  if (process.platform !== 'linux' || !Number.isInteger(rootPid)) return [];
+  const entries = await fs.readdir('/proc', { withFileTypes: true });
+  const children = new Map();
+  await Promise.all(entries
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map(async (entry) => {
+      try {
+        const status = await fs.readFile(`/proc/${entry.name}/status`, 'utf8');
+        const parentLine = status.split('\n').find((line) => line.startsWith('PPid:'));
+        const parentPid = Number(parentLine?.split(/\s+/)[1]);
+        const pid = Number(entry.name);
+        if (!Number.isInteger(parentPid) || !Number.isInteger(pid)) return;
+        const list = children.get(parentPid) || [];
+        list.push(pid);
+        children.set(parentPid, list);
+      } catch (error) {
+        if (!['ENOENT', 'EACCES'].includes(error.code)) throw error;
+      }
+    }));
+  const descendants = [];
+  const pending = [...(children.get(rootPid) || [])];
+  while (pending.length > 0) {
+    const pid = pending.shift();
+    descendants.push(pid);
+    pending.push(...(children.get(pid) || []));
+  }
+  return descendants;
 }
 
 class ControlledExecution {
@@ -78,6 +109,7 @@ class ControlledExecution {
     let killCheckInFlight = false;
     let timeoutTriggered = false;
     let settled = false;
+    let finishRun = null;
     let unregister = () => {};
     const close = () => {
       if (timer) clearTimeout(timer);
@@ -85,23 +117,33 @@ class ControlledExecution {
       this.#governor.release(reservation.reservationId);
       unregister();
     };
-    const terminate = async () => {
+    const terminate = async ({ cause = 'CANCEL' } = {}) => {
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
+      const descendantPids = await collectDescendantPids(child.pid);
       const signalProcessTree = (signal) => {
+        let groupSignalled = false;
         if (process.platform !== 'win32' && child.pid) {
           try {
             process.kill(-child.pid, signal);
-            return;
+            groupSignalled = true;
           } catch (error) {
             if (!['ESRCH', 'EINVAL'].includes(error.code)) throw error;
           }
         }
-        child.kill(signal);
+        if (!groupSignalled) child.kill(signal);
+        for (const pid of descendantPids) {
+          try {
+            process.kill(pid, signal);
+          } catch (error) {
+            if (!['ESRCH', 'EPERM'].includes(error.code)) throw error;
+          }
+        }
       };
       signalProcessTree('SIGTERM');
       if (this.#cancellationGraceMs === 0) return;
       await new Promise((resolve) => setTimeout(resolve, this.#cancellationGraceMs));
       if (child.exitCode === null && child.signalCode === null) signalProcessTree('SIGKILL');
+      if (cause === 'KILL_SWITCH' && !settled && finishRun) finishRun(result(false, 'PROCESS_FAILED', { cancellation: 'KILL_SWITCH_ACTIVE' }));
     };
 
     const registration = await this.#killSwitch.registerWorker({ workerId, cancel: terminate });
@@ -119,6 +161,7 @@ class ControlledExecution {
         close();
         resolve(value);
       };
+      finishRun = finish;
       try {
         child = this.#spawnProcess(tool.command, tool.args, {
           shell: false,
@@ -138,10 +181,10 @@ class ControlledExecution {
         killCheckInFlight = true;
         try {
           const currentKillStatus = await this.#killSwitch.assertNotTriggered();
-          if (!currentKillStatus.allowed) await terminate();
+          if (!currentKillStatus.allowed) await terminate({ cause: 'KILL_SWITCH' });
         } catch {
           // An unreadable kill-switch state is fail-closed: stop the child.
-          await terminate();
+          await terminate({ cause: 'KILL_SWITCH' });
         } finally {
           killCheckInFlight = false;
         }

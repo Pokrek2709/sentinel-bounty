@@ -4,7 +4,7 @@
 
 ## State contract
 
-- State lives at an explicit absolute path outside the installed skill directory, for example `~/workspace/sentinel-bounty/state/kill-switch.json`.
+- State lives at an explicit absolute path outside the installed skill directory, for example `~/workspace/sentinel-bounty/state/kill-switch.json`. The constructor requires both `stateFile` and `skillDirectory` and rejects paths inside the skill directory.
 - Missing state means inactive; an active state is fail-closed for fresh processes.
 - Writes use a temporary file, explicit mode `0600`, `chmod(0600)`, and atomic rename.
 - A lock file serializes readers/writers and has bounded acquisition plus stale-lock recovery. The Muse lab separately verified that `flock` is available; this Node implementation avoids invoking a shell command for every state read.

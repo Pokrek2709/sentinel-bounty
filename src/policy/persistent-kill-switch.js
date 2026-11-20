@@ -30,12 +30,18 @@ class PersistentKillSwitch {
 
   constructor({
     stateFile,
+    skillDirectory,
     clock = () => Date.now(),
     lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
     lockRetryMs = DEFAULT_LOCK_RETRY_MS,
     staleLockMs = DEFAULT_STALE_LOCK_MS,
   } = {}) {
-    if (typeof stateFile !== 'string' || !path.isAbsolute(stateFile)) throw new TypeError('stateFile must be an absolute path outside the skill directory.');
+    if (typeof stateFile !== 'string' || !path.isAbsolute(stateFile)) throw new TypeError('stateFile must be an absolute path.');
+    if (typeof skillDirectory !== 'string' || !path.isAbsolute(skillDirectory)) throw new TypeError('skillDirectory must be an absolute path so state placement can be verified.');
+    const relativeStatePath = path.relative(path.resolve(skillDirectory), path.resolve(stateFile));
+    if (relativeStatePath === '' || (!relativeStatePath.startsWith('..') && !path.isAbsolute(relativeStatePath))) {
+      throw new TypeError('stateFile must be outside the skill directory.');
+    }
     if (typeof clock !== 'function') throw new TypeError('clock must be a function.');
     if (![lockTimeoutMs, lockRetryMs, staleLockMs].every((value) => Number.isInteger(value) && value >= 0)) throw new TypeError('lock timing values must be non-negative integers.');
     this.#stateFile = stateFile;

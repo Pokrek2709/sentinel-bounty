@@ -1,4 +1,6 @@
-# Sentinel Bounty skill contract (draft)
+# Sentinel Bounty — Controlled Wrapper and Kill Switch skill contract
+
+Description: Safety-first controlled wrapper, persistent kill switch, scope manager, approval gate, request budget, and rate-limit policy for authorized security research.
 
 Status: **verified as a custom local Muse skill installation, not as an official Meta Muse integration.** The source file lives here; a custom-skill installation must place a copy named `SKILL.md` at the installed skill directory's root. This is not evidence of a supported Meta Muse skill manifest.
 
