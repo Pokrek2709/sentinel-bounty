@@ -10,5 +10,6 @@
 - Sensitive response headers are redacted before returning them to the caller.
 - Kill-switch state is polled while the request is active and cancellation destroys the request.
 - Response status is forwarded to the request governor, so `429`/`503` responses activate the configured backoff and halt policy.
+- Audit files recover stale lock files and rotate into a bounded retention set before the 10 MiB hard limit.
 
 This adapter is for local lab validation only. It must not be generalized to public targets until DNS/redirect policy, audit retention, operator approval UX, and a reviewed target authorization workflow are complete. The Muse real-run report confirmed localhost, redirect, timeout, cancellation, redaction, persistence, and lock behavior; it also exposed the need to wire response statuses into the governor, which is now implemented.

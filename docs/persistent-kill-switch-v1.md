@@ -9,8 +9,9 @@
 - Writes use a temporary file, explicit mode `0600`, `chmod(0600)`, and atomic rename.
 - A lock file serializes readers/writers and has bounded acquisition plus stale-lock recovery. The Muse lab separately verified that `flock` is available; this Node implementation avoids invoking a shell command for every state read.
 - Approval state is intentionally not persisted by this controller. Reinstall/restart must not revive old approval IDs.
-- The controller migrates the legacy `{ "enabled": boolean, "reason": string }` state shape to version 1 while holding the state lock. Unknown or malformed shapes remain fail-closed errors.
+- The controller migrates legacy `{ "enabled": boolean, "reason": string }` and version-1 state shapes to version 2 while holding the state lock. `updatedAt` and `updated_at` are both accepted. Unknown or malformed shapes remain fail-closed errors.
+- Worker registrations are persisted as short leases and renewed by the active wrapper. Reset reads leases under the state lock, so another process's live worker blocks reset. A reset also requires a secret operator token supplied through a secure channel; `resetBy` is audit context, not authentication.
 
 The controlled wrapper polls this state while a child is active. A fresh controller can therefore activate the switch, and a wrapper in another process observes it and begins cancellation. The process-group cancellation path is strongest on POSIX runtimes; Windows uses the direct-child fallback.
 
-This component still needs a production-grade operator/reset protocol and audit integration before any network adapter is enabled.
+This component still needs a production-grade operator UX and audit integration; the local HTTP adapter already uses it for lab-only cancellation.

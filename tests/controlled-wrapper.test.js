@@ -108,8 +108,8 @@ test('polls persistent kill state so a fresh controller can cancel this process'
   try {
     const stateFile = path.join(directory, 'kill-switch.json');
     const skillDirectory = path.join(directory, 'skill');
-    const localKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory });
-    const remoteKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory });
+    const localKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    const remoteKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
     let child;
     const context = setup({
       killSwitch: localKillSwitch,

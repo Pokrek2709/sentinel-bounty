@@ -111,3 +111,24 @@ test('requires audit state outside the skill directory', async () => {
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('recovers a stale audit lock and rotates before the hard limit', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+  const skillDirectory = path.join(directory, 'skill');
+  const logFile = path.join(directory, 'state', 'audit.jsonl');
+  try {
+    await fs.mkdir(path.dirname(logFile), { recursive: true });
+    const lockFile = `${logFile}.lock`;
+    await fs.writeFile(lockFile, 'stale', { mode: 0o600 });
+    const old = new Date(Date.now() - 10_000);
+    await fs.utimes(lockFile, old, old);
+    const audit = new AuditLog({ logFile, skillDirectory, staleLockMs: 100, rotationBytes: 300, retentionCount: 2 });
+    await audit.append('FIRST', { value: 'x'.repeat(100) });
+    await audit.append('SECOND', { value: 'y'.repeat(100) });
+    await audit.append('THIRD', { value: 'z'.repeat(100) });
+    assert.equal((await fs.stat(`${logFile}.1`)).isFile(), true);
+    assert.equal((await fs.readdir(path.dirname(logFile))).some((name) => name.endsWith('.lock')), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

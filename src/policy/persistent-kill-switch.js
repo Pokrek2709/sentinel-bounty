@@ -5,6 +5,7 @@ const path = require('node:path');
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_LOCK_RETRY_MS = 25;
 const DEFAULT_STALE_LOCK_MS = 60_000;
+const DEFAULT_WORKER_LEASE_MS = 5_000;
 
 function requireString(value, field, maxLength = 500) {
   if (typeof value !== 'string' || value.trim() === '' || value.trim().length > maxLength) {
@@ -27,29 +28,26 @@ class PersistentKillSwitch {
   #lockTimeoutMs;
   #lockRetryMs;
   #staleLockMs;
+  #workerLeaseMs;
+  #resetToken;
 
-  constructor({
-    stateFile,
-    skillDirectory,
-    clock = () => Date.now(),
-    lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
-    lockRetryMs = DEFAULT_LOCK_RETRY_MS,
-    staleLockMs = DEFAULT_STALE_LOCK_MS,
-  } = {}) {
+  constructor({ stateFile, skillDirectory, clock = () => Date.now(), lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS, lockRetryMs = DEFAULT_LOCK_RETRY_MS, staleLockMs = DEFAULT_STALE_LOCK_MS, workerLeaseMs = DEFAULT_WORKER_LEASE_MS, resetToken } = {}) {
     if (typeof stateFile !== 'string' || !path.isAbsolute(stateFile)) throw new TypeError('stateFile must be an absolute path.');
     if (typeof skillDirectory !== 'string' || !path.isAbsolute(skillDirectory)) throw new TypeError('skillDirectory must be an absolute path so state placement can be verified.');
     const relativeStatePath = path.relative(path.resolve(skillDirectory), path.resolve(stateFile));
-    if (relativeStatePath === '' || (!relativeStatePath.startsWith('..') && !path.isAbsolute(relativeStatePath))) {
-      throw new TypeError('stateFile must be outside the skill directory.');
-    }
+    if (relativeStatePath === '' || (!relativeStatePath.startsWith('..') && !path.isAbsolute(relativeStatePath))) throw new TypeError('stateFile must be outside the skill directory.');
     if (typeof clock !== 'function') throw new TypeError('clock must be a function.');
+    if (typeof resetToken !== 'string' || resetToken.length < 16) throw new TypeError('resetToken must be at least 16 characters and must come from a secure operator channel.');
     if (![lockTimeoutMs, lockRetryMs, staleLockMs].every((value) => Number.isInteger(value) && value >= 0)) throw new TypeError('lock timing values must be non-negative integers.');
+    if (!Number.isInteger(workerLeaseMs) || workerLeaseMs < 1_000) throw new TypeError('workerLeaseMs must be at least 1000ms.');
     this.#stateFile = stateFile;
     this.#lockFile = `${stateFile}.lock`;
     this.#clock = clock;
     this.#lockTimeoutMs = lockTimeoutMs;
     this.#lockRetryMs = lockRetryMs;
     this.#staleLockMs = staleLockMs;
+    this.#workerLeaseMs = workerLeaseMs;
+    this.#resetToken = resetToken;
   }
 
   async #withLock(operation) {
@@ -65,8 +63,8 @@ class PersistentKillSwitch {
         handle = undefined;
         if (error.code !== 'EEXIST' || nowFrom(this.#clock) - started >= this.#lockTimeoutMs) throw new Error('KILL_SWITCH_STATE_LOCKED');
         try {
-          const lockStat = await fs.stat(this.#lockFile);
-          if (nowFrom(this.#clock) - lockStat.mtimeMs >= this.#staleLockMs) await fs.unlink(this.#lockFile);
+          const stat = await fs.stat(this.#lockFile);
+          if (nowFrom(this.#clock) - stat.mtimeMs >= this.#staleLockMs) await fs.unlink(this.#lockFile);
         } catch (statError) {
           if (statError.code !== 'ENOENT') throw statError;
         }
@@ -81,31 +79,6 @@ class PersistentKillSwitch {
     }
   }
 
-  async #readUnlocked() {
-    try {
-      const parsed = JSON.parse(await fs.readFile(this.#stateFile, 'utf8'));
-      if (parsed.version === 1 && typeof parsed.active === 'boolean') return parsed;
-      if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
-        const migrated = {
-          version: 1,
-          active: parsed.enabled,
-          trigger: parsed.enabled ? {
-            triggerId: 'legacy-state',
-            triggeredBy: 'legacy-state',
-            reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
-            triggeredAt: Number.isFinite(Date.parse(parsed.updatedAt)) ? Date.parse(parsed.updatedAt) : nowFrom(this.#clock),
-          } : null,
-        };
-        await this.#writeUnlocked(migrated);
-        return migrated;
-      }
-      throw new Error('Invalid kill-switch state.');
-    } catch (error) {
-      if (error.code === 'ENOENT') return { version: 1, active: false, trigger: null };
-      throw error;
-    }
-  }
-
   async #writeUnlocked(state) {
     const temporary = `${this.#stateFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await fs.writeFile(temporary, JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
@@ -114,34 +87,90 @@ class PersistentKillSwitch {
     await fs.chmod(this.#stateFile, 0o600);
   }
 
+  async #readUnlocked() {
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.#stateFile, 'utf8'));
+      if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
+      if (parsed.version === 1 && typeof parsed.active === 'boolean') {
+        const migrated = { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
+        await this.#writeUnlocked(migrated);
+        return migrated;
+      }
+      if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
+        const timestamp = parsed.updatedAt || parsed.updated_at;
+        const migrated = {
+          version: 2,
+          active: parsed.enabled,
+          trigger: parsed.enabled ? {
+            triggerId: 'legacy-state',
+            triggeredBy: 'legacy-state',
+            reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
+            triggeredAt: Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : nowFrom(this.#clock),
+          } : null,
+          workers: [],
+        };
+        await this.#writeUnlocked(migrated);
+        return migrated;
+      }
+      throw new Error('Invalid kill-switch state.');
+    } catch (error) {
+      if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
+      throw error;
+    }
+  }
+
+  #pruneWorkers(state, now = nowFrom(this.#clock)) {
+    const workers = state.workers.filter((worker) => Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now);
+    return workers.length === state.workers.length ? state : { ...state, workers };
+  }
+
+  #operatorMatches(token) {
+    if (typeof token !== 'string' || token.length !== this.#resetToken.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.#resetToken));
+  }
+
   async assertNotTriggered() {
-    const state = await this.#withLock(() => this.#readUnlocked());
-    return state.active
-      ? Object.freeze({ allowed: false, reason: 'KILL_SWITCH_ACTIVE', trigger: Object.freeze({ ...state.trigger }) })
-      : Object.freeze({ allowed: true, reason: 'KILL_SWITCH_INACTIVE' });
+    const state = await this.#withLock(async () => {
+      const current = await this.#readUnlocked();
+      const pruned = this.#pruneWorkers(current);
+      if (pruned !== current) await this.#writeUnlocked(pruned);
+      return pruned;
+    });
+    return state.active ? Object.freeze({ allowed: false, reason: 'KILL_SWITCH_ACTIVE', trigger: Object.freeze({ ...state.trigger }) }) : Object.freeze({ allowed: true, reason: 'KILL_SWITCH_INACTIVE' });
   }
 
   async registerWorker({ workerId, cancel }) {
     const normalizedWorkerId = requireString(workerId, 'workerId', 200);
     if (typeof cancel !== 'function') throw new TypeError('cancel must be a function.');
-    const status = await this.assertNotTriggered();
-    if (!status.allowed) return Object.freeze({ registered: false, reason: status.reason });
-    if (this.#workers.has(normalizedWorkerId)) throw new Error(`Worker is already registered: ${normalizedWorkerId}`);
+    const registration = await this.#withLock(async () => {
+      const current = this.#pruneWorkers(await this.#readUnlocked());
+      if (current.active) return { registered: false, reason: 'KILL_SWITCH_ACTIVE' };
+      if (current.workers.some((worker) => worker.workerId === normalizedWorkerId)) return { registered: false, reason: 'WORKER_ALREADY_REGISTERED' };
+      await this.#writeUnlocked({ ...current, workers: [...current.workers, { workerId: normalizedWorkerId, pid: process.pid, leaseExpiresAt: nowFrom(this.#clock) + this.#workerLeaseMs }] });
+      return { registered: true };
+    });
+    if (!registration.registered) return Object.freeze(registration);
     this.#workers.set(normalizedWorkerId, cancel);
-    const afterRegistration = await this.assertNotTriggered();
-    if (!afterRegistration.allowed) {
-      this.#workers.delete(normalizedWorkerId);
-      return Object.freeze({ registered: false, reason: afterRegistration.reason });
-    }
-    return Object.freeze({ registered: true, unregister: () => this.#workers.delete(normalizedWorkerId) });
+    return Object.freeze({ registered: true, unregister: () => this.unregisterWorker(normalizedWorkerId) });
+  }
+
+  async heartbeatWorker(workerId) {
+    const normalizedWorkerId = requireString(workerId, 'workerId', 200);
+    if (!this.#workers.has(normalizedWorkerId)) return false;
+    return this.#withLock(async () => {
+      const current = this.#pruneWorkers(await this.#readUnlocked());
+      const workers = current.workers.map((worker) => worker.workerId === normalizedWorkerId ? { ...worker, leaseExpiresAt: nowFrom(this.#clock) + this.#workerLeaseMs } : worker);
+      await this.#writeUnlocked({ ...current, workers });
+      return true;
+    });
   }
 
   async trigger({ triggeredBy, reason }) {
     const trigger = Object.freeze({ triggerId: crypto.randomUUID(), triggeredBy: requireString(triggeredBy, 'triggeredBy', 200), reason: requireString(reason, 'reason'), triggeredAt: nowFrom(this.#clock) });
     const writeResult = await this.#withLock(async () => {
-      const state = await this.#readUnlocked();
+      const state = this.#pruneWorkers(await this.#readUnlocked());
       if (state.active) return { active: true, trigger: state.trigger };
-      await this.#writeUnlocked({ version: 1, active: true, trigger });
+      await this.#writeUnlocked({ version: 2, active: true, trigger, workers: state.workers });
       return { active: false };
     });
     if (writeResult.active) return Object.freeze({ triggered: false, reason: 'KILL_SWITCH_ALREADY_ACTIVE', trigger: writeResult.trigger, cancellations: [] });
@@ -150,17 +179,27 @@ class PersistentKillSwitch {
     return Object.freeze({ triggered: true, trigger, cancellations: Object.freeze(results.map((item, index) => Object.freeze({ workerId: workers[index][0], cancelled: item.status === 'fulfilled', ...(item.status === 'rejected' ? { error: String(item.reason?.message || item.reason) } : {}) }))) });
   }
 
-  async reset({ resetBy }) {
-    requireString(resetBy, 'resetBy', 200);
-    if (this.#workers.size > 0) return Object.freeze({ reset: false, reason: 'WORKERS_STILL_REGISTERED', registeredWorkers: this.#workers.size });
-    const result = await this.#withLock(async () => {
-      const state = await this.#readUnlocked();
-      if (!state.active) return { reset: false, reason: 'KILL_SWITCH_INACTIVE' };
-      await this.#writeUnlocked({ version: 1, active: false, trigger: null });
-      return { reset: true };
+  async unregisterWorker(workerId) {
+    const normalizedWorkerId = requireString(workerId, 'workerId', 200);
+    const removed = this.#workers.delete(normalizedWorkerId);
+    await this.#withLock(async () => {
+      const current = this.#pruneWorkers(await this.#readUnlocked());
+      await this.#writeUnlocked({ ...current, workers: current.workers.filter((worker) => worker.workerId !== normalizedWorkerId) });
     });
-    return Object.freeze(result);
+    return removed;
+  }
+
+  async reset({ resetBy, resetToken }) {
+    requireString(resetBy, 'resetBy', 200);
+    if (!this.#operatorMatches(resetToken)) return Object.freeze({ reset: false, reason: 'RESET_OPERATOR_UNAUTHORIZED' });
+    return Object.freeze(await this.#withLock(async () => {
+      const state = this.#pruneWorkers(await this.#readUnlocked());
+      if (state.workers.length > 0) return { reset: false, reason: 'WORKERS_STILL_REGISTERED', registeredWorkers: state.workers.length };
+      if (!state.active) return { reset: false, reason: 'KILL_SWITCH_INACTIVE' };
+      await this.#writeUnlocked({ version: 2, active: false, trigger: null, workers: [] });
+      return { reset: true };
+    }));
   }
 }
 
-module.exports = { PersistentKillSwitch };
+module.exports = { PersistentKillSwitch, DEFAULT_WORKER_LEASE_MS };

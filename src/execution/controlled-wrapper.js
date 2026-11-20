@@ -111,11 +111,11 @@ class ControlledExecution {
     let settled = false;
     let finishRun = null;
     let unregister = () => {};
-    const close = () => {
+    const close = async () => {
       if (timer) clearTimeout(timer);
       if (killPoller) clearInterval(killPoller);
       this.#governor.release(reservation.reservationId);
-      unregister();
+      await unregister();
     };
     const terminate = async ({ cause = 'CANCEL' } = {}) => {
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -158,8 +158,7 @@ class ControlledExecution {
       const finish = (value) => {
         if (settled) return;
         settled = true;
-        close();
-        resolve(value);
+        Promise.resolve(close()).then(() => resolve(value), () => resolve(result(false, 'POLICY_ERROR')));
       };
       finishRun = finish;
       try {
@@ -180,6 +179,7 @@ class ControlledExecution {
         if (killCheckInFlight || settled) return;
         killCheckInFlight = true;
         try {
+          if (typeof this.#killSwitch.heartbeatWorker === 'function') await this.#killSwitch.heartbeatWorker(workerId);
           const currentKillStatus = await this.#killSwitch.assertNotTriggered();
           if (!currentKillStatus.allowed) await terminate({ cause: 'KILL_SWITCH' });
         } catch {

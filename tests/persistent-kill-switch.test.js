@@ -10,14 +10,14 @@ test('persists activation across fresh instances with private atomic state', asy
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
     const skillDirectory = path.join(directory, 'skill');
-    const first = new PersistentKillSwitch({ stateFile, skillDirectory });
-    const second = new PersistentKillSwitch({ stateFile, skillDirectory });
+    const first = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    const second = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
     assert.equal((await first.assertNotTriggered()).allowed, true);
     assert.equal((await first.trigger({ triggeredBy: 'local-human', reason: 'lab stop' })).triggered, true);
     assert.deepEqual(await second.assertNotTriggered().then((value) => value.reason), 'KILL_SWITCH_ACTIVE');
     const stat = await fs.stat(stateFile);
     if (process.platform !== 'win32') assert.equal(stat.mode & 0o777, 0o600);
-    assert.equal((await second.reset({ resetBy: 'local-human' })).reset, true);
+    assert.equal((await second.reset({ resetBy: 'local-human', resetToken: 'local-reset-token-1234' })).reset, true);
     assert.equal((await first.assertNotTriggered()).allowed, true);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
@@ -27,7 +27,7 @@ test('persists activation across fresh instances with private atomic state', asy
 test('cancels local workers and refuses registration after activation', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
   try {
-    const killSwitch = new PersistentKillSwitch({ stateFile: path.join(directory, 'state', 'kill.json'), skillDirectory: path.join(directory, 'skill') });
+    const killSwitch = new PersistentKillSwitch({ stateFile: path.join(directory, 'state', 'kill.json'), skillDirectory: path.join(directory, 'skill'), resetToken: 'local-reset-token-1234' });
     let cancelled = false;
     const registration = await killSwitch.registerWorker({ workerId: 'worker-a', cancel: async () => { cancelled = true; } });
     assert.equal(registration.registered, true);
@@ -39,10 +39,30 @@ test('cancels local workers and refuses registration after activation', async ()
   }
 });
 
+test('protects reset against workers registered by another process and requires the operator token', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+  const stateFile = path.join(directory, 'state', 'kill.json');
+  const skillDirectory = path.join(directory, 'skill');
+  const token = 'local-reset-token-1234';
+  try {
+    const first = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: token });
+    const second = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: token });
+    const registration = await first.registerWorker({ workerId: 'worker-from-process-a', cancel: async () => {} });
+    await first.trigger({ triggeredBy: 'local-human', reason: 'lab stop' });
+    assert.deepEqual(await second.reset({ resetBy: 'mallory', resetToken: 'wrong-token-000000' }), { reset: false, reason: 'RESET_OPERATOR_UNAUTHORIZED' });
+    assert.deepEqual(await second.reset({ resetBy: 'operator', resetToken: token }), { reset: false, reason: 'WORKERS_STILL_REGISTERED', registeredWorkers: 1 });
+    await registration.unregister();
+    assert.deepEqual(await second.reset({ resetBy: 'operator', resetToken: token }), { reset: true });
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('rejects state inside the reinstall-replaced skill directory', () => {
   assert.throws(() => new PersistentKillSwitch({
     stateFile: path.join(os.tmpdir(), 'skill', 'state.json'),
     skillDirectory: path.join(os.tmpdir(), 'skill'),
+    resetToken: 'local-reset-token-1234',
   }), /outside the skill directory/);
 });
 
@@ -52,14 +72,15 @@ test('migrates the legacy enabled schema atomically without reviving approvals',
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
     await fs.mkdir(path.dirname(stateFile), { recursive: true });
-    await fs.writeFile(stateFile, JSON.stringify({ enabled: true, reason: 'legacy lab stop', updatedAt: '2026-11-20T00:00:00.000Z' }), { mode: 0o600 });
-    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory });
+    await fs.writeFile(stateFile, JSON.stringify({ enabled: true, reason: 'legacy lab stop', updated_at: '2026-11-20T00:00:00.000Z' }), { mode: 0o600 });
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
     const status = await killSwitch.assertNotTriggered();
     assert.equal(status.reason, 'KILL_SWITCH_ACTIVE');
     const migrated = JSON.parse(await fs.readFile(stateFile, 'utf8'));
-    assert.equal(migrated.version, 1);
+    assert.equal(migrated.version, 2);
     assert.equal(migrated.active, true);
     assert.equal(migrated.trigger.reason, 'legacy lab stop');
+    assert.equal(migrated.trigger.triggeredAt, Date.parse('2026-11-20T00:00:00.000Z'));
     assert.equal((await fs.readdir(path.dirname(stateFile))).some((name) => name.endsWith('.tmp')), false);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });

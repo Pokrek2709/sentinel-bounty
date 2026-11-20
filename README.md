@@ -19,7 +19,7 @@ Not implemented yet:
 
 - Meta Muse manifest, installation, activation, or tool-permission integration.
 - DNS resolution guard, scanner integration, crawling, or any public-target network adapter.
-- Persistent approval/session state and a hardened operator reset protocol.
+- Persistent approval/session state and a polished operator reset UX (the reset token/lease policy is implemented but not exposed as a CLI).
 
 An in-scope decision does not authorize execution. No real target may be tested unless authorization, scope enforcement, approval, kill switch, audit, and a reviewed network adapter are all in place.
 
