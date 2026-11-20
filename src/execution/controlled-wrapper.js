@@ -18,8 +18,9 @@ class ControlledExecution {
   #spawnProcess;
   #timeoutMs;
   #cancellationGraceMs;
+  #killPollIntervalMs;
 
-  constructor({ registry, approvalGate, governor, killSwitch, tools = {}, spawnProcess = spawn, timeoutMs = 60_000, cancellationGraceMs = 1_000 } = {}) {
+  constructor({ registry, approvalGate, governor, killSwitch, tools = {}, spawnProcess = spawn, timeoutMs = 60_000, cancellationGraceMs = 1_000, killPollIntervalMs = 100 } = {}) {
     if (!registry || typeof registry.evaluate !== 'function' || typeof registry.getScopeFingerprint !== 'function') throw new TypeError('registry is required.');
     if (!approvalGate || typeof approvalGate.authorize !== 'function') throw new TypeError('approvalGate is required.');
     if (!governor || typeof governor.acquire !== 'function' || typeof governor.release !== 'function') throw new TypeError('governor is required.');
@@ -27,6 +28,7 @@ class ControlledExecution {
     if (!tools || typeof tools !== 'object' || Array.isArray(tools)) throw new TypeError('tools must be an object.');
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RangeError('timeoutMs must be a positive integer.');
     if (!Number.isInteger(cancellationGraceMs) || cancellationGraceMs < 0) throw new RangeError('cancellationGraceMs must be a non-negative integer.');
+    if (!Number.isInteger(killPollIntervalMs) || killPollIntervalMs < 10) throw new RangeError('killPollIntervalMs must be an integer of at least 10ms.');
     this.#registry = registry;
     this.#approvalGate = approvalGate;
     this.#governor = governor;
@@ -40,10 +42,11 @@ class ControlledExecution {
     this.#spawnProcess = spawnProcess;
     this.#timeoutMs = timeoutMs;
     this.#cancellationGraceMs = cancellationGraceMs;
+    this.#killPollIntervalMs = killPollIntervalMs;
   }
 
   async execute({ targetId, requestUrl, action, toolName, approvalId, estimatedRequests, scopeFingerprint }) {
-    const killStatus = this.#killSwitch.assertNotTriggered();
+    const killStatus = await this.#killSwitch.assertNotTriggered();
     if (!killStatus.allowed) return result(false, killStatus.reason);
 
     const tool = this.#tools[toolName];
@@ -71,20 +74,42 @@ class ControlledExecution {
     const workerId = `execution-${reservation.reservationId}`;
     let child;
     let timer;
+    let killPoller;
+    let killCheckInFlight = false;
+    let timeoutTriggered = false;
     let settled = false;
     let unregister = () => {};
     const close = () => {
       if (timer) clearTimeout(timer);
+      if (killPoller) clearInterval(killPoller);
       this.#governor.release(reservation.reservationId);
       unregister();
     };
     const terminate = async () => {
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
-      child.kill('SIGTERM');
+      const signalProcessTree = (signal) => {
+        if (process.platform !== 'win32' && child.pid) {
+          try {
+            process.kill(-child.pid, signal);
+            return;
+          } catch (error) {
+            if (!['ESRCH', 'EINVAL'].includes(error.code)) throw error;
+          }
+        }
+        child.kill(signal);
+      };
+      signalProcessTree('SIGTERM');
       if (this.#cancellationGraceMs === 0) return;
       await new Promise((resolve) => setTimeout(resolve, this.#cancellationGraceMs));
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) signalProcessTree('SIGKILL');
     };
+
+    const registration = await this.#killSwitch.registerWorker({ workerId, cancel: terminate });
+    if (!registration.registered) {
+      this.#governor.release(reservation.reservationId);
+      return result(false, registration.reason);
+    }
+    unregister = registration.unregister || (() => {});
 
     const run = new Promise((resolve) => {
       const output = { stdout: '', stderr: '' };
@@ -94,31 +119,47 @@ class ControlledExecution {
         close();
         resolve(value);
       };
-      const registration = this.#killSwitch.registerWorker({ workerId, cancel: terminate });
-      if (!registration.registered) {
-        this.#governor.release(reservation.reservationId);
-        resolve(result(false, registration.reason));
-        return;
-      }
-      unregister = registration.unregister || (() => {});
       try {
-        child = this.#spawnProcess(tool.command, tool.args, { shell: false, windowsHide: true });
+        child = this.#spawnProcess(tool.command, tool.args, {
+          shell: false,
+          windowsHide: true,
+          detached: process.platform !== 'win32',
+        });
       } catch (error) {
-        finish(result(false, 'PROCESS_ERROR', { error: error.message }));
+        finish(result(false, 'PROCESS_ERROR', { error: 'Tool process failed to start.', errorCode: error.code || 'SPAWN_FAILED' }));
         return;
       }
       if (typeof child.stdout?.setEncoding === 'function') child.stdout.setEncoding('utf8');
       if (typeof child.stderr?.setEncoding === 'function') child.stderr.setEncoding('utf8');
       child.stdout?.on('data', (chunk) => { output.stdout += chunk; });
       child.stderr?.on('data', (chunk) => { output.stderr += chunk; });
-      child.once('error', (error) => finish(result(false, 'PROCESS_ERROR', { error: error.message })));
-      child.once('close', (code, signal) => finish(result(code === 0, code === 0 ? 'EXECUTED' : 'PROCESS_FAILED', {
-        exitCode: code,
-        signal,
-        stdout: output.stdout,
-        stderr: output.stderr,
-      })));
+      killPoller = setInterval(async () => {
+        if (killCheckInFlight || settled) return;
+        killCheckInFlight = true;
+        try {
+          const currentKillStatus = await this.#killSwitch.assertNotTriggered();
+          if (!currentKillStatus.allowed) await terminate();
+        } catch {
+          // An unreadable kill-switch state is fail-closed: stop the child.
+          await terminate();
+        } finally {
+          killCheckInFlight = false;
+        }
+      }, this.#killPollIntervalMs);
+      child.once('error', (error) => finish(result(false, 'PROCESS_ERROR', { error: 'Tool process failed during execution.', errorCode: error.code || 'PROCESS_ERROR' })));
+      child.once('close', (code, signal) => finish(result(
+        timeoutTriggered ? false : code === 0,
+        timeoutTriggered ? 'EXECUTION_TIMEOUT' : code === 0 ? 'EXECUTED' : 'PROCESS_FAILED',
+        {
+          exitCode: code,
+          signal,
+          ...(timeoutTriggered ? { timeoutMs: this.#timeoutMs } : {}),
+          stdout: output.stdout,
+          stderr: output.stderr,
+        },
+      )));
       timer = setTimeout(async () => {
+        timeoutTriggered = true;
         await terminate();
         finish(result(false, 'EXECUTION_TIMEOUT', { timeoutMs: this.#timeoutMs, stdout: output.stdout, stderr: output.stderr }));
       }, this.#timeoutMs);

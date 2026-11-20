@@ -7,7 +7,7 @@ This status records repository evidence, not planned capabilities.
 | 0: Muse Secure VM feasibility | Partial | A direct custom-skill trial produced [capability evidence](muse-capability-evidence-2026-11-18.md). Official manifest integration, quotas, and Sentinel cancellation remain open. |
 | 1: Skill foundation | Partial | The platform-neutral [skill contract](../skills/sentinel-bounty/SKILL.md) was discovered as a custom local skill only when copied to the installed skill root, as confirmed in the [follow-up trial](muse-capability-followup-2026-11-19.md). No official Meta Muse manifest exists. |
 | 2: Environment checker | Implemented locally and trialed in Muse | `sentinel check-env` is non-networked; Python detection supports `python3` then `python`. |
-| 3: Scope manager and policy engine | Partial | Local target registration, default-deny scope matching, rate limiting, request budgets, server-pressure backoff, bound approval, an in-memory kill-switch core, and a fixed-command controlled wrapper exist. Persistent state, audit logging, and network adapters remain open. |
+| 3: Scope manager and policy engine | Partial | Local target registration, default-deny scope matching, rate limiting, request budgets, server-pressure backoff, bound approval, a fixed-command wrapper, process-group cancellation on POSIX, and persistent kill-switch state exist. Audit logging, operator reset protocol, and network adapters remain open. |
 
 ## Local-only result
 

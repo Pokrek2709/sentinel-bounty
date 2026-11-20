@@ -12,6 +12,7 @@ Implemented locally:
 - Default-deny target registration and HTTP(S) DNS-host scope matching.
 - Allowlists, excluded domains, and safe-path exclusions.
 - Per-domain token-bucket rate governor, request budgets, concurrency limits, and local server-pressure backoff state.
+- Bound single-use approval gate, fixed-command wrapper, and persistent kill-switch state for local lab execution.
 
 Not implemented yet:
 

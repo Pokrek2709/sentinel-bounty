@@ -1,15 +1,19 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const { ApprovalGate } = require('../src/policy/approval-gate');
 const { ControlledExecution } = require('../src/execution/controlled-wrapper');
 const { KillSwitch } = require('../src/policy/kill-switch');
+const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
 const { RequestGovernor } = require('../src/policy/request-governor');
 const { TargetRegistry } = require('../src/scope/target-registry');
 
 const FINGERPRINT_PLACEHOLDER = '0'.repeat(64);
 
-function setup({ spawnProcess } = {}) {
+function setup({ spawnProcess, killSwitch = new KillSwitch({ clock: () => 0 }), killPollIntervalMs = 100, timeoutMs = 60_000, cancellationGraceMs = 1_000 } = {}) {
   const registry = new TargetRegistry();
   registry.register({
     target_id: 'local-lab', program_name: 'Local lab', authorization_reference: 'LOCAL-LAB',
@@ -20,11 +24,13 @@ function setup({ spawnProcess } = {}) {
   const requested = approvalGate.request({ targetId: 'local-lab', action: 'safe_scanning', estimatedRequests: 1, scopeFingerprint: fingerprint, reason: 'Local lab only' });
   const approved = approvalGate.approve(requested.requestId, { approver: 'local-human' });
   const governor = new RequestGovernor({ requestBudget: 10, clock: () => 0 });
-  const killSwitch = new KillSwitch({ clock: () => 0 });
   const wrapper = new ControlledExecution({
     registry, approvalGate, governor, killSwitch,
     tools: { node_version: { command: process.execPath, args: ['--version'] } },
     spawnProcess,
+    killPollIntervalMs,
+    timeoutMs,
+    cancellationGraceMs,
   });
   return { wrapper, killSwitch, fingerprint, approvalId: approved.approvalId };
 }
@@ -71,8 +77,19 @@ test('refuses an action that the target registration does not allow', async () =
 test('releases policy state when spawning the fixed command throws', async () => {
   const context = setup({ spawnProcess: () => { throw new Error('spawn denied'); } });
   const result = await context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
-  assert.deepEqual(result, { allowed: false, reason: 'PROCESS_ERROR', error: 'spawn denied' });
+  assert.deepEqual(result, { allowed: false, reason: 'PROCESS_ERROR', error: 'Tool process failed to start.', errorCode: 'SPAWN_FAILED' });
   assert.equal(context.killSwitch.snapshot().registeredWorkers, 0);
+});
+
+test('reports timeout even when the child exits after the timeout SIGTERM', async () => {
+  const context = setup({ timeoutMs: 10, cancellationGraceMs: 20, spawnProcess: () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.exitCode = null; child.signalCode = null;
+    child.kill = (signal) => { child.signalCode = signal; child.exitCode = 143; child.emit('close', 143, signal); return true; };
+    return child;
+  } });
+  const result = await context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
+  assert.equal(result.reason, 'EXECUTION_TIMEOUT');
 });
 
 test('requires exact approval and executes one fixed command without a shell', async () => {
@@ -81,8 +98,38 @@ test('requires exact approval and executes one fixed command without a shell', a
   const result = await context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
   assert.equal(result.reason, 'EXECUTED');
   assert.equal(received.options.shell, false);
+  assert.equal(received.options.detached, process.platform !== 'win32');
   assert.equal(received.command, process.execPath);
   assert.deepEqual(received.args, ['--version']);
+});
+
+test('polls persistent kill state so a fresh controller can cancel this process', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-wrapper-'));
+  try {
+    const stateFile = path.join(directory, 'kill-switch.json');
+    const localKillSwitch = new PersistentKillSwitch({ stateFile });
+    const remoteKillSwitch = new PersistentKillSwitch({ stateFile });
+    let child;
+    const context = setup({
+      killSwitch: localKillSwitch,
+      killPollIntervalMs: 10,
+      spawnProcess: () => {
+        child = new EventEmitter();
+        child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.exitCode = null; child.signalCode = null;
+        child.kill = (signal) => { child.signalCode = signal; child.exitCode = 143; child.emit('close', 143, signal); return true; };
+        return child;
+      },
+    });
+    const execution = context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(child, 'wrapper child should be spawned before remote cancellation');
+    await remoteKillSwitch.trigger({ triggeredBy: 'remote-human', reason: 'Cross-process lab stop' });
+    const result = await execution;
+    assert.equal(child.signalCode, 'SIGTERM');
+    assert.equal(result.reason, 'PROCESS_FAILED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('kill switch cancels an active wrapper worker and prevents future execution', async () => {

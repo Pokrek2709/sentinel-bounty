@@ -13,6 +13,10 @@ sentinel check-scope --target <target.json> --url <url>
 
 These commands make no network request and execute no security scanner.
 
+The current local security foundation includes a default-deny scope manager, request governor, bound single-use approval gate, controlled fixed-command wrapper, in-process kill switch, and persistent kill-switch state controller. These components are lab-tested policy primitives only; they are not a network scanner and do not establish official Muse integration.
+
+Search terms: controlled wrapper, kill switch, persistent kill switch, process cancellation, approval gate, request budget, rate limit, default deny.
+
 ## Activation requirements
 
 Do not activate reconnaissance, scanning, crawling, DNS resolution, HTTP probing, or external tools unless all of these have been independently implemented and verified:
