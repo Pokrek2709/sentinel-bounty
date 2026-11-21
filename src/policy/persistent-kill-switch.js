@@ -55,7 +55,12 @@ class PersistentKillSwitch {
   }
 
   async #withLock(operation) {
-    await fs.mkdir(path.dirname(this.#stateFile), { recursive: true, mode: 0o700 });
+    try {
+      await fs.mkdir(path.dirname(this.#stateFile), { recursive: true, mode: 0o700 });
+    } catch (error) {
+      if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('KILL_SWITCH_STATE_UNAVAILABLE');
+      throw error;
+    }
     const started = nowFrom(this.#clock);
     let handle;
     while (!handle) {
@@ -63,8 +68,12 @@ class PersistentKillSwitch {
         handle = await fs.open(this.#lockFile, 'wx', 0o600);
         await handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: nowFrom(this.#clock) }));
       } catch (error) {
-        if (handle) await handle.close();
+        if (handle) {
+          await handle.close();
+          await fs.unlink(this.#lockFile).catch((unlinkError) => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
+        }
         handle = undefined;
+        if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('KILL_SWITCH_STATE_UNAVAILABLE');
         if (error.code !== 'EEXIST' || nowFrom(this.#clock) - started >= this.#lockTimeoutMs) throw new Error('KILL_SWITCH_STATE_LOCKED');
         try {
           const stat = await fs.stat(this.#lockFile);
@@ -85,10 +94,19 @@ class PersistentKillSwitch {
 
   async #writeUnlocked(state) {
     const temporary = `${this.#stateFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(temporary, JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
-    await fs.chmod(temporary, 0o600);
-    await fs.rename(temporary, this.#stateFile);
-    await fs.chmod(this.#stateFile, 0o600);
+    let renamed = false;
+    try {
+      await fs.writeFile(temporary, JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
+      await fs.chmod(temporary, 0o600);
+      await fs.rename(temporary, this.#stateFile);
+      renamed = true;
+      await fs.chmod(this.#stateFile, 0o600);
+    } catch (error) {
+      if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('KILL_SWITCH_STATE_UNAVAILABLE');
+      throw error;
+    } finally {
+      if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+    }
   }
 
   async #readUnlocked() {

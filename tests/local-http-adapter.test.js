@@ -132,3 +132,15 @@ test('recovers a stale audit lock and rotates before the hard limit', async () =
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('reports audit health and removes its probe file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+  const logFile = path.join(directory, 'state', 'audit.jsonl');
+  try {
+    const audit = new AuditLog({ logFile, skillDirectory: path.join(directory, 'skill') });
+    assert.deepEqual(await audit.healthCheck(), { healthy: true });
+    assert.equal((await fs.readdir(path.dirname(logFile))).some((name) => name.endsWith('.health.tmp')), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

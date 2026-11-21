@@ -18,6 +18,7 @@ function usage() {
     '  sentinel kill-switch status [--state-dir <path>]',
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
+    '  sentinel kill-switch audit-health [--state-dir <path>]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
   ].join('\n');
@@ -87,6 +88,12 @@ async function runKillSwitch(action, args) {
   const options = parseOptions(args, ['--state-dir', '--actor', '--reason']);
   const resetTokenHash = action === 'reset' ? await readExpectedResetTokenHash() : undefined;
   const { killSwitch, stateDirectory } = await killSwitchFor(options, resetTokenHash);
+  if (action === 'audit-health') {
+    const health = await new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') }).healthCheck();
+    process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);
+    if (!health.healthy) process.exitCode = 4;
+    return;
+  }
   if (action === 'status') {
     process.stdout.write(`${JSON.stringify(await killSwitch.snapshot(), null, 2)}\n`);
     return;

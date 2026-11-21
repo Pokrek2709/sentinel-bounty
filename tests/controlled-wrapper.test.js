@@ -152,4 +152,5 @@ test('kill switch cancels an active wrapper worker and prevents future execution
   assert.equal(result.cancellation, 'KILL_SWITCH_ACTIVE');
   const blocked = await context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
   assert.equal(blocked.reason, 'KILL_SWITCH_ACTIVE');
+  assert.equal(blocked.cancellation, 'KILL_SWITCH_ACTIVE');
 });

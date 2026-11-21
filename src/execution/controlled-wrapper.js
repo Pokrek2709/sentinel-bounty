@@ -78,7 +78,7 @@ class ControlledExecution {
 
   async execute({ targetId, requestUrl, action, toolName, approvalId, estimatedRequests, scopeFingerprint }) {
     const killStatus = await this.#killSwitch.assertNotTriggered();
-    if (!killStatus.allowed) return result(false, killStatus.reason);
+    if (!killStatus.allowed) return result(false, killStatus.reason, killStatus.reason === 'KILL_SWITCH_ACTIVE' ? { cancellation: 'KILL_SWITCH_ACTIVE' } : {});
 
     const tool = this.#tools[toolName];
     if (!tool) return result(false, 'TOOL_NOT_ALLOWLISTED', { toolName });
@@ -154,7 +154,7 @@ class ControlledExecution {
     });
     if (!registration.registered) {
       this.#governor.release(reservation.reservationId);
-      return result(false, registration.reason);
+      return result(false, registration.reason, registration.reason === 'KILL_SWITCH_ACTIVE' ? { cancellation: 'KILL_SWITCH_ACTIVE' } : {});
     }
     unregister = registration.unregister || (() => {});
 

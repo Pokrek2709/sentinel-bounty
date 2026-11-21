@@ -52,6 +52,7 @@ For a local lab kill-switch, keep the presented reset token in a secure environm
 
 ```sh
 node bin/sentinel.js kill-switch status
+node bin/sentinel.js kill-switch audit-health
 node bin/sentinel.js kill-switch trigger --actor local-operator --reason "stop lab run"
 SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch reset --actor local-operator
 ```

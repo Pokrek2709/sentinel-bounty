@@ -60,13 +60,24 @@ class AuditLog {
   }
 
   async #withLock(operation) {
-    await fs.mkdir(path.dirname(this.#logFile), { recursive: true, mode: 0o700 });
+    try {
+      await fs.mkdir(path.dirname(this.#logFile), { recursive: true, mode: 0o700 });
+    } catch (error) {
+      if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('AUDIT_LOG_STORAGE_UNAVAILABLE');
+      throw error;
+    }
     const started = this.#clock();
     let lock;
     while (!lock) {
       try {
         lock = await fs.open(this.#lockFile, 'wx', 0o600);
       } catch (error) {
+        if (lock) {
+          await lock.close();
+          lock = undefined;
+          await fs.unlink(this.#lockFile).catch((unlinkError) => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
+        }
+        if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('AUDIT_LOG_STORAGE_UNAVAILABLE');
         if (error.code !== 'EEXIST' || this.#clock() - started >= this.#lockTimeoutMs) throw new Error('AUDIT_LOG_LOCKED');
         try {
           const stat = await fs.stat(this.#lockFile);
@@ -117,12 +128,36 @@ class AuditLog {
       }
       if (Buffer.byteLength(next) > MAX_LOG_BYTES) throw new RangeError('Audit record exceeds the maximum size.');
       const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
-      await fs.writeFile(temporary, next, { encoding: 'utf8', mode: 0o600 });
-      await fs.chmod(temporary, 0o600);
-      await fs.rename(temporary, this.#logFile);
-      await fs.chmod(this.#logFile, 0o600);
+      let renamed = false;
+      try {
+        await fs.writeFile(temporary, next, { encoding: 'utf8', mode: 0o600 });
+        await fs.chmod(temporary, 0o600);
+        await fs.rename(temporary, this.#logFile);
+        renamed = true;
+        await fs.chmod(this.#logFile, 0o600);
+      } finally {
+        if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+      }
     });
     return Object.freeze(record);
+  }
+
+  async healthCheck() {
+    try {
+      await this.#withLock(async () => {
+        const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.health.tmp`;
+        try {
+          await fs.writeFile(temporary, '', { encoding: 'utf8', mode: 0o600 });
+        } finally {
+          await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+        }
+      });
+      return Object.freeze({ healthy: true });
+    } catch (error) {
+      if (error.message === 'AUDIT_LOG_LOCKED') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_LOCKED' });
+      if (error.message === 'AUDIT_LOG_STORAGE_UNAVAILABLE' || ['ENOSPC', 'EDQUOT'].includes(error.code)) return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_STORAGE_UNAVAILABLE' });
+      return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_UNAVAILABLE' });
+    }
   }
 }
 
