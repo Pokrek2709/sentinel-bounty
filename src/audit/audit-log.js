@@ -145,9 +145,26 @@ class AuditLog {
   async healthCheck() {
     try {
       await this.#withLock(async () => {
+        let existing = '';
+        try {
+          const stat = await fs.lstat(this.#logFile);
+          if (!stat.isFile()) throw new Error('AUDIT_LOG_INVALID');
+          existing = await fs.readFile(this.#logFile, 'utf8');
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        for (const line of existing.split('\n').filter(Boolean)) {
+          try {
+            const parsed = JSON.parse(line);
+            if (!parsed || typeof parsed !== 'object' || typeof parsed.event !== 'string') throw new Error('AUDIT_LOG_CORRUPT');
+          } catch (error) {
+            if (error.message === 'AUDIT_LOG_CORRUPT') throw error;
+            throw new Error('AUDIT_LOG_CORRUPT');
+          }
+        }
         const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.health.tmp`;
         try {
-          await fs.writeFile(temporary, '', { encoding: 'utf8', mode: 0o600 });
+          await fs.writeFile(temporary, '0'.repeat(2048), { encoding: 'utf8', mode: 0o600 });
         } finally {
           await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
         }
@@ -156,6 +173,8 @@ class AuditLog {
     } catch (error) {
       if (error.message === 'AUDIT_LOG_LOCKED') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_LOCKED' });
       if (error.message === 'AUDIT_LOG_STORAGE_UNAVAILABLE' || ['ENOSPC', 'EDQUOT'].includes(error.code)) return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_STORAGE_UNAVAILABLE' });
+      if (error.message === 'AUDIT_LOG_CORRUPT') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_CORRUPT' });
+      if (error.message === 'AUDIT_LOG_INVALID') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_INVALID' });
       return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_UNAVAILABLE' });
     }
   }

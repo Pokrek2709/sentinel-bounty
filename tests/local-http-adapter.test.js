@@ -144,3 +144,21 @@ test('reports audit health and removes its probe file', async () => {
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('audit health rejects a directory or malformed JSONL log', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+  const logFile = path.join(directory, 'state', 'audit.jsonl');
+  const skillDirectory = path.join(directory, 'skill');
+  try {
+    await fs.mkdir(logFile, { recursive: true });
+    const directoryAudit = new AuditLog({ logFile, skillDirectory });
+    assert.deepEqual(await directoryAudit.healthCheck(), { healthy: false, reason: 'AUDIT_LOG_INVALID' });
+    await fs.rm(logFile, { recursive: true, force: true });
+    await fs.mkdir(path.dirname(logFile), { recursive: true });
+    await fs.writeFile(logFile, 'not-json\n', { mode: 0o600 });
+    const malformedAudit = new AuditLog({ logFile, skillDirectory });
+    assert.deepEqual(await malformedAudit.healthCheck(), { healthy: false, reason: 'AUDIT_LOG_CORRUPT' });
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
