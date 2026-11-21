@@ -128,6 +128,7 @@ test('polls persistent kill state so a fresh controller can cancel this process'
     const result = await execution;
     assert.equal(child.signalCode, 'SIGTERM');
     assert.equal(result.reason, 'PROCESS_FAILED');
+    assert.equal(result.cancellation, 'KILL_SWITCH_ACTIVE');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -148,6 +149,7 @@ test('kill switch cancels an active wrapper worker and prevents future execution
   assert.equal(trigger.triggered, true);
   assert.equal(child.signalCode, 'SIGTERM');
   assert.equal(result.reason, 'PROCESS_FAILED');
+  assert.equal(result.cancellation, 'KILL_SWITCH_ACTIVE');
   const blocked = await context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
   assert.equal(blocked.reason, 'KILL_SWITCH_ACTIVE');
 });

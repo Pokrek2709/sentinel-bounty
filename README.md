@@ -56,7 +56,7 @@ node bin/sentinel.js kill-switch trigger --actor local-operator --reason "stop l
 SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch reset --actor local-operator
 ```
 
-The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset events are recorded in `audit.jsonl`.
+The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset events are recorded in `audit.jsonl`; if that append fails, the state action still completes but the CLI returns a non-zero audit-integrity signal. Token rotation and expiry remain out-of-band.
 
 ## Project layout
 

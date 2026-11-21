@@ -76,3 +76,25 @@ test('operator CLI rejects a state directory inside the installed skill', async 
   assert.match(result.stderr, /outside the skill directory/);
   await fs.rm(inside, { recursive: true, force: true });
 });
+
+test('operator CLI rejects a symlinked reset-token digest file', async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-link-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const target = path.join(directory, 'real-token.sha256');
+  const link = path.join(directory, 'linked-token.sha256');
+  try {
+    await fs.writeFile(target, `${crypto.createHash('sha256').update(token).digest('hex')}\n`, { mode: 0o600 });
+    try {
+      await fs.symlink(target, link, 'file');
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.code || error.message}`);
+      return;
+    }
+    assert.equal((await invoke(['trigger', '--actor', 'operator', '--reason', 'lab stop'], directory)).code, 0);
+    const reset = await invoke(['reset', '--actor', 'operator'], directory, token, link);
+    assert.equal(reset.code, 3);
+    assert.equal(parse(reset.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

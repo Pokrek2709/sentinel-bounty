@@ -108,6 +108,7 @@ class ControlledExecution {
     let killPoller;
     let killCheckInFlight = false;
     let timeoutTriggered = false;
+    let cancellationCause = null;
     let settled = false;
     let finishRun = null;
     let unregister = () => {};
@@ -118,6 +119,7 @@ class ControlledExecution {
       await unregister();
     };
     const terminate = async ({ cause = 'CANCEL' } = {}) => {
+      if (cause === 'KILL_SWITCH') cancellationCause = 'KILL_SWITCH';
       if (!child || child.exitCode !== null || child.signalCode !== null) return;
       const descendantPids = await collectDescendantPids(child.pid);
       const signalProcessTree = (signal) => {
@@ -146,7 +148,10 @@ class ControlledExecution {
       if (cause === 'KILL_SWITCH' && !settled && finishRun) finishRun(result(false, 'PROCESS_FAILED', { cancellation: 'KILL_SWITCH_ACTIVE' }));
     };
 
-    const registration = await this.#killSwitch.registerWorker({ workerId, cancel: terminate });
+    const registration = await this.#killSwitch.registerWorker({
+      workerId,
+      cancel: (request = {}) => terminate({ cause: request.reason === 'KILL_SWITCH_ACTIVE' ? 'KILL_SWITCH' : 'CANCEL' }),
+    });
     if (!registration.registered) {
       this.#governor.release(reservation.reservationId);
       return result(false, registration.reason);
@@ -201,12 +206,13 @@ class ControlledExecution {
       }, this.#killPollIntervalMs);
       child.once('error', (error) => finish(result(false, 'PROCESS_ERROR', { error: 'Tool process failed during execution.', errorCode: error.code || 'PROCESS_ERROR' })));
       child.once('close', (code, signal) => finish(result(
-        timeoutTriggered ? false : code === 0,
-        timeoutTriggered ? 'EXECUTION_TIMEOUT' : code === 0 ? 'EXECUTED' : 'PROCESS_FAILED',
+        timeoutTriggered ? false : cancellationCause === 'KILL_SWITCH' ? false : code === 0,
+        timeoutTriggered ? 'EXECUTION_TIMEOUT' : cancellationCause === 'KILL_SWITCH' ? 'PROCESS_FAILED' : code === 0 ? 'EXECUTED' : 'PROCESS_FAILED',
         {
           exitCode: code,
           signal,
           ...(timeoutTriggered ? { timeoutMs: this.#timeoutMs } : {}),
+          ...(cancellationCause === 'KILL_SWITCH' ? { cancellation: 'KILL_SWITCH_ACTIVE' } : {}),
           stdout: output.stdout,
           stderr: output.stderr,
         },

@@ -55,9 +55,16 @@ async function readExpectedResetTokenHash() {
   const hashFile = pathOutsideSkill(configured);
   if (!hashFile) return undefined;
   try {
-    const stat = await fs.stat(hashFile);
-    if (!stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) return undefined;
-    const value = (await fs.readFile(hashFile, 'utf8')).trim().toLowerCase();
+    const stat = await fs.lstat(hashFile);
+    if (stat.isSymbolicLink() || !stat.isFile()) return undefined;
+    const [realHashFile, realSkillDirectory] = await Promise.all([
+      fs.realpath(hashFile),
+      fs.realpath(path.resolve(__dirname, '..')),
+    ]);
+    const realRelative = path.relative(realSkillDirectory, realHashFile);
+    if (realRelative === '' || (!realRelative.startsWith('..') && !path.isAbsolute(realRelative))) return undefined;
+    if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) return undefined;
+    const value = (await fs.readFile(realHashFile, 'utf8')).trim().toLowerCase();
     return /^[a-f0-9]{64}$/.test(value) ? value : undefined;
   } catch {
     return undefined;
