@@ -26,7 +26,8 @@ Search terms: controlled wrapper, kill switch, persistent kill switch, process c
 
 - Kill-switch state is stored outside the reinstallable skill directory, by default at `~/workspace/sentinel-bounty/state/kill-switch.json`. State writes use a lock, atomic rename, and mode `0600`; stale locks are recoverable.
 - Active wrappers register short worker leases (default five seconds) and renew them by heartbeat. A reset is denied while any live lease from any process remains; expired leases are pruned so a crashed worker cannot block recovery forever.
-- Use `sentinel kill-switch status` for read-only status, `trigger --actor <id> --reason <reason>` to activate the switch, and `reset --actor <id>` to clear it after workers have stopped. Reset requires `SENTINEL_OPERATOR_RESET_TOKEN` from a secure vault/environment; never put the token in command-line arguments, logs, or chat.
+- Use `sentinel kill-switch status` for read-only status, `trigger --actor <id> --reason <reason>` to activate the switch, and `reset --actor <id>` to clear it after workers have stopped. Reset requires the presented `SENTINEL_OPERATOR_RESET_TOKEN` plus an independently provisioned SHA-256 digest file referenced by `SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE`; never put the token in command-line arguments, logs, or chat. The digest file is outside the skill directory and should be mode `0600`.
+- Trigger and reset attempts are written to the metadata-only audit log. If the audit append fails, the CLI reports `auditLogged: false` and exits non-zero; no token is written to the event details.
 - Audit logs are metadata-only, redact cookies/authorization-like values, use mode `0600`, recover stale locks, rotate at 8 MiB, and retain three rotated files. The hard per-record limit remains 32 KiB and the active log limit remains 10 MiB.
 - Approval records remain single-use and in memory; reinstall or restart must not revive an old approval ID.
 

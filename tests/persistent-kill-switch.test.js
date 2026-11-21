@@ -48,11 +48,30 @@ test('protects reset against workers registered by another process and requires 
     const first = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: token });
     const second = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: token });
     const registration = await first.registerWorker({ workerId: 'worker-from-process-a', cancel: async () => {} });
+    const workerSnapshot = await second.snapshot();
+    assert.equal(workerSnapshot.registeredWorkers, 1);
+    assert.equal(workerSnapshot.workers[0].workerId, 'worker-from-process-a');
+    assert.equal(workerSnapshot.workers[0].pid, process.pid);
+    assert.ok(workerSnapshot.workers[0].leaseExpiresAt > Date.now());
     await first.trigger({ triggeredBy: 'local-human', reason: 'lab stop' });
     assert.deepEqual(await second.reset({ resetBy: 'mallory', resetToken: 'wrong-token-000000' }), { reset: false, reason: 'RESET_OPERATOR_UNAUTHORIZED' });
     assert.deepEqual(await second.reset({ resetBy: 'operator', resetToken: token }), { reset: false, reason: 'WORKERS_STILL_REGISTERED', registeredWorkers: 1 });
     await registration.unregister();
     assert.deepEqual(await second.reset({ resetBy: 'operator', resetToken: token }), { reset: true });
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('matches a presented token against an independently provisioned digest', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+  const token = 'independent-reset-token-1234';
+  try {
+    const digest = require('node:crypto').createHash('sha256').update(token).digest('hex');
+    const killSwitch = new PersistentKillSwitch({ stateFile: path.join(directory, 'state', 'kill.json'), skillDirectory: path.join(directory, 'skill'), resetTokenHash: digest });
+    await killSwitch.trigger({ triggeredBy: 'operator', reason: 'lab stop' });
+    assert.deepEqual(await killSwitch.reset({ resetBy: 'operator', resetToken: 'wrong-token-that-is-long-enough-1234' }), { reset: false, reason: 'RESET_OPERATOR_UNAUTHORIZED' });
+    assert.deepEqual(await killSwitch.reset({ resetBy: 'operator', resetToken: token }), { reset: true });
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

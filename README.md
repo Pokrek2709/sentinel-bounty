@@ -48,15 +48,15 @@ node bin/sentinel.js check-env --probe-dir storage --output storage/environment-
 
 `storage/` is intentionally ignored by Git.
 
-For a local lab kill-switch, keep the reset token in a secure environment or vault; do not pass it as a CLI argument:
+For a local lab kill-switch, keep the presented reset token in a secure environment or vault and provision its SHA-256 digest separately; do not pass the token as a CLI argument:
 
 ```sh
 node bin/sentinel.js kill-switch status
 node bin/sentinel.js kill-switch trigger --actor local-operator --reason "stop lab run"
-SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" node bin/sentinel.js kill-switch reset --actor local-operator
+SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch reset --actor local-operator
 ```
 
-The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease.
+The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset events are recorded in `audit.jsonl`.
 
 ## Project layout
 

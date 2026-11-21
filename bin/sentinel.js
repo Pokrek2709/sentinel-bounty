@@ -6,6 +6,7 @@ const path = require('node:path');
 const { runEnvironmentCheck } = require('../src/environment/checker');
 const { TargetRegistry } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
+const { AuditLog } = require('../src/audit/audit-log');
 
 const DEFAULT_STATE_DIRECTORY = path.join(os.homedir(), 'workspace', 'sentinel-bounty', 'state');
 
@@ -40,18 +41,45 @@ function parseOptions(args, permitted) {
   return options;
 }
 
-function killSwitchFor(options) {
+function pathOutsideSkill(candidate) {
+  const skillDirectory = path.resolve(__dirname, '..');
+  const resolved = path.resolve(candidate);
+  const relative = path.relative(skillDirectory, resolved);
+  if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return null;
+  return resolved;
+}
+
+async function readExpectedResetTokenHash() {
+  const configured = process.env.SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE;
+  if (!configured) return undefined;
+  const hashFile = pathOutsideSkill(configured);
+  if (!hashFile) return undefined;
+  try {
+    const stat = await fs.stat(hashFile);
+    if (!stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) return undefined;
+    const value = (await fs.readFile(hashFile, 'utf8')).trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function killSwitchFor(options, resetTokenHash) {
   const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
-  return new PersistentKillSwitch({
+  return {
+    killSwitch: new PersistentKillSwitch({
     stateFile: path.join(stateDirectory, 'kill-switch.json'),
     skillDirectory: path.resolve(__dirname, '..'),
-    resetToken: process.env.SENTINEL_OPERATOR_RESET_TOKEN,
-  });
+    resetTokenHash,
+    }),
+    stateDirectory,
+  };
 }
 
 async function runKillSwitch(action, args) {
   const options = parseOptions(args, ['--state-dir', '--actor', '--reason']);
-  const killSwitch = killSwitchFor(options);
+  const resetTokenHash = action === 'reset' ? await readExpectedResetTokenHash() : undefined;
+  const { killSwitch, stateDirectory } = await killSwitchFor(options, resetTokenHash);
   if (action === 'status') {
     process.stdout.write(`${JSON.stringify(await killSwitch.snapshot(), null, 2)}\n`);
     return;
@@ -60,17 +88,31 @@ async function runKillSwitch(action, args) {
   if (action === 'trigger') {
     if (!options.reason) throw new Error('kill-switch trigger requires --reason.');
     const result = await killSwitch.trigger({ triggeredBy: options.actor, reason: options.reason });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TRIGGER', { actor: options.actor, reason: options.reason, result: result.reason || 'TRIGGERED' });
+    process.stdout.write(`${JSON.stringify({ ...result, auditLogged }, null, 2)}\n`);
+    if (!auditLogged) process.exitCode = 4;
     if (!result.triggered && result.reason !== 'KILL_SWITCH_ALREADY_ACTIVE') process.exitCode = 3;
     return;
   }
   if (action === 'reset') {
     const result = await killSwitch.reset({ resetBy: options.actor, resetToken: process.env.SENTINEL_OPERATOR_RESET_TOKEN });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const auditLogged = await appendOperatorAudit(stateDirectory, result.reset ? 'KILL_SWITCH_RESET' : 'KILL_SWITCH_RESET_DENIED', { actor: options.actor, result: result.reason || 'RESET' });
+    process.stdout.write(`${JSON.stringify({ ...result, auditLogged }, null, 2)}\n`);
+    if (!auditLogged) process.exitCode = 4;
     if (!result.reset) process.exitCode = 3;
     return;
   }
   throw new Error(`Unknown kill-switch action: ${action}`);
+}
+
+async function appendOperatorAudit(stateDirectory, event, details) {
+  try {
+    const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
+    await audit.append(event, details);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function main(argv) {

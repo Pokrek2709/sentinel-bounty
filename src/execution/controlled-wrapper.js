@@ -153,6 +153,16 @@ class ControlledExecution {
     }
     unregister = registration.unregister || (() => {});
 
+    // A remote trigger can arrive in the gap between worker registration and
+    // child creation. Re-check before spawning so cancellation never permits a
+    // process to start after the persistent switch is active.
+    const postRegistrationKillStatus = await this.#killSwitch.assertNotTriggered();
+    if (!postRegistrationKillStatus.allowed) {
+      await unregister();
+      this.#governor.release(reservation.reservationId);
+      return result(false, 'PROCESS_FAILED', { cancellation: 'KILL_SWITCH_ACTIVE' });
+    }
+
     const run = new Promise((resolve) => {
       const output = { stdout: '', stderr: '' };
       const finish = (value) => {

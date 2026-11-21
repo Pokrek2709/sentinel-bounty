@@ -122,7 +122,7 @@ test('polls persistent kill state so a fresh controller can cancel this process'
       },
     });
     const execution = context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    for (let attempt = 0; attempt < 100 && !child; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(child, 'wrapper child should be spawned before remote cancellation');
     await remoteKillSwitch.trigger({ triggeredBy: 'remote-human', reason: 'Cross-process lab stop' });
     const result = await execution;

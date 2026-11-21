@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -9,10 +10,14 @@ const test = require('node:test');
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
 
-async function invoke(args, stateDirectory, token) {
+async function invoke(args, stateDirectory, token, hashFile) {
   try {
     const result = await execFileAsync(process.execPath, [CLI, 'kill-switch', ...args, '--state-dir', stateDirectory], {
-      env: { ...process.env, ...(token === undefined ? { SENTINEL_OPERATOR_RESET_TOKEN: undefined } : { SENTINEL_OPERATOR_RESET_TOKEN: token }) },
+      env: {
+        ...process.env,
+        SENTINEL_OPERATOR_RESET_TOKEN: token,
+        SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE: hashFile,
+      },
       windowsHide: true,
     });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
@@ -28,10 +33,12 @@ function parse(stdout) {
 test('operator CLI exposes status, trigger, and token-gated reset without printing the token', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-'));
   const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
+    await fs.writeFile(hashFile, `${crypto.createHash('sha256').update(token).digest('hex')}\n`, { mode: 0o600 });
     const initial = await invoke(['status'], directory);
     assert.equal(initial.code, 0);
-    assert.deepEqual(parse(initial.stdout), { active: false, trigger: null, registeredWorkers: 0, version: 2 });
+    assert.deepEqual(parse(initial.stdout), { active: false, trigger: null, registeredWorkers: 0, workers: [], version: 2 });
 
     const triggered = await invoke(['trigger', '--actor', 'operator', '--reason', 'lab stop'], directory);
     assert.equal(triggered.code, 0);
@@ -43,9 +50,19 @@ test('operator CLI exposes status, trigger, and token-gated reset without printi
     assert.equal(unauthorized.stdout.includes(token), false);
     assert.equal(unauthorized.stderr.includes(token), false);
 
-    const reset = await invoke(['reset', '--actor', 'operator'], directory, token);
+    const wrongToken = await invoke(['reset', '--actor', 'operator'], directory, 'wrong-token-that-is-long-enough-1234', hashFile);
+    assert.equal(wrongToken.code, 3);
+    assert.equal(parse(wrongToken.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+    assert.equal(wrongToken.stdout.includes(token), false);
+
+    const reset = await invoke(['reset', '--actor', 'operator'], directory, token, hashFile);
     assert.equal(reset.code, 0);
-    assert.deepEqual(parse(reset.stdout), { reset: true });
+    assert.equal(parse(reset.stdout).reset, true);
+    assert.equal(parse(reset.stdout).auditLogged, true);
+    const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
+    assert.match(audit, /KILL_SWITCH_TRIGGER/);
+    assert.match(audit, /KILL_SWITCH_RESET/);
+    assert.equal(audit.includes(token), false);
     assert.equal(parse((await invoke(['status'], directory)).stdout).active, false);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
