@@ -12,14 +12,14 @@ Implemented locally:
 - Default-deny target registration and HTTP(S) DNS-host scope matching.
 - Allowlists, excluded domains, and safe-path exclusions.
 - Per-domain token-bucket rate governor, request budgets, concurrency limits, and local server-pressure backoff state.
-- Bound single-use approval gate, fixed-command wrapper, and persistent kill-switch state for local lab execution.
+- Bound single-use approval gate, fixed-command wrapper, persistent kill-switch state, and token-gated operator CLI for local lab execution.
 - GET-only `localhost` HTTP adapter with bounded audit logging for the local lab.
 
 Not implemented yet:
 
 - Meta Muse manifest, installation, activation, or tool-permission integration.
 - DNS resolution guard, scanner integration, crawling, or any public-target network adapter.
-- Persistent approval/session state and a polished operator reset UX (the reset token/lease policy is implemented but not exposed as a CLI).
+- Persistent approval/session state and a Muse-native operator API.
 
 An in-scope decision does not authorize execution. No real target may be tested unless authorization, scope enforcement, approval, kill switch, audit, and a reviewed network adapter are all in place.
 
@@ -47,6 +47,16 @@ node bin/sentinel.js check-env --probe-dir storage --output storage/environment-
 ```
 
 `storage/` is intentionally ignored by Git.
+
+For a local lab kill-switch, keep the reset token in a secure environment or vault; do not pass it as a CLI argument:
+
+```sh
+node bin/sentinel.js kill-switch status
+node bin/sentinel.js kill-switch trigger --actor local-operator --reason "stop lab run"
+SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" node bin/sentinel.js kill-switch reset --actor local-operator
+```
+
+The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease.
 
 ## Project layout
 

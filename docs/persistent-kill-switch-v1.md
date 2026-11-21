@@ -1,4 +1,4 @@
-# Persistent kill switch v1
+# Persistent kill switch v2 (with v1 compatibility)
 
 `src/policy/persistent-kill-switch.js` is a cross-process policy state controller for the local lab and future controlled wrapper. It is not a Muse-native API and it does not itself discover or kill arbitrary processes.
 
@@ -14,4 +14,4 @@
 
 The controlled wrapper polls this state while a child is active. A fresh controller can therefore activate the switch, and a wrapper in another process observes it and begins cancellation. The process-group cancellation path is strongest on POSIX runtimes; Windows uses the direct-child fallback.
 
-This component still needs a production-grade operator UX and audit integration; the local HTTP adapter already uses it for lab-only cancellation.
+The repository now exposes a local operator CLI: `kill-switch status`, `kill-switch trigger`, and token-gated `kill-switch reset`. The reset token must be supplied through `SENTINEL_OPERATOR_RESET_TOKEN`, never as a command-line argument. This is still a lab operator channel, not a Muse-native identity or approval API. The local HTTP adapter uses the controller for lab-only cancellation and emits metadata-only audit events.

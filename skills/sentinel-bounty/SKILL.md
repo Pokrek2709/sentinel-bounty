@@ -11,6 +11,9 @@ Sentinel Bounty is a safety-first research assistant for authorized security wor
 ```text
 sentinel check-env [--output <path>] [--probe-dir <path>]
 sentinel check-scope --target <target.json> --url <url>
+sentinel kill-switch status [--state-dir <path>]
+sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]
+sentinel kill-switch reset --actor <id> [--state-dir <path>]
 ```
 
 These commands make no network request and execute no security scanner.
@@ -18,6 +21,14 @@ These commands make no network request and execute no security scanner.
 The current local security foundation includes a default-deny scope manager, request governor, bound single-use approval gate, controlled fixed-command wrapper, in-process kill switch, and persistent kill-switch state controller. These components are lab-tested policy primitives only; they are not a network scanner and do not establish official Muse integration.
 
 Search terms: controlled wrapper, kill switch, persistent kill switch, process cancellation, approval gate, request budget, rate limit, default deny.
+
+## Operator controls and persistent state
+
+- Kill-switch state is stored outside the reinstallable skill directory, by default at `~/workspace/sentinel-bounty/state/kill-switch.json`. State writes use a lock, atomic rename, and mode `0600`; stale locks are recoverable.
+- Active wrappers register short worker leases (default five seconds) and renew them by heartbeat. A reset is denied while any live lease from any process remains; expired leases are pruned so a crashed worker cannot block recovery forever.
+- Use `sentinel kill-switch status` for read-only status, `trigger --actor <id> --reason <reason>` to activate the switch, and `reset --actor <id>` to clear it after workers have stopped. Reset requires `SENTINEL_OPERATOR_RESET_TOKEN` from a secure vault/environment; never put the token in command-line arguments, logs, or chat.
+- Audit logs are metadata-only, redact cookies/authorization-like values, use mode `0600`, recover stale locks, rotate at 8 MiB, and retain three rotated files. The hard per-record limit remains 32 KiB and the active log limit remains 10 MiB.
+- Approval records remain single-use and in memory; reinstall or restart must not revive an old approval ID.
 
 ## Activation requirements
 

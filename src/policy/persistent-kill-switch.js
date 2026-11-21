@@ -37,7 +37,7 @@ class PersistentKillSwitch {
     const relativeStatePath = path.relative(path.resolve(skillDirectory), path.resolve(stateFile));
     if (relativeStatePath === '' || (!relativeStatePath.startsWith('..') && !path.isAbsolute(relativeStatePath))) throw new TypeError('stateFile must be outside the skill directory.');
     if (typeof clock !== 'function') throw new TypeError('clock must be a function.');
-    if (typeof resetToken !== 'string' || resetToken.length < 16) throw new TypeError('resetToken must be at least 16 characters and must come from a secure operator channel.');
+    if (resetToken !== undefined && (typeof resetToken !== 'string' || resetToken.length < 16)) throw new TypeError('resetToken must be at least 16 characters and must come from a secure operator channel.');
     if (![lockTimeoutMs, lockRetryMs, staleLockMs].every((value) => Number.isInteger(value) && value >= 0)) throw new TypeError('lock timing values must be non-negative integers.');
     if (!Number.isInteger(workerLeaseMs) || workerLeaseMs < 1_000) throw new TypeError('workerLeaseMs must be at least 1000ms.');
     this.#stateFile = stateFile;
@@ -47,7 +47,7 @@ class PersistentKillSwitch {
     this.#lockRetryMs = lockRetryMs;
     this.#staleLockMs = staleLockMs;
     this.#workerLeaseMs = workerLeaseMs;
-    this.#resetToken = resetToken;
+    this.#resetToken = resetToken || null;
   }
 
   async #withLock(operation) {
@@ -125,7 +125,7 @@ class PersistentKillSwitch {
   }
 
   #operatorMatches(token) {
-    if (typeof token !== 'string' || token.length !== this.#resetToken.length) return false;
+    if (!this.#resetToken || typeof token !== 'string' || token.length !== this.#resetToken.length) return false;
     return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.#resetToken));
   }
 
@@ -158,11 +158,22 @@ class PersistentKillSwitch {
     const normalizedWorkerId = requireString(workerId, 'workerId', 200);
     if (!this.#workers.has(normalizedWorkerId)) return false;
     return this.#withLock(async () => {
+      if (!this.#workers.has(normalizedWorkerId)) return false;
       const current = this.#pruneWorkers(await this.#readUnlocked());
       const workers = current.workers.map((worker) => worker.workerId === normalizedWorkerId ? { ...worker, leaseExpiresAt: nowFrom(this.#clock) + this.#workerLeaseMs } : worker);
       await this.#writeUnlocked({ ...current, workers });
       return true;
     });
+  }
+
+  async snapshot() {
+    const state = await this.#withLock(async () => {
+      const current = await this.#readUnlocked();
+      const pruned = this.#pruneWorkers(current);
+      if (pruned !== current) await this.#writeUnlocked(pruned);
+      return pruned;
+    });
+    return Object.freeze({ active: state.active, trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null, registeredWorkers: state.workers.length, version: state.version });
   }
 
   async trigger({ triggeredBy, reason }) {
