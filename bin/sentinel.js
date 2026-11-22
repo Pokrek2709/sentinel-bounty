@@ -202,10 +202,15 @@ async function runKillSwitch(action, args) {
       revocation = await withTokenRotationLock(configuredTokenPath, async () => {
         const events = await audit.readEvents();
         const pending = [...events].reverse().find((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKE_PENDING');
-        const alreadyRevoked = pending && events.some((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKED' && event.details?.keyId === pending.details?.keyId);
-        if (alreadyRevoked) return { revoked: false, reason: 'RESET_TOKEN_ALREADY_REVOKED', auditLogged: true };
         const current = await readExpectedResetTokenHash();
-        const keyId = current?.keyId || pending?.details?.keyId;
+        const pendingKeyId = pending?.details?.keyId;
+        const matchingRevoked = pendingKeyId && events.some((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKED' && event.details?.keyId === pendingKeyId);
+        // A completed marker for an old key must not block revocation of a newly
+        // provisioned key in the same state directory. When the digest is gone,
+        // the marker remains the only identity available for idempotent retry.
+        const alreadyRevoked = matchingRevoked && (!current || current.keyId === pendingKeyId);
+        if (alreadyRevoked) return { revoked: false, reason: 'RESET_TOKEN_ALREADY_REVOKED', auditLogged: true };
+        const keyId = current?.keyId || pendingKeyId;
         if (!keyId) return { revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditLogged: false };
         if (current && crypto.createHash('sha256').update(presented).digest('hex') !== current.digest) return { revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditLogged: false };
         const pendingLogged = pending?.details?.keyId === keyId || await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_REVOKE_PENDING', { actor: options.actor, keyId, requestedAt: new Date().toISOString() });
@@ -214,7 +219,7 @@ async function runKillSwitch(action, args) {
         const revokedAt = new Date().toISOString();
         const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_REVOKED', { actor: options.actor, keyId, revokedAt });
         if (!auditLogged) return { revoked: false, reason: 'AUDIT_LOG_WRITE_FAILED', auditLogged: false, keyId, revokedAt };
-        return { revoked: true, keyId, revokedAt, auditLogged: true, recovered: Boolean(pending) };
+        return { revoked: true, keyId, revokedAt, auditLogged: true, recovered: pendingKeyId === keyId };
       });
     } catch (error) {
       process.stdout.write(`${JSON.stringify({ revoked: false, reason: ['RESET_TOKEN_FILE_UNAVAILABLE', 'RESET_TOKEN_ROTATION_LOCKED'].includes(error.message) ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);

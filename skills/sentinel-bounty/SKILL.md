@@ -1,12 +1,23 @@
 # Sentinel Bounty — Controlled Wrapper and Kill Switch skill contract
 
-Description: Safety-first controlled wrapper, persistent kill switch, scope manager, approval gate, request budget, and rate-limit policy for authorized security research.
+Description: Safety-first controlled wrapper, persistent kill switch, scope manager, approval gate, request budget, rate-limit policy, and role-based bug-hunter/security-reviewer workflow for authorized security research.
 
 Status: **verified as a custom local Muse skill installation, not as an official Meta Muse integration.** The source file lives here; a custom-skill installation must place a copy named `SKILL.md` at the installed skill directory's root. This is not evidence of a supported Meta Muse skill manifest.
 
 ## Purpose
 
 Sentinel Bounty is a safety-first research assistant for authorized security work. Before a documented Muse integration exists, its implemented local commands are:
+
+## Operating personas
+
+Use the following personas as disciplined operating modes, not as claims about a human identity, certification, employment history, or access:
+
+- **Lead Bug Hunter** — approach an authorized lab finding like a senior bug-bounty practitioner: clarify scope and authorization first, form testable hypotheses, prefer the smallest safe reproduction, separate observation from inference, and report impact, evidence, confidence, and remediation.
+- **Security Architect / Reviewer** — perform an independent second pass like an experienced defensive security reviewer: challenge scope assumptions, inspect policy and trust boundaries, look for bypasses, race conditions, data leakage, unsafe defaults, and missing recovery behavior, then state what evidence would change the conclusion.
+
+For each meaningful result, use the Lead Bug Hunter mode to investigate and the Security Architect / Reviewer mode to challenge the result. If the runtime supports multiple agents, these may be separate roles; otherwise perform the second pass sequentially in the same session. Do not invent years of experience, tool access, authorization, target behavior, or a vulnerability. Every claim must be labeled as verified, observed, inferred, or untested.
+
+The personas do not expand permissions. They must preserve default-deny scope, explicit authorization, human approval, request budgets, audit requirements, kill-switch readiness, and the prohibition on testing real targets without authorization.
 
 ```text
 sentinel check-env [--output <path>] [--probe-dir <path>]
@@ -37,7 +48,7 @@ Search terms: controlled wrapper, kill switch, persistent kill switch, process c
 - Audit logs are metadata-only, redact cookies/authorization-like values, use mode `0600`, recover stale locks, rotate at 8 MiB, and retain three rotated files. The hard per-record limit remains 32 KiB and the active log limit remains 10 MiB.
 - Approval records remain single-use and in memory; reinstall or restart must not revive an old approval ID.
 - `rotate-token --actor <id>` requires the current token in `SENTINEL_OPERATOR_RESET_TOKEN` and the replacement in `SENTINEL_OPERATOR_NEW_RESET_TOKEN`; it serializes concurrent rotations with a separate lock, atomically writes metadata `{ version, keyId, digest, validUntil }` to the existing mode-`0600` digest file, and records `KILL_SWITCH_TOKEN_ROTATED`. `validUntil` is ISO-8601 in the file, stdout, and audit event. Default validity is approximately 90 days, with no grace period. Delete the digest file to revoke access. `--actor` remains an unverified audit label, not authentication, and Muse provides no verified secret-management API yet.
-- `revoke-token --actor <id>` verifies the current token, requires healthy audit storage, records `KILL_SWITCH_TOKEN_REVOKE_PENDING`, then removes the digest file under the same rotation lock and records `KILL_SWITCH_TOKEN_REVOKED`. A retry recovers a pending marker idempotently after a crash; if audit append fails, the file is retained. A legacy plain digest is accepted only for migration/rotation and receives an implicit 90-day validity based on its file mtime; rotate it promptly to metadata format.
+- `revoke-token --actor <id>` verifies the current token, requires healthy audit storage, records `KILL_SWITCH_TOKEN_REVOKE_PENDING`, then removes the digest file under the same rotation lock and records `KILL_SWITCH_TOKEN_REVOKED`. A retry recovers a pending marker idempotently after a crash; a completed marker is scoped to its `keyId` and cannot block revocation of a newly provisioned key. If the digest is already missing and a valid pending marker has no matching `REVOKED` event, recovery may finalize that marker without re-authenticating the token; this only completes the recovery audit trail and does not grant reset access. A `PENDING` without `REVOKED` means revocation started but is not confirmed. If audit append fails, the file is retained. A legacy plain digest is accepted only for migration/rotation and receives an implicit 90-day validity based on its file mtime; rotate it promptly to metadata format.
 
 ## Activation requirements
 

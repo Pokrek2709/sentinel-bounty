@@ -201,3 +201,40 @@ test('revoke-token recovers an interrupted pending revocation idempotently', asy
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('revoke-token allows a newly provisioned key after an older key was revoked', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-sequential-'));
+  const tokenA = 'operator-token-first-generation-1234';
+  const tokenB = 'operator-token-second-generation-5678';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await fs.writeFile(hashFile, JSON.stringify({
+      version: 1,
+      keyId: 'key-a',
+      digest: crypto.createHash('sha256').update(tokenA).digest('hex'),
+      validUntil: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+    }) + '\n', { mode: 0o600 });
+    const revokedA = await invoke(['revoke-token', '--actor', 'operator'], directory, tokenA, hashFile);
+    assert.equal(revokedA.code, 0);
+    assert.equal(parse(revokedA.stdout).keyId, 'key-a');
+
+    await fs.writeFile(hashFile, JSON.stringify({
+      version: 1,
+      keyId: 'key-b',
+      digest: crypto.createHash('sha256').update(tokenB).digest('hex'),
+      validUntil: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+    }) + '\n', { mode: 0o600 });
+    const revokedB = await invoke(['revoke-token', '--actor', 'operator'], directory, tokenB, hashFile);
+    assert.equal(revokedB.code, 0);
+    assert.equal(parse(revokedB.stdout).keyId, 'key-b');
+    assert.equal(parse(revokedB.stdout).revoked, true);
+    await assert.rejects(() => fs.stat(hashFile), { code: 'ENOENT' });
+
+    const events = (await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8'))
+      .trim().split('\n').map((line) => JSON.parse(line));
+    const revokedEvents = events.filter((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKED');
+    assert.deepEqual(revokedEvents.map((event) => event.details.keyId), ['key-a', 'key-b']);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
