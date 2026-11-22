@@ -158,3 +158,26 @@ test('serializes concurrent token rotations so exactly one writer wins', async (
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('revokes a token only after recording an audit event', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await fs.writeFile(hashFile, `${crypto.createHash('sha256').update(token).digest('hex')}\n`, { mode: 0o600 });
+    const revoked = await invoke(['revoke-token', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(revoked.code, 0);
+    assert.equal(parse(revoked.stdout).revoked, true);
+    assert.equal(parse(revoked.stdout).auditLogged, true);
+    await assert.rejects(() => fs.stat(hashFile), { code: 'ENOENT' });
+    const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
+    assert.match(audit, /KILL_SWITCH_TOKEN_REVOKED/);
+    assert.equal(audit.includes(token), false);
+
+    const second = await invoke(['revoke-token', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(second.code, 3);
+    assert.equal(parse(second.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

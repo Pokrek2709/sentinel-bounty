@@ -16,6 +16,7 @@ sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]
 sentinel kill-switch reset --actor <id> [--state-dir <path>]
 sentinel kill-switch audit-health [--state-dir <path>]
 sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]
+sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]
 ```
 
 These commands make no network request and execute no security scanner.
@@ -35,6 +36,7 @@ Search terms: controlled wrapper, kill switch, persistent kill switch, process c
 - Audit logs are metadata-only, redact cookies/authorization-like values, use mode `0600`, recover stale locks, rotate at 8 MiB, and retain three rotated files. The hard per-record limit remains 32 KiB and the active log limit remains 10 MiB.
 - Approval records remain single-use and in memory; reinstall or restart must not revive an old approval ID.
 - `rotate-token --actor <id>` requires the current token in `SENTINEL_OPERATOR_RESET_TOKEN` and the replacement in `SENTINEL_OPERATOR_NEW_RESET_TOKEN`; it serializes concurrent rotations with a separate lock, atomically writes metadata `{ version, keyId, digest, validUntil }` to the existing mode-`0600` digest file, and records `KILL_SWITCH_TOKEN_ROTATED`. `validUntil` is ISO-8601 in the file, stdout, and audit event. Default validity is approximately 90 days, with no grace period. Delete the digest file to revoke access. `--actor` remains an unverified audit label, not authentication, and Muse provides no verified secret-management API yet.
+- `revoke-token --actor <id>` verifies the current token, requires healthy audit storage, records `KILL_SWITCH_TOKEN_REVOKED`, then removes the digest file under the same rotation lock. If audit append fails, the file is retained. A legacy plain digest is accepted only for migration/rotation and receives an implicit 90-day validity based on its file mtime; rotate it promptly to metadata format.
 
 ## Activation requirements
 

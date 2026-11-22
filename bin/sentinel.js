@@ -23,6 +23,7 @@ function usage() {
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch audit-health [--state-dir <path>]',
     '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
+    '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
   ].join('\n');
@@ -100,7 +101,7 @@ async function killSwitchFor(options, resetTokenHash) {
 
 async function runKillSwitch(action, args) {
   const options = parseOptions(args, ['--state-dir', '--actor', '--reason']);
-  const resetTokenHash = ['reset', 'rotate-token'].includes(action) ? await readExpectedResetTokenHash() : undefined;
+  const resetTokenHash = ['reset', 'rotate-token', 'revoke-token'].includes(action) ? await readExpectedResetTokenHash() : undefined;
   const { killSwitch, stateDirectory } = await killSwitchFor(options, resetTokenHash);
   const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
   if (action === 'audit-health') {
@@ -182,6 +183,39 @@ async function runKillSwitch(action, args) {
     if (!auditLogged) process.exitCode = 4;
     return;
   }
+  if (action === 'revoke-token') {
+    const auditHealth = await auditHealthWithStateReserve(audit, stateDirectory);
+    if (!auditHealth.healthy) {
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason: auditHealth.reason, auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 4;
+      return;
+    }
+    const presented = process.env.SENTINEL_OPERATOR_RESET_TOKEN;
+    if (!resetTokenHash || typeof presented !== 'string') {
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 3;
+      return;
+    }
+    let revocation;
+    try {
+      revocation = await withTokenRotationLock(resetTokenHash.filePath, async () => {
+        const current = await readExpectedResetTokenHash();
+        if (!current || crypto.createHash('sha256').update(presented).digest('hex') !== current.digest) return { revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditLogged: false };
+        const revokedAt = new Date().toISOString();
+        const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_REVOKED', { actor: options.actor, keyId: current.keyId, revokedAt });
+        if (!auditLogged) return { revoked: false, reason: 'AUDIT_LOG_WRITE_FAILED', auditLogged: false, revokedAt };
+        await removeTokenFile(current.filePath);
+        return { revoked: true, keyId: current.keyId, revokedAt, auditLogged: true };
+      });
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason: error.message === 'RESET_TOKEN_FILE_UNAVAILABLE' ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`${JSON.stringify({ ...revocation, auditHealth }, null, 2)}\n`);
+    if (!revocation.revoked) process.exitCode = revocation.reason === 'RESET_OPERATOR_UNAUTHORIZED' ? 3 : 4;
+    return;
+  }
   throw new Error(`Unknown kill-switch action: ${action}`);
 }
 
@@ -238,6 +272,13 @@ async function writeTokenMetadata(filePath, metadata) {
   } finally {
     if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   }
+}
+
+async function removeTokenFile(filePath) {
+  const stat = await fs.lstat(filePath).catch(() => null);
+  if (!stat || stat.isSymbolicLink() || !stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error('RESET_TOKEN_FILE_UNAVAILABLE');
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error('RESET_TOKEN_FILE_UNAVAILABLE');
+  await fs.unlink(filePath);
 }
 
 async function renameWithRetry(source, target) {
