@@ -142,7 +142,8 @@ class AuditLog {
     return Object.freeze(record);
   }
 
-  async healthCheck() {
+  async healthCheck({ additionalBytes = 0 } = {}) {
+    if (!Number.isInteger(additionalBytes) || additionalBytes < 0) throw new TypeError('additionalBytes must be a non-negative integer.');
     try {
       await this.#withLock(async () => {
         let existing = '';
@@ -164,7 +165,7 @@ class AuditLog {
         }
         const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.health.tmp`;
         try {
-          await fs.writeFile(temporary, '0'.repeat(Buffer.byteLength(existing) + 2 * 1024), { encoding: 'utf8', mode: 0o600 });
+          await fs.writeFile(temporary, '0'.repeat(Buffer.byteLength(existing) + 2 * 1024 + additionalBytes), { encoding: 'utf8', mode: 0o600 });
         } finally {
           await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
         }

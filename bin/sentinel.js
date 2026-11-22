@@ -11,6 +11,7 @@ const { AuditLog } = require('../src/audit/audit-log');
 
 const DEFAULT_STATE_DIRECTORY = path.join(os.homedir(), 'workspace', 'sentinel-bounty', 'state');
 const DEFAULT_TOKEN_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
+const STATE_WRITE_RESERVE_BYTES = 4 * 1024;
 
 function usage() {
   return [
@@ -103,7 +104,7 @@ async function runKillSwitch(action, args) {
   const { killSwitch, stateDirectory } = await killSwitchFor(options, resetTokenHash);
   const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
   if (action === 'audit-health') {
-    const health = await new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') }).healthCheck();
+    const health = await auditHealthWithStateReserve(audit, stateDirectory);
     process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);
     if (!health.healthy) process.exitCode = 4;
     return;
@@ -115,7 +116,7 @@ async function runKillSwitch(action, args) {
   if (!options.actor) throw new Error(`kill-switch ${action} requires --actor.`);
   if (action === 'trigger') {
     if (!options.reason) throw new Error('kill-switch trigger requires --reason.');
-    const auditHealth = await audit.healthCheck();
+    const auditHealth = await auditHealthWithStateReserve(audit, stateDirectory);
     const result = await killSwitch.trigger({ triggeredBy: options.actor, reason: options.reason });
     const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TRIGGER', { actor: options.actor, reason: options.reason, result: result.reason || 'TRIGGERED' });
     process.stdout.write(`${JSON.stringify({ ...result, auditHealth, auditLogged }, null, 2)}\n`);
@@ -124,7 +125,7 @@ async function runKillSwitch(action, args) {
     return;
   }
   if (action === 'reset') {
-    const auditHealth = await audit.healthCheck();
+    const auditHealth = await auditHealthWithStateReserve(audit, stateDirectory);
     if (!auditHealth.healthy) {
       process.stdout.write(`${JSON.stringify({ reset: false, reason: auditHealth.reason, auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 4;
@@ -138,7 +139,7 @@ async function runKillSwitch(action, args) {
     return;
   }
   if (action === 'rotate-token') {
-    const auditHealth = await audit.healthCheck();
+    const auditHealth = await auditHealthWithStateReserve(audit, stateDirectory);
     if (!auditHealth.healthy) {
       process.stdout.write(`${JSON.stringify({ rotated: false, reason: auditHealth.reason, auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 4;
@@ -182,6 +183,17 @@ async function runKillSwitch(action, args) {
     return;
   }
   throw new Error(`Unknown kill-switch action: ${action}`);
+}
+
+async function auditHealthWithStateReserve(audit, stateDirectory) {
+  let stateBytes = 0;
+  try {
+    stateBytes = (await fs.stat(path.join(stateDirectory, 'kill-switch.json'))).size;
+  } catch (error) {
+    if (error.code !== 'ENOENT') return { healthy: false, reason: 'KILL_SWITCH_STATE_UNAVAILABLE', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
+  }
+  const reservedStateBytes = stateBytes + STATE_WRITE_RESERVE_BYTES;
+  return { ...(await audit.healthCheck({ additionalBytes: reservedStateBytes })), reservedStateBytes };
 }
 
 async function withTokenRotationLock(filePath, operation) {

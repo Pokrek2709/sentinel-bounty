@@ -42,7 +42,7 @@ test('operator CLI exposes status, trigger, and token-gated reset without printi
     assert.deepEqual(parse(initial.stdout), { active: false, trigger: null, registeredWorkers: 0, workers: [], version: 2 });
     const health = await invoke(['audit-health'], directory);
     assert.equal(health.code, 0);
-    assert.deepEqual(parse(health.stdout), { healthy: true });
+    assert.deepEqual(parse(health.stdout), { healthy: true, reservedStateBytes: 4096 });
 
     const triggered = await invoke(['trigger', '--actor', 'operator', '--reason', 'lab stop'], directory);
     assert.equal(triggered.code, 0);
