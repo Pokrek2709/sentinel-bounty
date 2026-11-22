@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('node:fs/promises');
+const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const { runEnvironmentCheck } = require('../src/environment/checker');
@@ -9,6 +10,7 @@ const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch')
 const { AuditLog } = require('../src/audit/audit-log');
 
 const DEFAULT_STATE_DIRECTORY = path.join(os.homedir(), 'workspace', 'sentinel-bounty', 'state');
+const DEFAULT_TOKEN_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
 
 function usage() {
   return [
@@ -19,6 +21,7 @@ function usage() {
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch audit-health [--state-dir <path>]',
+    '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
   ].join('\n');
@@ -65,8 +68,18 @@ async function readExpectedResetTokenHash() {
     const realRelative = path.relative(realSkillDirectory, realHashFile);
     if (realRelative === '' || (!realRelative.startsWith('..') && !path.isAbsolute(realRelative))) return undefined;
     if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) return undefined;
-    const value = (await fs.readFile(realHashFile, 'utf8')).trim().toLowerCase();
-    return /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+    const value = (await fs.readFile(realHashFile, 'utf8')).trim();
+    let digest = value.toLowerCase();
+    let keyId = 'legacy';
+    let validUntil = stat.mtimeMs + DEFAULT_TOKEN_VALIDITY_MS;
+    if (value.startsWith('{')) {
+      const metadata = JSON.parse(value);
+      digest = typeof metadata.digest === 'string' ? metadata.digest.toLowerCase() : '';
+      keyId = typeof metadata.keyId === 'string' && metadata.keyId.trim() ? metadata.keyId.trim() : '';
+      validUntil = typeof metadata.validUntil === 'number' ? metadata.validUntil : Date.parse(metadata.validUntil);
+    }
+    if (!/^[a-f0-9]{64}$/.test(digest) || !keyId || !Number.isFinite(validUntil) || validUntil <= Date.now()) return undefined;
+    return { digest, keyId, validUntil, filePath: realHashFile };
   } catch {
     return undefined;
   }
@@ -78,7 +91,7 @@ async function killSwitchFor(options, resetTokenHash) {
     killSwitch: new PersistentKillSwitch({
     stateFile: path.join(stateDirectory, 'kill-switch.json'),
     skillDirectory: path.resolve(__dirname, '..'),
-    resetTokenHash,
+    resetTokenHash: resetTokenHash?.digest,
     }),
     stateDirectory,
   };
@@ -86,8 +99,9 @@ async function killSwitchFor(options, resetTokenHash) {
 
 async function runKillSwitch(action, args) {
   const options = parseOptions(args, ['--state-dir', '--actor', '--reason']);
-  const resetTokenHash = action === 'reset' ? await readExpectedResetTokenHash() : undefined;
+  const resetTokenHash = ['reset', 'rotate-token'].includes(action) ? await readExpectedResetTokenHash() : undefined;
   const { killSwitch, stateDirectory } = await killSwitchFor(options, resetTokenHash);
+  const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
   if (action === 'audit-health') {
     const health = await new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') }).healthCheck();
     process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);
@@ -101,22 +115,79 @@ async function runKillSwitch(action, args) {
   if (!options.actor) throw new Error(`kill-switch ${action} requires --actor.`);
   if (action === 'trigger') {
     if (!options.reason) throw new Error('kill-switch trigger requires --reason.');
+    const auditHealth = await audit.healthCheck();
     const result = await killSwitch.trigger({ triggeredBy: options.actor, reason: options.reason });
     const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TRIGGER', { actor: options.actor, reason: options.reason, result: result.reason || 'TRIGGERED' });
-    process.stdout.write(`${JSON.stringify({ ...result, auditLogged }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...result, auditHealth, auditLogged }, null, 2)}\n`);
     if (!auditLogged) process.exitCode = 4;
     if (!result.triggered && result.reason !== 'KILL_SWITCH_ALREADY_ACTIVE') process.exitCode = 3;
     return;
   }
   if (action === 'reset') {
+    const auditHealth = await audit.healthCheck();
+    if (!auditHealth.healthy) {
+      process.stdout.write(`${JSON.stringify({ reset: false, reason: auditHealth.reason, auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 4;
+      return;
+    }
     const result = await killSwitch.reset({ resetBy: options.actor, resetToken: process.env.SENTINEL_OPERATOR_RESET_TOKEN });
     const auditLogged = await appendOperatorAudit(stateDirectory, result.reset ? 'KILL_SWITCH_RESET' : 'KILL_SWITCH_RESET_DENIED', { actor: options.actor, result: result.reason || 'RESET' });
-    process.stdout.write(`${JSON.stringify({ ...result, auditLogged }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...result, auditHealth, auditLogged }, null, 2)}\n`);
     if (!auditLogged) process.exitCode = 4;
     if (!result.reset) process.exitCode = 3;
     return;
   }
+  if (action === 'rotate-token') {
+    const auditHealth = await audit.healthCheck();
+    if (!auditHealth.healthy) {
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason: auditHealth.reason, auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 4;
+      return;
+    }
+    const presented = process.env.SENTINEL_OPERATOR_RESET_TOKEN;
+    const nextToken = process.env.SENTINEL_OPERATOR_NEW_RESET_TOKEN;
+    if (!resetTokenHash || typeof presented !== 'string' || crypto.createHash('sha256').update(presented).digest('hex') !== resetTokenHash.digest) {
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 3;
+      return;
+    }
+    if (typeof nextToken !== 'string' || nextToken.length < 16) {
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason: 'NEW_RESET_TOKEN_INVALID', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 3;
+      return;
+    }
+    const keyId = crypto.randomUUID();
+    const validUntil = Date.now() + DEFAULT_TOKEN_VALIDITY_MS;
+    try {
+      await writeTokenMetadata(resetTokenHash.filePath, { version: 1, keyId, digest: crypto.createHash('sha256').update(nextToken).digest('hex'), validUntil: new Date(validUntil).toISOString() });
+    } catch (error) {
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason: error.message === 'RESET_TOKEN_FILE_UNAVAILABLE' ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_ROTATED', { actor: options.actor, keyId, validUntil });
+    process.stdout.write(`${JSON.stringify({ rotated: true, keyId, validUntil, auditHealth, auditLogged }, null, 2)}\n`);
+    if (!auditLogged) process.exitCode = 4;
+    return;
+  }
   throw new Error(`Unknown kill-switch action: ${action}`);
+}
+
+async function writeTokenMetadata(filePath, metadata) {
+  const stat = await fs.lstat(filePath).catch(() => null);
+  if (!stat || stat.isSymbolicLink() || !stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error('RESET_TOKEN_FILE_UNAVAILABLE');
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error('RESET_TOKEN_FILE_UNAVAILABLE');
+  const temporary = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let renamed = false;
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(metadata, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await fs.chmod(temporary, 0o600);
+    await fs.rename(temporary, filePath);
+    renamed = true;
+    await fs.chmod(filePath, 0o600);
+  } finally {
+    if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  }
 }
 
 async function appendOperatorAudit(stateDirectory, event, details) {

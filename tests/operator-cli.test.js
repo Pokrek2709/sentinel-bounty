@@ -10,13 +10,14 @@ const test = require('node:test');
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
 
-async function invoke(args, stateDirectory, token, hashFile) {
+async function invoke(args, stateDirectory, token, hashFile, newToken) {
   try {
     const result = await execFileAsync(process.execPath, [CLI, 'kill-switch', ...args, '--state-dir', stateDirectory], {
       env: {
         ...process.env,
         SENTINEL_OPERATOR_RESET_TOKEN: token,
         SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE: hashFile,
+        SENTINEL_OPERATOR_NEW_RESET_TOKEN: newToken,
       },
       windowsHide: true,
     });
@@ -47,6 +48,16 @@ test('operator CLI exposes status, trigger, and token-gated reset without printi
     assert.equal(triggered.code, 0);
     assert.equal(parse(triggered.stdout).triggered, true);
 
+    const nextToken = 'operator-token-rotated-local-5678';
+    const rotated = await invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, nextToken);
+    assert.equal(rotated.code, 0);
+    assert.equal(parse(rotated.stdout).rotated, true);
+    assert.equal(parse(rotated.stdout).auditLogged, true);
+    const metadata = JSON.parse(await fs.readFile(hashFile, 'utf8'));
+    assert.equal(metadata.version, 1);
+    assert.equal(metadata.digest, crypto.createHash('sha256').update(nextToken).digest('hex'));
+    assert.ok(Date.parse(metadata.validUntil) > Date.now());
+
     const unauthorized = await invoke(['reset', '--actor', 'operator'], directory);
     assert.equal(unauthorized.code, 3);
     assert.equal(parse(unauthorized.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
@@ -58,12 +69,17 @@ test('operator CLI exposes status, trigger, and token-gated reset without printi
     assert.equal(parse(wrongToken.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
     assert.equal(wrongToken.stdout.includes(token), false);
 
-    const reset = await invoke(['reset', '--actor', 'operator'], directory, token, hashFile);
+    const oldToken = await invoke(['reset', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(oldToken.code, 3);
+    assert.equal(parse(oldToken.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+
+    const reset = await invoke(['reset', '--actor', 'operator'], directory, nextToken, hashFile);
     assert.equal(reset.code, 0);
     assert.equal(parse(reset.stdout).reset, true);
     assert.equal(parse(reset.stdout).auditLogged, true);
     const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
     assert.match(audit, /KILL_SWITCH_TRIGGER/);
+    assert.match(audit, /KILL_SWITCH_TOKEN_ROTATED/);
     assert.match(audit, /KILL_SWITCH_RESET/);
     assert.equal(audit.includes(token), false);
     assert.equal(parse((await invoke(['status'], directory)).stdout).active, false);
@@ -95,6 +111,21 @@ test('operator CLI rejects a symlinked reset-token digest file', async (t) => {
     }
     assert.equal((await invoke(['trigger', '--actor', 'operator', '--reason', 'lab stop'], directory)).code, 0);
     const reset = await invoke(['reset', '--actor', 'operator'], directory, token, link);
+    assert.equal(reset.code, 3);
+    assert.equal(parse(reset.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('operator CLI rejects an expired token metadata file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-expired-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await fs.writeFile(hashFile, JSON.stringify({ version: 1, keyId: 'expired-key', digest: crypto.createHash('sha256').update(token).digest('hex'), validUntil: new Date(Date.now() - 1).toISOString() }), { mode: 0o600 });
+    assert.equal((await invoke(['trigger', '--actor', 'operator', '--reason', 'lab stop'], directory)).code, 0);
+    const reset = await invoke(['reset', '--actor', 'operator'], directory, token, hashFile);
     assert.equal(reset.code, 3);
     assert.equal(parse(reset.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
   } finally {

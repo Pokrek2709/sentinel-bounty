@@ -15,6 +15,7 @@ sentinel kill-switch status [--state-dir <path>]
 sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]
 sentinel kill-switch reset --actor <id> [--state-dir <path>]
 sentinel kill-switch audit-health [--state-dir <path>]
+sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]
 ```
 
 These commands make no network request and execute no security scanner.
@@ -27,12 +28,12 @@ Search terms: controlled wrapper, kill switch, persistent kill switch, process c
 
 - Kill-switch state is stored outside the reinstallable skill directory, by default at `~/workspace/sentinel-bounty/state/kill-switch.json`. State writes use a lock, atomic rename, and mode `0600`; stale locks are recoverable.
 - Active wrappers register short worker leases (default five seconds) and renew them by heartbeat. A reset is denied while any live lease from any process remains; expired leases are pruned so a crashed worker cannot block recovery forever. `kill-switch status` exposes `workers[]` entries with `workerId`, `pid`, and `leaseExpiresAt`, alongside `registeredWorkers`.
-- Use `sentinel kill-switch status` for read-only status, `trigger --actor <id> --reason <reason>` to activate the switch, and `reset --actor <id>` to clear it after workers have stopped. Reset requires the presented `SENTINEL_OPERATOR_RESET_TOKEN` plus an independently provisioned SHA-256 digest file referenced by `SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE`; never put the token in command-line arguments, logs, or chat. The digest file is outside the skill directory and should be mode `0600`.
+- Use `sentinel kill-switch status` for read-only status, `trigger --actor <id> --reason <reason>` to activate the switch, and `reset --actor <id>` to clear it after workers have stopped. Reset requires the presented `SENTINEL_OPERATOR_RESET_TOKEN` plus an independently provisioned digest file referenced by `SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE`; `audit-health` is mandatory before reset. Never put a token in command-line arguments, logs, or chat. The digest file is outside the skill directory and should be mode `0600`.
 - Trigger and reset attempts are written to the metadata-only audit log. The state action is still applied if the audit append fails, but the CLI reports `auditLogged: false` and exits non-zero so the operator must treat the result as an audit-integrity incident; no token is written to the event details.
 - `sentinel kill-switch audit-health` validates that `audit.jsonl` is a regular JSONL file, then performs a locked 2 KiB write-and-cleanup probe without appending an event. It reports `AUDIT_LOG_STORAGE_UNAVAILABLE` for capacity/quota failures, `AUDIT_LOG_CORRUPT` for malformed JSONL, `AUDIT_LOG_INVALID` for a non-file path, and `AUDIT_LOG_LOCKED` for a live lock.
 - Audit logs are metadata-only, redact cookies/authorization-like values, use mode `0600`, recover stale locks, rotate at 8 MiB, and retain three rotated files. The hard per-record limit remains 32 KiB and the active log limit remains 10 MiB.
 - Approval records remain single-use and in memory; reinstall or restart must not revive an old approval ID.
-- Token rotation, expiry, and revocation are not implemented in the CLI. Current out-of-band procedure is: generate a new strong token, write only its SHA-256 digest to a new mode-`0600` file outside the skill, atomically replace the configured digest file, then use the new token; the old token becomes invalid immediately with no grace period. Delete the digest file to revoke access. `--actor` remains an unverified audit label, not authentication, and Muse provides no verified secret-management API yet.
+- `rotate-token --actor <id>` requires the current token in `SENTINEL_OPERATOR_RESET_TOKEN` and the replacement in `SENTINEL_OPERATOR_NEW_RESET_TOKEN`; it atomically writes metadata `{ version, keyId, digest, validUntil }` to the existing mode-`0600` digest file and records `KILL_SWITCH_TOKEN_ROTATED`. Default validity is approximately 90 days, with no grace period. Delete the digest file to revoke access. `--actor` remains an unverified audit label, not authentication, and Muse provides no verified secret-management API yet.
 
 ## Activation requirements
 
