@@ -146,7 +146,7 @@ async function runKillSwitch(action, args) {
     }
     const presented = process.env.SENTINEL_OPERATOR_RESET_TOKEN;
     const nextToken = process.env.SENTINEL_OPERATOR_NEW_RESET_TOKEN;
-    if (!resetTokenHash || typeof presented !== 'string' || crypto.createHash('sha256').update(presented).digest('hex') !== resetTokenHash.digest) {
+    if (!resetTokenHash || typeof presented !== 'string') {
       process.stdout.write(`${JSON.stringify({ rotated: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 3;
       return;
@@ -156,21 +156,59 @@ async function runKillSwitch(action, args) {
       process.exitCode = 3;
       return;
     }
-    const keyId = crypto.randomUUID();
-    const validUntil = new Date(Date.now() + DEFAULT_TOKEN_VALIDITY_MS).toISOString();
+    let rotation;
     try {
-      await writeTokenMetadata(resetTokenHash.filePath, { version: 1, keyId, digest: crypto.createHash('sha256').update(nextToken).digest('hex'), validUntil });
+      rotation = await withTokenRotationLock(resetTokenHash.filePath, async () => {
+        const current = await readExpectedResetTokenHash();
+        if (!current || crypto.createHash('sha256').update(presented).digest('hex') !== current.digest) return { rotated: false, reason: 'RESET_OPERATOR_UNAUTHORIZED' };
+        const keyId = crypto.randomUUID();
+        const validUntil = new Date(Date.now() + DEFAULT_TOKEN_VALIDITY_MS).toISOString();
+        await writeTokenMetadata(current.filePath, { version: 1, keyId, digest: crypto.createHash('sha256').update(nextToken).digest('hex'), validUntil });
+        return { rotated: true, keyId, validUntil };
+      });
     } catch (error) {
-      process.stdout.write(`${JSON.stringify({ rotated: false, reason: error.message === 'RESET_TOKEN_FILE_UNAVAILABLE' ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason: ['RESET_TOKEN_FILE_UNAVAILABLE', 'RESET_TOKEN_ROTATION_LOCKED'].includes(error.message) ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 1;
       return;
     }
-    const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_ROTATED', { actor: options.actor, keyId, validUntil });
-    process.stdout.write(`${JSON.stringify({ rotated: true, keyId, validUntil, auditHealth, auditLogged }, null, 2)}\n`);
+    if (!rotation.rotated) {
+      process.stdout.write(`${JSON.stringify({ ...rotation, auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.exitCode = 3;
+      return;
+    }
+    const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_ROTATED', { actor: options.actor, keyId: rotation.keyId, validUntil: rotation.validUntil });
+    process.stdout.write(`${JSON.stringify({ ...rotation, auditHealth, auditLogged }, null, 2)}\n`);
     if (!auditLogged) process.exitCode = 4;
     return;
   }
   throw new Error(`Unknown kill-switch action: ${action}`);
+}
+
+async function withTokenRotationLock(filePath, operation) {
+  const lockFile = `${filePath}.rotate.lock`;
+  const started = Date.now();
+  let handle;
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  while (!handle) {
+    try {
+      handle = await fs.open(lockFile, 'wx', 0o600);
+    } catch (error) {
+      if (error.code !== 'EEXIST' || Date.now() - started >= 5_000) throw new Error('RESET_TOKEN_ROTATION_LOCKED');
+      try {
+        const stat = await fs.stat(lockFile);
+        if (Date.now() - stat.mtimeMs >= 60_000) await fs.unlink(lockFile);
+      } catch (statError) {
+        if (statError.code !== 'ENOENT') throw statError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  try {
+    return await operation();
+  } finally {
+    await handle.close();
+    await fs.unlink(lockFile).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  }
 }
 
 async function writeTokenMetadata(filePath, metadata) {
@@ -182,11 +220,24 @@ async function writeTokenMetadata(filePath, metadata) {
   try {
     await fs.writeFile(temporary, `${JSON.stringify(metadata, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     await fs.chmod(temporary, 0o600);
-    await fs.rename(temporary, filePath);
+    await renameWithRetry(temporary, filePath);
     renamed = true;
     await fs.chmod(filePath, 0o600);
   } finally {
     if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
+
+async function renameWithRetry(source, target) {
+  const deadline = Date.now() + 1_000;
+  while (true) {
+    try {
+      await fs.rename(source, target);
+      return;
+    } catch (error) {
+      if (!['EPERM', 'EACCES'].includes(error.code) || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
 }
 

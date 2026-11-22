@@ -134,3 +134,27 @@ test('operator CLI rejects an expired token metadata file', async () => {
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('serializes concurrent token rotations so exactly one writer wins', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rotate-race-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const nextA = 'operator-token-rotation-a-5678';
+  const nextB = 'operator-token-rotation-b-9012';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await fs.writeFile(hashFile, `${crypto.createHash('sha256').update(token).digest('hex')}\n`, { mode: 0o600 });
+    const results = await Promise.all([
+      invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, nextA),
+      invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, nextB),
+    ]);
+    assert.equal(results.filter((item) => item.code === 0).length, 1);
+    assert.equal(results.filter((item) => item.code === 3).length, 1);
+    const winner = results.find((item) => item.code === 0);
+    const winnerToken = parse(winner.stdout).keyId ? (await fs.readFile(hashFile, 'utf8')).includes(crypto.createHash('sha256').update(nextA).digest('hex')) ? nextA : nextB : null;
+    assert.ok(winnerToken);
+    const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
+    assert.equal((audit.match(/KILL_SWITCH_TOKEN_ROTATED/g) || []).length, 1);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

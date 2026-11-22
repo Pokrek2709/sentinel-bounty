@@ -164,7 +164,7 @@ class AuditLog {
         }
         const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.health.tmp`;
         try {
-          await fs.writeFile(temporary, '0'.repeat(2048), { encoding: 'utf8', mode: 0o600 });
+          await fs.writeFile(temporary, '0'.repeat(Buffer.byteLength(existing) + 2 * 1024), { encoding: 'utf8', mode: 0o600 });
         } finally {
           await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
         }

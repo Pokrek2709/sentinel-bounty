@@ -58,7 +58,7 @@ SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" SENTINEL_OPERATOR_RESET
 SENTINEL_OPERATOR_RESET_TOKEN="current-token" SENTINEL_OPERATOR_NEW_RESET_TOKEN="replacement-token" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch rotate-token --actor local-operator
 ```
 
-The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset/rotation events are recorded in `audit.jsonl`; if a trigger audit append fails, the trigger still completes with a non-zero audit-integrity signal, while reset and rotation require a healthy audit path first. Repair an unhealthy audit path before retrying reset; do not delete the active kill-switch state. Token validity defaults to approximately 90 days with immediate invalidation on rotation.
+The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset/rotation events are recorded in `audit.jsonl`; if a trigger audit append fails, the trigger still completes with a non-zero audit-integrity signal, while reset and rotation require a healthy audit path first. Repair an unhealthy audit path before retrying reset; do not delete the active kill-switch state. Concurrent rotations are serialized. Token validity defaults to approximately 90 days with immediate invalidation on rotation.
 
 ## Project layout
 
