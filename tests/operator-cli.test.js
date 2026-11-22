@@ -57,6 +57,7 @@ test('operator CLI exposes status, trigger, and token-gated reset without printi
     assert.equal(metadata.version, 1);
     assert.equal(metadata.digest, crypto.createHash('sha256').update(nextToken).digest('hex'));
     assert.ok(Date.parse(metadata.validUntil) > Date.now());
+    assert.equal(parse(rotated.stdout).validUntil, metadata.validUntil);
 
     const unauthorized = await invoke(['reset', '--actor', 'operator'], directory);
     assert.equal(unauthorized.code, 3);
@@ -80,6 +81,7 @@ test('operator CLI exposes status, trigger, and token-gated reset without printi
     const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
     assert.match(audit, /KILL_SWITCH_TRIGGER/);
     assert.match(audit, /KILL_SWITCH_TOKEN_ROTATED/);
+    assert.match(audit, new RegExp(metadata.validUntil));
     assert.match(audit, /KILL_SWITCH_RESET/);
     assert.equal(audit.includes(token), false);
     assert.equal(parse((await invoke(['status'], directory)).stdout).active, false);

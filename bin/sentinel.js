@@ -157,9 +157,9 @@ async function runKillSwitch(action, args) {
       return;
     }
     const keyId = crypto.randomUUID();
-    const validUntil = Date.now() + DEFAULT_TOKEN_VALIDITY_MS;
+    const validUntil = new Date(Date.now() + DEFAULT_TOKEN_VALIDITY_MS).toISOString();
     try {
-      await writeTokenMetadata(resetTokenHash.filePath, { version: 1, keyId, digest: crypto.createHash('sha256').update(nextToken).digest('hex'), validUntil: new Date(validUntil).toISOString() });
+      await writeTokenMetadata(resetTokenHash.filePath, { version: 1, keyId, digest: crypto.createHash('sha256').update(nextToken).digest('hex'), validUntil });
     } catch (error) {
       process.stdout.write(`${JSON.stringify({ rotated: false, reason: error.message === 'RESET_TOKEN_FILE_UNAVAILABLE' ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 1;
