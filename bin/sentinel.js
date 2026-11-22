@@ -191,29 +191,38 @@ async function runKillSwitch(action, args) {
       return;
     }
     const presented = process.env.SENTINEL_OPERATOR_RESET_TOKEN;
-    if (!resetTokenHash || typeof presented !== 'string') {
+    const configuredTokenPath = resetTokenHash?.filePath || (process.env.SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE ? pathOutsideSkill(process.env.SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE) : null);
+    if (!configuredTokenPath || typeof presented !== 'string') {
       process.stdout.write(`${JSON.stringify({ revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 3;
       return;
     }
     let revocation;
     try {
-      revocation = await withTokenRotationLock(resetTokenHash.filePath, async () => {
+      revocation = await withTokenRotationLock(configuredTokenPath, async () => {
+        const events = await audit.readEvents();
+        const pending = [...events].reverse().find((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKE_PENDING');
+        const alreadyRevoked = pending && events.some((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKED' && event.details?.keyId === pending.details?.keyId);
+        if (alreadyRevoked) return { revoked: false, reason: 'RESET_TOKEN_ALREADY_REVOKED', auditLogged: true };
         const current = await readExpectedResetTokenHash();
-        if (!current || crypto.createHash('sha256').update(presented).digest('hex') !== current.digest) return { revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditLogged: false };
+        const keyId = current?.keyId || pending?.details?.keyId;
+        if (!keyId) return { revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditLogged: false };
+        if (current && crypto.createHash('sha256').update(presented).digest('hex') !== current.digest) return { revoked: false, reason: 'RESET_OPERATOR_UNAUTHORIZED', auditLogged: false };
+        const pendingLogged = pending?.details?.keyId === keyId || await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_REVOKE_PENDING', { actor: options.actor, keyId, requestedAt: new Date().toISOString() });
+        if (!pendingLogged) return { revoked: false, reason: 'AUDIT_LOG_WRITE_FAILED', auditLogged: false };
+        if (current) await removeTokenFile(current.filePath);
         const revokedAt = new Date().toISOString();
-        const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_REVOKED', { actor: options.actor, keyId: current.keyId, revokedAt });
-        if (!auditLogged) return { revoked: false, reason: 'AUDIT_LOG_WRITE_FAILED', auditLogged: false, revokedAt };
-        await removeTokenFile(current.filePath);
-        return { revoked: true, keyId: current.keyId, revokedAt, auditLogged: true };
+        const auditLogged = await appendOperatorAudit(stateDirectory, 'KILL_SWITCH_TOKEN_REVOKED', { actor: options.actor, keyId, revokedAt });
+        if (!auditLogged) return { revoked: false, reason: 'AUDIT_LOG_WRITE_FAILED', auditLogged: false, keyId, revokedAt };
+        return { revoked: true, keyId, revokedAt, auditLogged: true, recovered: Boolean(pending) };
       });
     } catch (error) {
-      process.stdout.write(`${JSON.stringify({ revoked: false, reason: error.message === 'RESET_TOKEN_FILE_UNAVAILABLE' ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason: ['RESET_TOKEN_FILE_UNAVAILABLE', 'RESET_TOKEN_ROTATION_LOCKED'].includes(error.message) ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 1;
       return;
     }
     process.stdout.write(`${JSON.stringify({ ...revocation, auditHealth }, null, 2)}\n`);
-    if (!revocation.revoked) process.exitCode = revocation.reason === 'RESET_OPERATOR_UNAUTHORIZED' ? 3 : 4;
+    if (!revocation.revoked) process.exitCode = ['RESET_OPERATOR_UNAUTHORIZED', 'RESET_TOKEN_ALREADY_REVOKED'].includes(revocation.reason) ? 3 : 4;
     return;
   }
   throw new Error(`Unknown kill-switch action: ${action}`);

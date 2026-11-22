@@ -171,12 +171,32 @@ test('revokes a token only after recording an audit event', async () => {
     assert.equal(parse(revoked.stdout).auditLogged, true);
     await assert.rejects(() => fs.stat(hashFile), { code: 'ENOENT' });
     const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
+    assert.match(audit, /KILL_SWITCH_TOKEN_REVOKE_PENDING/);
     assert.match(audit, /KILL_SWITCH_TOKEN_REVOKED/);
     assert.equal(audit.includes(token), false);
 
     const second = await invoke(['revoke-token', '--actor', 'operator'], directory, token, hashFile);
     assert.equal(second.code, 3);
-    assert.equal(parse(second.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+    assert.equal(parse(second.stdout).reason, 'RESET_TOKEN_ALREADY_REVOKED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('revoke-token recovers an interrupted pending revocation idempotently', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-recovery-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await fs.writeFile(hashFile, `${crypto.createHash('sha256').update(token).digest('hex')}\n`, { mode: 0o600 });
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, 'audit.jsonl'), `${JSON.stringify({ version: 1, event: 'KILL_SWITCH_TOKEN_REVOKE_PENDING', eventId: 'pending-1', recordedAt: new Date().toISOString(), details: { actor: 'operator', keyId: 'legacy', requestedAt: new Date().toISOString() } })}\n`, { mode: 0o600 });
+    const recovered = await invoke(['revoke-token', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(recovered.code, 0);
+    assert.equal(parse(recovered.stdout).revoked, true);
+    assert.equal(parse(recovered.stdout).recovered, true);
+    assert.equal((await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8')).match(/KILL_SWITCH_TOKEN_REVOKED/g).length, 1);
+    await assert.rejects(() => fs.stat(hashFile), { code: 'ENOENT' });
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

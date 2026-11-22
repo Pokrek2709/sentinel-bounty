@@ -179,6 +179,18 @@ class AuditLog {
       return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_UNAVAILABLE' });
     }
   }
+
+  async readEvents() {
+    return Object.freeze(await this.#withLock(async () => {
+      let existing = '';
+      try {
+        existing = await fs.readFile(this.#logFile, 'utf8');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      return existing.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    }));
+  }
 }
 
 module.exports = { AuditLog, redact };
