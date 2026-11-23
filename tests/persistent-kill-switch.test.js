@@ -119,9 +119,10 @@ test('snapshotLockless reads stored state without pruning and marks expired leas
     const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
     const snapshot = await killSwitch.snapshotLockless();
     assert.equal(snapshot.active, true);
+    assert.equal(snapshot.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(snapshot.lockless, true);
     assert.equal(snapshot.pruned, false);
-    assert.equal(snapshot.registeredWorkers, 2);
+    assert.equal(snapshot.registeredWorkers, 1);
     assert.equal(snapshot.workers.find((worker) => worker.workerId === 'live-worker').leaseExpired, false);
     assert.equal(snapshot.workers.find((worker) => worker.workerId === 'expired-worker').leaseExpired, true);
     const after = JSON.parse(await fs.readFile(stateFile, 'utf8'));
@@ -138,7 +139,7 @@ test('snapshotLockless returns the inactive default when the state file is missi
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
     const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
-    assert.deepEqual(await killSwitch.snapshotLockless(), { active: false, trigger: null, registeredWorkers: 0, workers: [], version: 2, lockless: true, pruned: false });
+    assert.deepEqual(await killSwitch.snapshotLockless(), { active: false, trigger: null, registeredWorkers: 0, workers: [], version: 2, readMode: 'LOCKLESS_FALLBACK', lockless: true, pruned: false });
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -157,6 +158,7 @@ test('snapshotLockless migrates a v1 state in memory without writing', async () 
     assert.equal(snapshot.version, 2);
     assert.equal(snapshot.active, true);
     assert.equal(snapshot.trigger.reason, 'v1 reason');
+    assert.equal(snapshot.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(snapshot.lockless, true);
     assert.equal(await fs.readFile(stateFile, 'utf8'), v1);
   } finally {
@@ -177,6 +179,40 @@ test('snapshotLockless rejects corrupt state with the same error as the locked r
     assert.ok(locklessError instanceof SyntaxError);
     assert.ok(lockedError instanceof SyntaxError);
     assert.equal(locklessError.message, lockedError.message);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('snapshotLockless marks without pruning while the locked snapshot prunes', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-lockless-vs-locked-'));
+  const skillDirectory = path.join(directory, 'skill');
+  const stateFile = path.join(directory, 'state', 'kill-switch.json');
+  try {
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    const now = Date.now();
+    const stored = {
+      version: 2,
+      active: true,
+      trigger: { triggerId: 'lockless-lab', triggeredBy: 'operator', reason: 'lab stop', triggeredAt: now - 60000 },
+      workers: [
+        { workerId: 'live-worker', pid: 1111, leaseExpiresAt: now + 60000 },
+        { workerId: 'expired-worker', pid: 2222, leaseExpiresAt: now - 60000 },
+      ],
+    };
+    await fs.writeFile(stateFile, JSON.stringify(stored), { mode: 0o600 });
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    const lockless = await killSwitch.snapshotLockless();
+    assert.equal(lockless.readMode, 'LOCKLESS_FALLBACK');
+    assert.equal(lockless.workers.length, 2);
+    assert.equal(lockless.registeredWorkers, 1);
+    assert.equal(lockless.workers.find((worker) => worker.workerId === 'expired-worker').leaseExpired, true);
+    // The locked path prunes the expired lease and persists the pruned state.
+    const locked = await killSwitch.snapshot();
+    assert.equal(locked.readMode, undefined);
+    assert.equal(locked.workers.length, 1);
+    assert.equal(locked.registeredWorkers, 1);
+    assert.equal(JSON.parse(await fs.readFile(stateFile, 'utf8')).workers.length, 1);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
