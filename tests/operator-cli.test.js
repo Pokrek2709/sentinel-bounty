@@ -262,3 +262,53 @@ test('revoke-token recovers an older pending marker hidden by a newer completed 
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('status falls back to a lockless read on a full disk', async (t) => {
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-full-disk-'));
+  const mount = async () => execFileAsync('mount', ['-t', 'tmpfs', '-o', 'size=64k', 'tmpfs', mountPoint]);
+  const unmount = async () => execFileAsync('umount', [mountPoint]).catch(() => {});
+  try {
+    try {
+      await mount();
+    } catch (error) {
+      t.skip(`tmpfs mount unavailable: ${error.code || error.message}`);
+      return;
+    }
+    const directory = path.join(mountPoint, 'state');
+    await fs.mkdir(directory, { recursive: true });
+    const now = Date.now();
+    await fs.writeFile(path.join(directory, 'kill-switch.json'), JSON.stringify({
+      version: 2,
+      active: true,
+      trigger: { triggerId: 'full-disk-lab', triggeredBy: 'operator', reason: 'lab stop', triggeredAt: now - 60000 },
+      workers: [
+        { workerId: 'live-worker', pid: 1111, leaseExpiresAt: now + 60000 },
+        { workerId: 'expired-worker', pid: 2222, leaseExpiresAt: now - 60000 },
+      ],
+    }), { mode: 0o600 });
+    const chunk = Buffer.alloc(4096, 0x61);
+    let filler = 0;
+    try {
+      for (;;) {
+        await fs.writeFile(path.join(mountPoint, `filler-${filler}.bin`), chunk, { flag: 'wx' });
+        filler += 1;
+      }
+    } catch (error) {
+      assert.equal(error.code, 'ENOSPC');
+    }
+    const result = await invoke(['status'], directory);
+    assert.equal(result.code, 0);
+    const status = parse(result.stdout);
+    assert.equal(status.active, true);
+    assert.equal(status.lockless, true);
+    assert.equal(status.pruned, false);
+    assert.equal(status.fallbackReason, 'KILL_SWITCH_STATE_UNAVAILABLE');
+    assert.equal(status.registeredWorkers, 2);
+    assert.equal(status.workers.find((worker) => worker.workerId === 'live-worker').leaseExpired, false);
+    assert.equal(status.workers.find((worker) => worker.workerId === 'expired-worker').leaseExpired, true);
+    assert.deepEqual((await fs.readdir(directory)).sort(), ['kill-switch.json']);
+  } finally {
+    await unmount();
+    await fs.rm(mountPoint, { recursive: true, force: true });
+  }
+});

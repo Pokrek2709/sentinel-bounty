@@ -242,6 +242,49 @@ class PersistentKillSwitch {
     return Object.freeze({ active: state.active, trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null, registeredWorkers: workers.length, workers: Object.freeze(workers), version: state.version });
   }
 
+  // Lockless read: no lock file, no mkdir, no writes. Used only when the
+  // locked path cannot run (for example a full disk). Expired leases are
+  // reported, not pruned, and are marked leaseExpired so the operator can
+  // tell stale entries apart from live workers.
+  async snapshotLockless() {
+    let raw;
+    try {
+      raw = await fs.readFile(this.#stateFile, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return Object.freeze({ active: false, trigger: null, registeredWorkers: 0, workers: Object.freeze([]), version: 2, lockless: true, pruned: false });
+      }
+      throw error;
+    }
+    const state = this.#parseStateForLocklessRead(raw);
+    const now = nowFrom(this.#clock);
+    const workers = state.workers.map((worker) => Object.freeze({ ...worker, leaseExpired: !(Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now) }));
+    return Object.freeze({ active: state.active, trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null, registeredWorkers: workers.length, workers: Object.freeze(workers), version: state.version, lockless: true, pruned: false });
+  }
+
+  #parseStateForLocklessRead(raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
+    if (parsed.version === 1 && typeof parsed.active === 'boolean') {
+      return { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
+    }
+    if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
+      const timestamp = parsed.updatedAt || parsed.updated_at;
+      return {
+        version: 2,
+        active: parsed.enabled,
+        trigger: parsed.enabled ? {
+          triggerId: 'legacy-state',
+          triggeredBy: 'legacy-state',
+          reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
+          triggeredAt: Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : nowFrom(this.#clock),
+        } : null,
+        workers: [],
+      };
+    }
+    throw new Error('Invalid kill-switch state.');
+  }
+
   async trigger({ triggeredBy, reason }) {
     const trigger = Object.freeze({ triggerId: crypto.randomUUID(), triggeredBy: requireString(triggeredBy, 'triggeredBy', 200), reason: requireString(reason, 'reason'), triggeredAt: nowFrom(this.#clock) });
     const writeResult = await this.#withLock(async () => {
