@@ -169,6 +169,7 @@ test('revokes a token only after recording an audit event', async () => {
     assert.equal(revoked.code, 0);
     assert.equal(parse(revoked.stdout).revoked, true);
     assert.equal(parse(revoked.stdout).auditLogged, true);
+    assert.equal(parse(revoked.stdout).recovered, false);
     await assert.rejects(() => fs.stat(hashFile), { code: 'ENOENT' });
     const audit = await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8');
     assert.match(audit, /KILL_SWITCH_TOKEN_REVOKE_PENDING/);
