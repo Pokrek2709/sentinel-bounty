@@ -63,6 +63,20 @@ test('protects reset against workers registered by another process and requires 
   }
 });
 
+test('status remains fail-closed when a live state lock is held', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-status-lock-'));
+  const stateFile = path.join(directory, 'state', 'kill.json');
+  const skillDirectory = path.join(directory, 'skill');
+  try {
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(`${stateFile}.lock`, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, lockTimeoutMs: 20, lockRetryMs: 5 });
+    await assert.rejects(() => killSwitch.snapshot(), /KILL_SWITCH_STATE_LOCKED/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('matches a presented token against an independently provisioned digest', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
   const token = 'independent-reset-token-1234';

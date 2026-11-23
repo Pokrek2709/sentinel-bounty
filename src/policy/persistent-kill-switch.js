@@ -141,6 +141,32 @@ class PersistentKillSwitch {
     }
   }
 
+  async #readSnapshotWithoutLock() {
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.#stateFile, 'utf8'));
+      if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
+      if (parsed.version === 1 && typeof parsed.active === 'boolean') return { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
+      if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
+        const timestamp = parsed.updatedAt || parsed.updated_at;
+        return {
+          version: 2,
+          active: parsed.enabled,
+          trigger: parsed.enabled ? {
+            triggerId: 'legacy-state',
+            triggeredBy: 'legacy-state',
+            reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
+            triggeredAt: Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : nowFrom(this.#clock),
+          } : null,
+          workers: [],
+        };
+      }
+      throw new Error('Invalid kill-switch state.');
+    } catch (error) {
+      if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
+      throw error;
+    }
+  }
+
   #pruneWorkers(state, now = nowFrom(this.#clock)) {
     const workers = state.workers.filter((worker) => Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now);
     return workers.length === state.workers.length ? state : { ...state, workers };
@@ -190,12 +216,28 @@ class PersistentKillSwitch {
   }
 
   async snapshot() {
-    const state = await this.#withLock(async () => {
-      const current = await this.#readUnlocked();
-      const pruned = this.#pruneWorkers(current);
-      if (pruned !== current) await this.#writeUnlocked(pruned);
-      return pruned;
-    });
+    let state;
+    try {
+      state = await this.#withLock(async () => {
+        const current = await this.#readUnlocked();
+        const pruned = this.#pruneWorkers(current);
+        if (pruned !== current) await this.#writeUnlocked(pruned);
+        return pruned;
+      });
+    } catch (error) {
+      if (error.message !== 'KILL_SWITCH_STATE_UNAVAILABLE') throw error;
+      state = await this.#readSnapshotWithoutLock();
+      const now = nowFrom(this.#clock);
+      const workers = state.workers.map((worker) => Object.freeze({ ...worker, leaseExpired: !Number.isFinite(worker.leaseExpiresAt) || worker.leaseExpiresAt <= now }));
+      return Object.freeze({
+        active: state.active,
+        trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null,
+        registeredWorkers: workers.filter((worker) => !worker.leaseExpired).length,
+        workers: Object.freeze(workers),
+        version: state.version,
+        readMode: 'LOCKLESS_FALLBACK',
+      });
+    }
     const workers = state.workers.map((worker) => Object.freeze({ ...worker }));
     return Object.freeze({ active: state.active, trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null, registeredWorkers: workers.length, workers: Object.freeze(workers), version: state.version });
   }
