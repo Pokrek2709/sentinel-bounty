@@ -145,6 +145,24 @@ test('reports audit health and removes its probe file', async () => {
   }
 });
 
+test('cleans orphaned audit temporary files before the next locked operation', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+  const logFile = path.join(directory, 'state', 'audit.jsonl');
+  try {
+    await fs.mkdir(path.dirname(logFile), { recursive: true });
+    const orphan = `${logFile}.1234.123e4567-e89b-12d3-a456-426614174000.tmp`;
+    const orphanHealth = `${logFile}.1234.123e4567-e89b-12d3-a456-426614174000.health.tmp`;
+    await fs.writeFile(orphan, 'partial', { mode: 0o600 });
+    await fs.writeFile(orphanHealth, 'partial', { mode: 0o600 });
+    const audit = new AuditLog({ logFile, skillDirectory: path.join(directory, 'skill') });
+    await audit.append('CLEANUP_CHECK');
+    await assert.rejects(() => fs.stat(orphan), { code: 'ENOENT' });
+    await assert.rejects(() => fs.stat(orphanHealth), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('audit health rejects a directory or malformed JSONL log', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
   const logFile = path.join(directory, 'state', 'audit.jsonl');

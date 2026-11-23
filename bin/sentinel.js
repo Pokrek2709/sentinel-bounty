@@ -201,10 +201,15 @@ async function runKillSwitch(action, args) {
     try {
       revocation = await withTokenRotationLock(configuredTokenPath, async () => {
         const events = await audit.readEvents();
-        const pending = [...events].reverse().find((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKE_PENDING');
         const current = await readExpectedResetTokenHash();
+        const pendingEvents = events.filter((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKE_PENDING' && typeof event.details?.keyId === 'string');
+        const revokedKeyIds = new Set(events.filter((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKED').map((event) => event.details?.keyId).filter((keyId) => typeof keyId === 'string'));
+        const recoverablePending = [...pendingEvents].reverse().find((event) => !revokedKeyIds.has(event.details.keyId));
+        const pending = current
+          ? [...pendingEvents].reverse().find((event) => event.details.keyId === current.keyId) || recoverablePending
+          : recoverablePending || [...pendingEvents].reverse()[0];
         const pendingKeyId = pending?.details?.keyId;
-        const matchingRevoked = pendingKeyId && events.some((event) => event.event === 'KILL_SWITCH_TOKEN_REVOKED' && event.details?.keyId === pendingKeyId);
+        const matchingRevoked = pendingKeyId && revokedKeyIds.has(pendingKeyId);
         // A completed marker for an old key must not block revocation of a newly
         // provisioned key in the same state directory. When the digest is gone,
         // the marker remains the only identity available for idempotent retry.

@@ -89,10 +89,31 @@ class AuditLog {
       }
     }
     try {
+      await this.#cleanupTemporaryFiles();
       return await operation();
     } finally {
       await lock.close();
       await fs.unlink(this.#lockFile).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+    }
+  }
+
+  async #cleanupTemporaryFiles() {
+    let entries;
+    try {
+      entries = await fs.readdir(path.dirname(this.#logFile));
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    const escapedBase = path.basename(this.#logFile).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const temporaryPattern = new RegExp(`^${escapedBase}\\.\\d+\\.[0-9a-f-]{36}\\.(?:health\\.)?tmp$`);
+    for (const entry of entries.filter((name) => temporaryPattern.test(name))) {
+      const candidate = path.join(path.dirname(this.#logFile), entry);
+      try {
+        if ((await fs.lstat(candidate)).isFile()) await fs.unlink(candidate);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
     }
   }
 

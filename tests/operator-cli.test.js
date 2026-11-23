@@ -238,3 +238,26 @@ test('revoke-token allows a newly provisioned key after an older key was revoked
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('revoke-token recovers an older pending marker hidden by a newer completed marker', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-shadowed-'));
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  const recordedAt = new Date().toISOString();
+  const event = (eventId, name, keyId) => JSON.stringify({ version: 1, event: name, eventId, recordedAt, details: { actor: 'operator', keyId, requestedAt: recordedAt } });
+  try {
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, 'audit.jsonl'), [
+      event('pending-b', 'KILL_SWITCH_TOKEN_REVOKE_PENDING', 'key-b'),
+      event('pending-a', 'KILL_SWITCH_TOKEN_REVOKE_PENDING', 'key-a'),
+      event('revoked-a', 'KILL_SWITCH_TOKEN_REVOKED', 'key-a'),
+    ].join('\n') + '\n', { mode: 0o600 });
+    const recovered = await invoke(['revoke-token', '--actor', 'operator'], directory, 'not-used-for-recovery', hashFile);
+    assert.equal(recovered.code, 0);
+    assert.equal(parse(recovered.stdout).keyId, 'key-b');
+    assert.equal(parse(recovered.stdout).recovered, true);
+    const events = (await fs.readFile(path.join(directory, 'audit.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(events.filter((item) => item.event === 'KILL_SWITCH_TOKEN_REVOKED' && item.details.keyId === 'key-b').length, 1);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
