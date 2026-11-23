@@ -111,7 +111,16 @@ async function runKillSwitch(action, args) {
     return;
   }
   if (action === 'status') {
-    process.stdout.write(`${JSON.stringify(await killSwitch.snapshot(), null, 2)}\n`);
+    try {
+      process.stdout.write(`${JSON.stringify(await killSwitch.snapshot(), null, 2)}\n`);
+    } catch (error) {
+      if (error.message === 'KILL_SWITCH_STATE_UNAVAILABLE') {
+        const fallback = await killSwitch.snapshotLockless();
+        process.stdout.write(`${JSON.stringify({ ...fallback, fallbackReason: 'KILL_SWITCH_STATE_UNAVAILABLE' }, null, 2)}\n`);
+        return;
+      }
+      throw error;
+    }
     return;
   }
   if (!options.actor) throw new Error(`kill-switch ${action} requires --actor.`);
