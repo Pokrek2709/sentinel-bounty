@@ -2,8 +2,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const test = require('node:test');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
+
+const execFileAsync = promisify(execFile);
+
+// EACCES can only be produced by an unprivileged process: root ignores
+// permission bits. These tests run a probe as user nobody and are skipped
+// anywhere that cannot do that (non-root, Windows).
+const canRunAsNobody = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
 
 test('persists activation across fresh instances with private atomic state', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
@@ -235,6 +244,102 @@ test('migrates the legacy enabled schema atomically without reviving approvals',
     assert.equal(migrated.trigger.triggeredAt, Date.parse('2026-11-20T00:00:00.000Z'));
     assert.equal((await fs.readdir(path.dirname(stateFile))).some((name) => name.endsWith('.tmp')), false);
   } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('classifies ENOTDIR as KILL_SWITCH_STATE_PATH_INVALID on every locked operation', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-enotdir-'));
+  const token = 'local-reset-token-1234';
+  try {
+    const notADir = path.join(directory, 'notadir');
+    await fs.writeFile(notADir, 'I am a regular file, not a directory');
+    const stateFile = path.join(notADir, 'state', 'kill-switch.json');
+    const skillDirectory = path.join(directory, 'skill');
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: token });
+    await assert.rejects(() => killSwitch.snapshot(), /KILL_SWITCH_STATE_PATH_INVALID/);
+    await assert.rejects(() => killSwitch.trigger({ triggeredBy: 'operator', reason: 'lab stop' }), /KILL_SWITCH_STATE_PATH_INVALID/);
+    await assert.rejects(() => killSwitch.reset({ resetBy: 'operator', resetToken: token }), /KILL_SWITCH_STATE_PATH_INVALID/);
+    await assert.rejects(() => killSwitch.registerWorker({ workerId: 'worker-a', cancel: async () => {} }), /KILL_SWITCH_STATE_PATH_INVALID/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('recovers a stale state lock and succeeds without leaving a lock file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-stale-'));
+  const stateFile = path.join(directory, 'state', 'kill-switch.json');
+  const skillDirectory = path.join(directory, 'skill');
+  try {
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    const stored = JSON.stringify({ version: 2, active: false, trigger: null, workers: [] });
+    await fs.writeFile(stateFile, stored, { mode: 0o600 });
+    const lockFile = `${stateFile}.lock`;
+    await fs.writeFile(lockFile, JSON.stringify({ pid: 99999, acquiredAt: Date.now() - 61000 }), { mode: 0o600 });
+    const staleDate = new Date(Date.now() - 61000);
+    require('node:fs').utimesSync(lockFile, staleDate, staleDate);
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    const snapshot = await killSwitch.snapshot();
+    assert.equal(snapshot.active, false);
+    assert.equal(require('node:fs').existsSync(lockFile), false);
+    assert.equal(await fs.readFile(stateFile, 'utf8'), stored);
+    assert.equal((await fs.readdir(path.dirname(stateFile))).some((name) => name.endsWith('.tmp')), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('classifies EACCES as KILL_SWITCH_STATE_PERMISSION_DENIED, not STATE_LOCKED', { skip: !canRunAsNobody }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-eacces-'));
+  try {
+    await fs.chmod(directory, 0o755);
+    const stateDir = path.join(directory, 'state-ro');
+    await fs.mkdir(stateDir, { mode: 0o555 });
+    const stateFile = path.join(stateDir, 'kill-switch.json');
+    await fs.writeFile(stateFile, JSON.stringify({ version: 2, active: false, trigger: null, workers: [] }), { mode: 0o644 });
+    const skillDirectory = path.join(directory, 'skill');
+    await fs.mkdir(skillDirectory, { mode: 0o755 });
+    // The probe runs as nobody, so it cannot read the repo checkout itself
+    // (checkout files are group-only readable). Copy the single-file module
+    // into the scratch directory, world-readable, and probe the copy: the
+    // module has no dependencies beyond node builtins.
+    const probeModule = path.join(directory, 'probe-persistent-kill-switch.js');
+    await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'persistent-kill-switch.js'), probeModule);
+    await fs.chmod(probeModule, 0o644);
+    const probe = `
+      const { PersistentKillSwitch } = require(process.env.PROBE_MODULE);
+      (async () => {
+        const ks = new PersistentKillSwitch({ stateFile: process.env.PROBE_STATE_FILE, skillDirectory: process.env.PROBE_SKILL_DIR, resetToken: 'local-reset-token-1234' });
+        try {
+          const out = process.env.PROBE_OP === 'register'
+            ? await ks.registerWorker({ workerId: 'probe-worker', cancel: async () => {} })
+            : await ks.snapshot();
+          console.log('OK:' + JSON.stringify(out));
+        } catch (error) { console.log('ERROR:' + error.message); }
+      })();
+    `;
+    for (const operation of ['snapshot', 'register']) {
+      const { stdout } = await execFileAsync(process.execPath, ['-e', probe], {
+        uid: 65534,
+        gid: 65534,
+        // cwd must be world-readable: node resolves the -e module's
+        // self-reference against cwd's package.json, and the repo checkout
+        // is not readable by nobody.
+        cwd: directory,
+        env: {
+          ...process.env,
+          PROBE_MODULE: probeModule,
+          PROBE_STATE_FILE: stateFile,
+          PROBE_SKILL_DIR: skillDirectory,
+          PROBE_OP: operation,
+        },
+      });
+      assert.ok(stdout.includes('ERROR:KILL_SWITCH_STATE_PERMISSION_DENIED'), `${operation} as nobody must report PERMISSION_DENIED, got: ${stdout}`);
+      assert.ok(!stdout.includes('KILL_SWITCH_STATE_LOCKED'), `${operation} must not be mislabeled STATE_LOCKED, got: ${stdout}`);
+    }
+    assert.equal(require('node:fs').existsSync(`${stateFile}.lock`), false);
+  } finally {
+    await fs.chmod(directory, 0o700).catch(() => {});
     await fs.rm(directory, { recursive: true, force: true });
   }
 });

@@ -15,6 +15,19 @@ function requireAbsoluteOutside(file, skillDirectory, field) {
   if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) throw new TypeError(`${field} must be outside the skill directory.`);
 }
 
+// Classify a filesystem error from an audit lock/storage operation into the
+// operator-facing audit error taxonomy. Same shape as the kill-switch state
+// classifier in src/policy/persistent-kill-switch.js, with AUDIT_LOG_*
+// codes: EEXIST is NOT classified here (a live audit lock is
+// AUDIT_LOG_LOCKED only after the retry timeout, decided by the caller).
+function classifyAuditStorageError(error) {
+  if (!error || typeof error.code !== 'string') return null;
+  if (['ENOSPC', 'EDQUOT'].includes(error.code)) return 'AUDIT_LOG_STORAGE_UNAVAILABLE';
+  if (['EACCES', 'EPERM'].includes(error.code)) return 'AUDIT_LOG_PERMISSION_DENIED';
+  if (error.code === 'ENOTDIR') return 'AUDIT_LOG_PATH_INVALID';
+  return null;
+}
+
 function redact(value, key = '') {
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
@@ -63,7 +76,8 @@ class AuditLog {
     try {
       await fs.mkdir(path.dirname(this.#logFile), { recursive: true, mode: 0o700 });
     } catch (error) {
-      if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('AUDIT_LOG_STORAGE_UNAVAILABLE');
+      const classified = classifyAuditStorageError(error);
+      if (classified) throw new Error(classified);
       throw error;
     }
     const started = this.#clock();
@@ -77,12 +91,15 @@ class AuditLog {
           lock = undefined;
           await fs.unlink(this.#lockFile).catch((unlinkError) => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
         }
-        if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('AUDIT_LOG_STORAGE_UNAVAILABLE');
+        const classified = classifyAuditStorageError(error);
+        if (classified) throw new Error(classified);
         if (error.code !== 'EEXIST' || this.#clock() - started >= this.#lockTimeoutMs) throw new Error('AUDIT_LOG_LOCKED');
         try {
           const stat = await fs.stat(this.#lockFile);
           if (this.#clock() - stat.mtimeMs >= this.#staleLockMs) await fs.unlink(this.#lockFile);
         } catch (statError) {
+          const statClassified = classifyAuditStorageError(statError);
+          if (statClassified) throw new Error(statClassified);
           if (statError.code !== 'ENOENT') throw statError;
         }
         await new Promise((resolve) => setTimeout(resolve, this.#lockRetryMs));
@@ -194,6 +211,8 @@ class AuditLog {
       return Object.freeze({ healthy: true });
     } catch (error) {
       if (error.message === 'AUDIT_LOG_LOCKED') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_LOCKED' });
+      if (error.message === 'AUDIT_LOG_PERMISSION_DENIED') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_PERMISSION_DENIED' });
+      if (error.message === 'AUDIT_LOG_PATH_INVALID') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_PATH_INVALID' });
       if (error.message === 'AUDIT_LOG_STORAGE_UNAVAILABLE' || ['ENOSPC', 'EDQUOT'].includes(error.code)) return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_STORAGE_UNAVAILABLE' });
       if (error.message === 'AUDIT_LOG_CORRUPT') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_CORRUPT' });
       if (error.message === 'AUDIT_LOG_INVALID') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_INVALID' });

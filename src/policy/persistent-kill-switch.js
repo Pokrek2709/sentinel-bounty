@@ -20,6 +20,22 @@ function nowFrom(clock) {
   return value;
 }
 
+// Classify a filesystem error from a lock/state-storage operation into the
+// operator-facing error taxonomy. Returns the error code, or null when the
+// error is not a classified storage failure (callers rethrow it raw).
+// - EEXIST is NOT classified here: a live lock is KILL_SWITCH_STATE_LOCKED
+//   only after the retry timeout, decided by the caller.
+// - EACCES/EPERM: the operator cannot write the state directory at all.
+// - ENOSPC/EDQUOT: the disk/quota is exhausted.
+// - ENOTDIR: a path component is not a directory.
+function classifyStorageError(error) {
+  if (!error || typeof error.code !== 'string') return null;
+  if (['ENOSPC', 'EDQUOT'].includes(error.code)) return 'KILL_SWITCH_STATE_UNAVAILABLE';
+  if (['EACCES', 'EPERM'].includes(error.code)) return 'KILL_SWITCH_STATE_PERMISSION_DENIED';
+  if (error.code === 'ENOTDIR') return 'KILL_SWITCH_STATE_PATH_INVALID';
+  return null;
+}
+
 class PersistentKillSwitch {
   #stateFile;
   #lockFile;
@@ -58,7 +74,8 @@ class PersistentKillSwitch {
     try {
       await fs.mkdir(path.dirname(this.#stateFile), { recursive: true, mode: 0o700 });
     } catch (error) {
-      if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('KILL_SWITCH_STATE_UNAVAILABLE');
+      const classified = classifyStorageError(error);
+      if (classified) throw new Error(classified);
       throw error;
     }
     const started = nowFrom(this.#clock);
@@ -73,12 +90,15 @@ class PersistentKillSwitch {
           await fs.unlink(this.#lockFile).catch((unlinkError) => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
         }
         handle = undefined;
-        if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('KILL_SWITCH_STATE_UNAVAILABLE');
+        const classified = classifyStorageError(error);
+        if (classified) throw new Error(classified);
         if (error.code !== 'EEXIST' || nowFrom(this.#clock) - started >= this.#lockTimeoutMs) throw new Error('KILL_SWITCH_STATE_LOCKED');
         try {
           const stat = await fs.stat(this.#lockFile);
           if (nowFrom(this.#clock) - stat.mtimeMs >= this.#staleLockMs) await fs.unlink(this.#lockFile);
         } catch (statError) {
+          const statClassified = classifyStorageError(statError);
+          if (statClassified) throw new Error(statClassified);
           if (statError.code !== 'ENOENT') throw statError;
         }
         await new Promise((resolve) => setTimeout(resolve, this.#lockRetryMs));
@@ -102,7 +122,8 @@ class PersistentKillSwitch {
       renamed = true;
       await fs.chmod(this.#stateFile, 0o600);
     } catch (error) {
-      if (['ENOSPC', 'EDQUOT'].includes(error.code)) throw new Error('KILL_SWITCH_STATE_UNAVAILABLE');
+      const classified = classifyStorageError(error);
+      if (classified) throw new Error(classified);
       throw error;
     } finally {
       if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });

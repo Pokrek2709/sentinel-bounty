@@ -246,7 +246,17 @@ async function auditHealthWithStateReserve(audit, stateDirectory) {
   try {
     stateBytes = (await fs.stat(path.join(stateDirectory, 'kill-switch.json'))).size;
   } catch (error) {
-    if (error.code !== 'ENOENT') return { healthy: false, reason: 'KILL_SWITCH_STATE_UNAVAILABLE', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
+    // Classify the stat failure the same way the state lock does: a
+    // permission or path failure is not a storage-exhaustion failure.
+    if (error.code === 'ENOENT') {
+      // No state file yet: fall through with the base reserve.
+    } else if (['EACCES', 'EPERM'].includes(error.code)) {
+      return { healthy: false, reason: 'KILL_SWITCH_STATE_PERMISSION_DENIED', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
+    } else if (error.code === 'ENOTDIR') {
+      return { healthy: false, reason: 'KILL_SWITCH_STATE_PATH_INVALID', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
+    } else {
+      return { healthy: false, reason: 'KILL_SWITCH_STATE_UNAVAILABLE', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
+    }
   }
   const reservedStateBytes = stateBytes + STATE_WRITE_RESERVE_BYTES;
   return { ...(await audit.healthCheck({ additionalBytes: reservedStateBytes })), reservedStateBytes };
