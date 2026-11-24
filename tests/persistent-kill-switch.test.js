@@ -185,8 +185,8 @@ test('snapshotLockless rejects corrupt state with the same error as the locked r
     const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
     const locklessError = await killSwitch.snapshotLockless().then(() => null, (error) => error);
     const lockedError = await killSwitch.snapshot().then(() => null, (error) => error);
-    assert.ok(locklessError instanceof SyntaxError);
-    assert.ok(lockedError instanceof SyntaxError);
+    assert.equal(locklessError.message, 'KILL_SWITCH_STATE_CORRUPT');
+    assert.equal(lockedError.message, 'KILL_SWITCH_STATE_CORRUPT');
     assert.equal(locklessError.message, lockedError.message);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
@@ -300,12 +300,15 @@ test('classifies EACCES as KILL_SWITCH_STATE_PERMISSION_DENIED, not STATE_LOCKED
     const skillDirectory = path.join(directory, 'skill');
     await fs.mkdir(skillDirectory, { mode: 0o755 });
     // The probe runs as nobody, so it cannot read the repo checkout itself
-    // (checkout files are group-only readable). Copy the single-file module
-    // into the scratch directory, world-readable, and probe the copy: the
-    // module has no dependencies beyond node builtins.
+    // (checkout files are group-only readable). Copy the module plus its
+    // storage-errors dependency into the scratch directory, world-readable,
+    // and probe the copies: the modules have no dependencies beyond node
+    // builtins.
     const probeModule = path.join(directory, 'probe-persistent-kill-switch.js');
     await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'persistent-kill-switch.js'), probeModule);
+    await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'storage-errors.js'), path.join(directory, 'storage-errors.js'));
     await fs.chmod(probeModule, 0o644);
+    await fs.chmod(path.join(directory, 'storage-errors.js'), 0o644);
     const probe = `
       const { PersistentKillSwitch } = require(process.env.PROBE_MODULE);
       (async () => {

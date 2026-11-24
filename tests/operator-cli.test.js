@@ -326,3 +326,221 @@ test('skill and v1 docs carry no merge-conflict markers and document the canonic
     assert.ok(text.includes('KILL_SWITCH_STATE_LOCKED'), `${relative} must document the live-lock refusal`);
   }
 });
+
+// EACCES can only be produced by an unprivileged process: root ignores
+// permission bits. The nobody CLI test below is skipped anywhere that
+// cannot run a probe as user nobody (non-root, Windows).
+const canRunAsNobody = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
+
+async function writeDigestFile(hashFile, token, keyId = 'key-r28') {
+  await fs.writeFile(hashFile, JSON.stringify({
+    version: 1,
+    keyId,
+    digest: crypto.createHash('sha256').update(token).digest('hex'),
+    validUntil: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+  }) + '\n', { mode: 0o600 });
+}
+
+test('rotate-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-lock-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await writeDigestFile(hashFile, token);
+    await fs.writeFile(`${hashFile}.rotate.lock`, JSON.stringify({ pid: 99999, acquiredAt: Date.now() }), { mode: 0o600 });
+    const result = await invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, 'operator-token-rotated-local-5678');
+    assert.equal(result.code, 1);
+    assert.equal(parse(result.stdout).reason, 'RESET_TOKEN_ROTATION_LOCKED');
+    assert.equal(result.stdout.includes(hashFile), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('revoke-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rev-lock-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await writeDigestFile(hashFile, token);
+    await fs.writeFile(`${hashFile}.rotate.lock`, JSON.stringify({ pid: 99999, acquiredAt: Date.now() }), { mode: 0o600 });
+    const result = await invoke(['revoke-token', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(result.code, 1);
+    assert.equal(parse(result.stdout).reason, 'RESET_TOKEN_ROTATION_LOCKED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('rotate-token recovers a stale rotation lock and succeeds', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-stale-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const nextToken = 'operator-token-rotated-local-5678';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  try {
+    await writeDigestFile(hashFile, token);
+    await fs.writeFile(`${hashFile}.rotate.lock`, JSON.stringify({ pid: 99999, acquiredAt: Date.now() - 61000 }), { mode: 0o600 });
+    const stale = new Date(Date.now() - 61000);
+    require('node:fs').utimesSync(`${hashFile}.rotate.lock`, stale, stale);
+    const result = await invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, nextToken);
+    assert.equal(result.code, 0);
+    assert.equal(parse(result.stdout).rotated, true);
+    assert.equal(require('node:fs').existsSync(`${hashFile}.rotate.lock`), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('rotate-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent is a file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-enotdir-'));
+  const token = 'operator-token-for-local-lab-1234';
+  try {
+    const notADir = path.join(directory, 'notadir');
+    await fs.writeFile(notADir, 'I am a regular file, not a directory');
+    const hashFile = path.join(notADir, 'digest', 'operator-reset-token.sha256');
+    const result = await invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, 'operator-token-rotated-local-5678');
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /RESET_TOKEN_FILE_PATH_INVALID/);
+    assert.equal(result.stderr.includes(hashFile), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('revoke-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent is a file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rev-enotdir-'));
+  const token = 'operator-token-for-local-lab-1234';
+  try {
+    const notADir = path.join(directory, 'notadir');
+    await fs.writeFile(notADir, 'I am a regular file, not a directory');
+    const hashFile = path.join(notADir, 'digest', 'operator-reset-token.sha256');
+    // The digest read runs before the rotation lock, so the path failure
+    // surfaces as the file code (same as rotate-token), not the lock code.
+    const result = await invoke(['revoke-token', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /RESET_TOKEN_FILE_PATH_INVALID/);
+    assert.equal(result.stderr.includes(hashFile), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('rotate-token reports RESET_TOKEN_ROTATION_UNAVAILABLE on a full digest disk', async (t) => {
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-full-'));
+  const mount = async () => execFileAsync('mount', ['-t', 'tmpfs', '-o', 'size=64k', 'tmpfs', mountPoint]);
+  const unmount = async () => execFileAsync('umount', [mountPoint]).catch(() => {});
+  try {
+    try {
+      await mount();
+    } catch (error) {
+      t.skip(`tmpfs mount unavailable: ${error.code || error.message}`);
+      return;
+    }
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-full-state-'));
+    const token = 'operator-token-for-local-lab-1234';
+    const hashFile = path.join(mountPoint, 'operator-reset-token.sha256');
+    await writeDigestFile(hashFile, token);
+    const chunk = Buffer.alloc(4096, 0x41);
+    let filler = 0;
+    try {
+      for (;;) {
+        await fs.writeFile(path.join(mountPoint, `filler-${filler}.bin`), chunk, { flag: 'wx' });
+        filler += 1;
+      }
+    } catch (error) {
+      assert.equal(error.code, 'ENOSPC');
+    }
+    const result = await invoke(['rotate-token', '--actor', 'operator'], directory, token, hashFile, 'operator-token-rotated-local-5678');
+    assert.equal(result.code, 1);
+    assert.equal(parse(result.stdout).reason, 'RESET_TOKEN_ROTATION_UNAVAILABLE');
+    await fs.rm(directory, { recursive: true, force: true });
+  } finally {
+    await unmount();
+    await fs.rm(mountPoint, { recursive: true, force: true });
+  }
+});
+
+test('rotate-token reports RESET_TOKEN_ROTATION_PERMISSION_DENIED as nobody, not ROTATION_LOCKED', { skip: !canRunAsNobody }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-eacces-'));
+  try {
+    await fs.chmod(directory, 0o755);
+    // The probe runs as nobody, so it cannot read the repo checkout itself.
+    // Copy bin/ + src/ into the scratch directory, world-readable, and
+    // probe the copy: the CLI resolves its sources relative to its own path.
+    const skillCopy = path.join(directory, 'skill-copy');
+    await fs.cp(path.resolve(__dirname, '..', 'bin'), path.join(skillCopy, 'bin'), { recursive: true });
+    await fs.cp(path.resolve(__dirname, '..', 'src'), path.join(skillCopy, 'src'), { recursive: true });
+    await execFileAsync('chmod', ['-R', 'a+rX', skillCopy]);
+    const token = 'operator-token-for-local-lab-1234';
+    const digestDir = path.join(directory, 'digest');
+    await fs.mkdir(digestDir, { mode: 0o555 });
+    // mkdir's mode is masked by the process umask (0007 here), so enforce
+    // 0555 explicitly: nobody must traverse the directory to read the
+    // digest file it owns.
+    await fs.chmod(digestDir, 0o555);
+    const hashFile = path.join(digestDir, 'operator-reset-token.sha256');
+    await writeDigestFile(hashFile, token);
+    require('node:fs').chownSync(hashFile, 65534, 65534);
+    const stateDir = path.join(directory, 'state');
+    await fs.mkdir(stateDir, { mode: 0o700 });
+    require('node:fs').chownSync(stateDir, 65534, 65534);
+    // Swap the CLI path for the copy inside the probe: invokeAsNobody uses
+    // the module-level CLI, so run setpriv directly against the copy.
+    let result;
+    try {
+      const out = await execFileAsync('setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', process.execPath, path.join(skillCopy, 'bin', 'sentinel.js'), 'kill-switch', 'rotate-token', '--actor', 'operator', '--state-dir', stateDir], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          SENTINEL_OPERATOR_RESET_TOKEN: token,
+          SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE: hashFile,
+          SENTINEL_OPERATOR_NEW_RESET_TOKEN: 'operator-token-rotated-local-5678',
+        },
+        windowsHide: true,
+      });
+      result = { code: 0, stdout: out.stdout, stderr: out.stderr };
+    } catch (error) {
+      result = { code: error.code, stdout: error.stdout || '', stderr: error.stderr || '' };
+    }
+    assert.equal(result.code, 1);
+    assert.equal(parse(result.stdout).reason, 'RESET_TOKEN_ROTATION_PERMISSION_DENIED');
+    assert.equal(result.stdout.includes(hashFile), false);
+  } finally {
+    await fs.chmod(directory, 0o700).catch(() => {});
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('status reports KILL_SWITCH_STATE_CORRUPT for an unparseable state file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-corrupt-'));
+  try {
+    await fs.writeFile(path.join(directory, 'kill-switch.json'), '{"version":2,"active":false,"trig', { mode: 0o600 });
+    const result = await invoke(['status'], directory);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /KILL_SWITCH_STATE_CORRUPT/);
+    assert.equal(result.stderr.includes('kill-switch.json'), false);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('status reports KILL_SWITCH_STATE_CORRUPT for a wrong-shape state file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-wrongshape-'));
+  try {
+    await fs.writeFile(path.join(directory, 'kill-switch.json'), '{"version":99,"active":"yes"}', { mode: 0o600 });
+    const result = await invoke(['status'], directory);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /KILL_SWITCH_STATE_CORRUPT/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('docs document the rotation-lock and state-read taxonomies', async () => {
+  for (const relative of ['skills/sentinel-bounty/SKILL.md', 'docs/persistent-kill-switch-v1.md']) {
+    const text = await fs.readFile(path.resolve(__dirname, '..', relative), 'utf8');
+    assert.ok(text.includes('RESET_TOKEN_ROTATION_PERMISSION_DENIED'), `${relative} must document the rotation permission code`);
+    assert.ok(text.includes('RESET_TOKEN_ROTATION_UNAVAILABLE'), `${relative} must document the rotation unavailable code`);
+    assert.ok(text.includes('KILL_SWITCH_STATE_CORRUPT'), `${relative} must document the corrupt-state code`);
+  }
+});

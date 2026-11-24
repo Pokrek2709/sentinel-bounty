@@ -7,7 +7,21 @@ const path = require('node:path');
 const { runEnvironmentCheck } = require('../src/environment/checker');
 const { TargetRegistry } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
+const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
+
+// Classified rotation/token-file reasons that the rotate/revoke handlers
+// pass through verbatim (stable operator-facing codes, never raw paths).
+// Anything else from the rotation path is a generic write/revoke failure.
+const ROTATION_FAILURE_REASONS = [
+  'RESET_TOKEN_FILE_UNAVAILABLE',
+  'RESET_TOKEN_ROTATION_LOCKED',
+  'RESET_TOKEN_ROTATION_PERMISSION_DENIED',
+  'RESET_TOKEN_ROTATION_UNAVAILABLE',
+  'RESET_TOKEN_ROTATION_PATH_INVALID',
+  'RESET_TOKEN_FILE_PERMISSION_DENIED',
+  'RESET_TOKEN_FILE_PATH_INVALID',
+];
 
 const DEFAULT_STATE_DIRECTORY = path.join(os.homedir(), 'workspace', 'sentinel-bounty', 'state');
 const DEFAULT_TOKEN_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
@@ -82,7 +96,14 @@ async function readExpectedResetTokenHash() {
     }
     if (!/^[a-f0-9]{64}$/.test(digest) || !keyId || !Number.isFinite(validUntil) || validUntil <= Date.now()) return undefined;
     return { digest, keyId, validUntil, filePath: realHashFile };
-  } catch {
+  } catch (error) {
+    // A permission/path failure reading the digest is a storage failure,
+    // not an authorization failure: surface the classified code instead of
+    // swallowing it into "no usable token" (which the CLI reports as
+    // RESET_OPERATOR_UNAUTHORIZED). Missing file, bad format, expired, or
+    // corrupt JSON still returns undefined (fail-closed).
+    const classified = classifyTokenFileError(error);
+    if (classified) throw new Error(classified);
     return undefined;
   }
 }
@@ -172,7 +193,7 @@ async function runKillSwitch(action, args) {
         return { rotated: true, keyId, validUntil };
       });
     } catch (error) {
-      process.stdout.write(`${JSON.stringify({ rotated: false, reason: ['RESET_TOKEN_FILE_UNAVAILABLE', 'RESET_TOKEN_ROTATION_LOCKED'].includes(error.message) ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason: ROTATION_FAILURE_REASONS.includes(error.message) ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 1;
       return;
     }
@@ -230,7 +251,7 @@ async function runKillSwitch(action, args) {
         return { revoked: true, keyId, revokedAt, auditLogged: true, recovered: pendingKeyId === keyId };
       });
     } catch (error) {
-      process.stdout.write(`${JSON.stringify({ revoked: false, reason: ['RESET_TOKEN_FILE_UNAVAILABLE', 'RESET_TOKEN_ROTATION_LOCKED'].includes(error.message) ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason: ROTATION_FAILURE_REASONS.includes(error.message) ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
       process.exitCode = 1;
       return;
     }
@@ -266,16 +287,26 @@ async function withTokenRotationLock(filePath, operation) {
   const lockFile = `${filePath}.rotate.lock`;
   const started = Date.now();
   let handle;
-  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    const classified = classifyRotationLockError(error);
+    if (classified) throw new Error(classified);
+    throw error;
+  }
   while (!handle) {
     try {
       handle = await fs.open(lockFile, 'wx', 0o600);
     } catch (error) {
+      const classified = classifyRotationLockError(error);
+      if (classified) throw new Error(classified);
       if (error.code !== 'EEXIST' || Date.now() - started >= 5_000) throw new Error('RESET_TOKEN_ROTATION_LOCKED');
       try {
         const stat = await fs.stat(lockFile);
         if (Date.now() - stat.mtimeMs >= 60_000) await fs.unlink(lockFile);
       } catch (statError) {
+        const statClassified = classifyRotationLockError(statError);
+        if (statClassified) throw new Error(statClassified);
         if (statError.code !== 'ENOENT') throw statError;
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -301,6 +332,10 @@ async function writeTokenMetadata(filePath, metadata) {
     await renameWithRetry(temporary, filePath);
     renamed = true;
     await fs.chmod(filePath, 0o600);
+  } catch (error) {
+    const classified = classifyRotationLockError(error);
+    if (classified) throw new Error(classified);
+    throw error;
   } finally {
     if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   }
@@ -310,7 +345,13 @@ async function removeTokenFile(filePath) {
   const stat = await fs.lstat(filePath).catch(() => null);
   if (!stat || stat.isSymbolicLink() || !stat.isFile() || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error('RESET_TOKEN_FILE_UNAVAILABLE');
   if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error('RESET_TOKEN_FILE_UNAVAILABLE');
-  await fs.unlink(filePath);
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    const classified = classifyRotationLockError(error);
+    if (classified) throw new Error(classified);
+    throw error;
+  }
 }
 
 async function renameWithRetry(source, target) {

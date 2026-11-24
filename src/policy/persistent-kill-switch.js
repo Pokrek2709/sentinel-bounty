@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { classifyStorageError, classifyStateReadError, isCorruptStateError } = require('./storage-errors');
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_LOCK_RETRY_MS = 25;
@@ -21,20 +22,8 @@ function nowFrom(clock) {
 }
 
 // Classify a filesystem error from a lock/state-storage operation into the
-// operator-facing error taxonomy. Returns the error code, or null when the
-// error is not a classified storage failure (callers rethrow it raw).
-// - EEXIST is NOT classified here: a live lock is KILL_SWITCH_STATE_LOCKED
-//   only after the retry timeout, decided by the caller.
-// - EACCES/EPERM: the operator cannot write the state directory at all.
-// - ENOSPC/EDQUOT: the disk/quota is exhausted.
-// - ENOTDIR: a path component is not a directory.
-function classifyStorageError(error) {
-  if (!error || typeof error.code !== 'string') return null;
-  if (['ENOSPC', 'EDQUOT'].includes(error.code)) return 'KILL_SWITCH_STATE_UNAVAILABLE';
-  if (['EACCES', 'EPERM'].includes(error.code)) return 'KILL_SWITCH_STATE_PERMISSION_DENIED';
-  if (error.code === 'ENOTDIR') return 'KILL_SWITCH_STATE_PATH_INVALID';
-  return null;
-}
+// operator-facing error taxonomy. Lives in storage-errors.js so the
+// operator CLI can reuse the same taxonomy for the rotation lock.
 
 class PersistentKillSwitch {
   #stateFile;
@@ -155,9 +144,12 @@ class PersistentKillSwitch {
         await this.#writeUnlocked(migrated);
         return migrated;
       }
-      throw new Error('Invalid kill-switch state.');
+      throw new Error('KILL_SWITCH_STATE_CORRUPT');
     } catch (error) {
       if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
+      const classified = classifyStateReadError(error);
+      if (classified) throw new Error(classified);
+      if (isCorruptStateError(error)) throw new Error('KILL_SWITCH_STATE_CORRUPT');
       throw error;
     }
   }
@@ -172,6 +164,8 @@ class PersistentKillSwitch {
       raw = await fs.readFile(this.#stateFile, 'utf8');
     } catch (error) {
       if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
+      const classified = classifyStateReadError(error);
+      if (classified) throw new Error(classified);
       throw error;
     }
     return this.#parseStateForLocklessRead(raw);
@@ -273,13 +267,20 @@ class PersistentKillSwitch {
       if (error.code === 'ENOENT') {
         return this.#locklessSnapshot({ version: 2, active: false, trigger: null, workers: [] });
       }
+      const classified = classifyStateReadError(error);
+      if (classified) throw new Error(classified);
       throw error;
     }
     return this.#locklessSnapshot(this.#parseStateForLocklessRead(raw));
   }
 
   #parseStateForLocklessRead(raw) {
-    const parsed = JSON.parse(raw);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      throw new Error('KILL_SWITCH_STATE_CORRUPT');
+    }
     if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
     if (parsed.version === 1 && typeof parsed.active === 'boolean') {
       return { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
@@ -298,7 +299,7 @@ class PersistentKillSwitch {
         workers: [],
       };
     }
-    throw new Error('Invalid kill-switch state.');
+    throw new Error('KILL_SWITCH_STATE_CORRUPT');
   }
 
   async trigger({ triggeredBy, reason }) {
