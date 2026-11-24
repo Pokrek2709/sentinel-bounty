@@ -300,16 +300,32 @@ test('status falls back to a lockless read on a full disk', async (t) => {
     assert.equal(result.code, 0);
     const status = parse(result.stdout);
     assert.equal(status.active, true);
+<<<<<<< HEAD
+=======
+    // Canonical lockless shape (ronde 24): one fallback path inside
+    // snapshot(), so the CLI no longer adds fallbackReason.
+>>>>>>> b4c6fa68713854a411c9307660be6d1254534ee4
     assert.equal(status.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(status.lockless, true);
     assert.equal(status.pruned, false);
-    assert.equal(status.fallbackReason, 'KILL_SWITCH_STATE_UNAVAILABLE');
-    assert.equal(status.registeredWorkers, 2);
+    assert.equal(status.fallbackReason, undefined);
+    assert.equal(status.registeredWorkers, 1);
     assert.equal(status.workers.find((worker) => worker.workerId === 'live-worker').leaseExpired, false);
     assert.equal(status.workers.find((worker) => worker.workerId === 'expired-worker').leaseExpired, true);
     assert.deepEqual((await fs.readdir(directory)).sort(), ['kill-switch.json']);
   } finally {
     await unmount();
     await fs.rm(mountPoint, { recursive: true, force: true });
+  }
+});
+
+test('skill and v1 docs carry no merge-conflict markers and document the canonical lockless shape', async () => {
+  for (const relative of ['skills/sentinel-bounty/SKILL.md', 'docs/persistent-kill-switch-v1.md']) {
+    const text = await fs.readFile(path.resolve(__dirname, '..', relative), 'utf8');
+    for (const line of text.split('\n')) {
+      assert.ok(!line.startsWith('<<<<<<<') && !line.startsWith('>>>>>>>') && line !== '=======', `${relative} still contains a merge-conflict marker: ${line}`);
+    }
+    assert.ok(text.includes('readMode: LOCKLESS_FALLBACK'), `${relative} must document readMode: LOCKLESS_FALLBACK`);
+    assert.ok(text.includes('KILL_SWITCH_STATE_LOCKED'), `${relative} must document the live-lock refusal`);
   }
 });

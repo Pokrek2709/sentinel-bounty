@@ -111,16 +111,10 @@ async function runKillSwitch(action, args) {
     return;
   }
   if (action === 'status') {
-    try {
-      process.stdout.write(`${JSON.stringify(await killSwitch.snapshot(), null, 2)}\n`);
-    } catch (error) {
-      if (error.message === 'KILL_SWITCH_STATE_UNAVAILABLE') {
-        const fallback = await killSwitch.snapshotLockless();
-        process.stdout.write(`${JSON.stringify({ ...fallback, fallbackReason: 'KILL_SWITCH_STATE_UNAVAILABLE' }, null, 2)}\n`);
-        return;
-      }
-      throw error;
-    }
+    // snapshot() already falls back internally to the canonical lockless
+    // shape when storage is unavailable; it never throws
+    // KILL_SWITCH_STATE_UNAVAILABLE, so there is no second CLI fallback.
+    process.stdout.write(`${JSON.stringify(await killSwitch.snapshot(), null, 2)}\n`);
     return;
   }
   if (!options.actor) throw new Error(`kill-switch ${action} requires --actor.`);
