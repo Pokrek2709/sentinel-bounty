@@ -1,0 +1,21 @@
+# Minimal Windows smoke run: the full node --test suite on windows-latest.
+# Added in round 28 because error.code injection alone does not prove
+# Windows filesystem behaviour (no local Windows machine, wine, or docker
+# exists on the lab VM).
+name: windows-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
