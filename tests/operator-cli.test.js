@@ -300,11 +300,8 @@ test('status falls back to a lockless read on a full disk', async (t) => {
     assert.equal(result.code, 0);
     const status = parse(result.stdout);
     assert.equal(status.active, true);
-<<<<<<< HEAD
-=======
     // Canonical lockless shape (ronde 24): one fallback path inside
     // snapshot(), so the CLI no longer adds fallbackReason.
->>>>>>> b4c6fa68713854a411c9307660be6d1254534ee4
     assert.equal(status.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(status.lockless, true);
     assert.equal(status.pruned, false);
