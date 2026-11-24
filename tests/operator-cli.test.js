@@ -300,6 +300,7 @@ test('status falls back to a lockless read on a full disk', async (t) => {
     assert.equal(result.code, 0);
     const status = parse(result.stdout);
     assert.equal(status.active, true);
+    assert.equal(status.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(status.lockless, true);
     assert.equal(status.pruned, false);
     assert.equal(status.fallbackReason, 'KILL_SWITCH_STATE_UNAVAILABLE');

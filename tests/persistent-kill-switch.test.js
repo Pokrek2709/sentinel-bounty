@@ -119,6 +119,7 @@ test('snapshotLockless reads stored state without pruning and marks expired leas
     const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
     const snapshot = await killSwitch.snapshotLockless();
     assert.equal(snapshot.active, true);
+    assert.equal(snapshot.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(snapshot.lockless, true);
     assert.equal(snapshot.pruned, false);
     assert.equal(snapshot.registeredWorkers, 2);
@@ -138,7 +139,7 @@ test('snapshotLockless returns the inactive default when the state file is missi
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
     const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
-    assert.deepEqual(await killSwitch.snapshotLockless(), { active: false, trigger: null, registeredWorkers: 0, workers: [], version: 2, lockless: true, pruned: false });
+    assert.deepEqual(await killSwitch.snapshotLockless(), { active: false, trigger: null, registeredWorkers: 0, workers: [], version: 2, readMode: 'LOCKLESS_FALLBACK', lockless: true, pruned: false });
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
@@ -157,6 +158,7 @@ test('snapshotLockless migrates a v1 state in memory without writing', async () 
     assert.equal(snapshot.version, 2);
     assert.equal(snapshot.active, true);
     assert.equal(snapshot.trigger.reason, 'v1 reason');
+    assert.equal(snapshot.readMode, 'LOCKLESS_FALLBACK');
     assert.equal(snapshot.lockless, true);
     assert.equal(await fs.readFile(stateFile, 'utf8'), v1);
   } finally {
