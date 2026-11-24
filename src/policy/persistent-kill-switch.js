@@ -141,8 +141,6 @@ class PersistentKillSwitch {
     }
   }
 
-<<<<<<< HEAD
-=======
   // Canonical lockless reader: the single parser for every lockless path.
   // No lock file, no mkdir, no writes. Expired leases are reported, not
   // pruned, and are marked leaseExpired so the operator can tell stale
@@ -178,7 +176,6 @@ class PersistentKillSwitch {
     });
   }
 
->>>>>>> b4c6fa68713854a411c9307660be6d1254534ee4
   #pruneWorkers(state, now = nowFrom(this.#clock)) {
     const workers = state.workers.filter((worker) => Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now);
     return workers.length === state.workers.length ? state : { ...state, workers };
@@ -238,11 +235,7 @@ class PersistentKillSwitch {
       });
     } catch (error) {
       if (error.message !== 'KILL_SWITCH_STATE_UNAVAILABLE') throw error;
-<<<<<<< HEAD
-      return this.snapshotLockless();
-=======
       return this.#locklessSnapshot(await this.#readSnapshotWithoutLock());
->>>>>>> b4c6fa68713854a411c9307660be6d1254534ee4
     }
     const workers = state.workers.map((worker) => Object.freeze({ ...worker }));
     return Object.freeze({ active: state.active, trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null, registeredWorkers: workers.length, workers: Object.freeze(workers), version: state.version });
@@ -256,22 +249,12 @@ class PersistentKillSwitch {
     try {
       raw = await fs.readFile(this.#stateFile, 'utf8');
     } catch (error) {
-<<<<<<< HEAD
-      if (error.code === 'ENOENT') return Object.freeze({ active: false, trigger: null, registeredWorkers: 0, workers: Object.freeze([]), version: 2, readMode: 'LOCKLESS_FALLBACK', lockless: true, pruned: false });
-      throw error;
-    }
-    const state = this.#parseStateForLocklessRead(raw);
-    const now = nowFrom(this.#clock);
-    const workers = state.workers.map((worker) => Object.freeze({ ...worker, leaseExpired: !(Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now) }));
-    return Object.freeze({ active: state.active, trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null, registeredWorkers: workers.length, workers: Object.freeze(workers), version: state.version, readMode: 'LOCKLESS_FALLBACK', lockless: true, pruned: false });
-=======
       if (error.code === 'ENOENT') {
         return this.#locklessSnapshot({ version: 2, active: false, trigger: null, workers: [] });
       }
       throw error;
     }
     return this.#locklessSnapshot(this.#parseStateForLocklessRead(raw));
->>>>>>> b4c6fa68713854a411c9307660be6d1254534ee4
   }
 
   #parseStateForLocklessRead(raw) {
