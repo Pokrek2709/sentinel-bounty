@@ -17,6 +17,7 @@
 ## 4. Path and Action Exclusions
 
 - Paths matching destructive actions (e.g. `/logout`, `/signout`, `/delete`, `/reset-password`, `/unsubscribe`) must be excluded from automated crawling and parameter fuzzing to prevent session termination or accidental account disruption.
+- These defaults are built into the scope manager (`DEFAULT_EXCLUDED_PATHS` in `src/scope/target-registry.js`). A target file may override them for that target only by declaring `default_excluded_paths` — a list that replaces the built-in defaults (an empty list means no default exclusions). The override is per-target, explicit, and visible in `sentinel scope list`; it does not change any other target. See `docs/scope-list-default-path-v1.md`.
 
 ## 5. Third-Party Services
 

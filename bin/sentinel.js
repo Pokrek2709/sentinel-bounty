@@ -18,7 +18,7 @@ const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limit
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
 const { getDetector, runDetector } = require('../src/detection/detector');
-const { storePathFor, addScopeTarget, removeScopeTarget, findScopeTarget } = require('../src/scope/target-store');
+const { storePathFor, addScopeTarget, removeScopeTarget, findScopeTarget, listScopeTargets } = require('../src/scope/target-store');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -46,6 +46,7 @@ function usage() {
     '  sentinel check-scope --store <scope-targets.json> --target-id <id> --url <url> [--explain] [--json]',
     '  sentinel scope add <target.json> [--state-dir <path>]',
     '  sentinel scope remove <target-id> [--state-dir <path>]',
+    '  sentinel scope list [--state-dir <path>] [--store <file>] [--url <url>] [--json]',
     '  sentinel kill-switch status [--state-dir <path>]',
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
@@ -172,10 +173,47 @@ async function killSwitchFor(options, resetTokenHash) {
 // `auditLogged: false` and exits 4, following the kill-switch trigger
 // pattern. A duplicate add is an idempotent no-op (exit 0, no rewrite,
 // no audit record).
+// Scope list (Phase 3, round 54). Read-only: it changes nothing, so it
+// needs no kill-switch guard and works while the switch is armed.
+// Renders the list as text, or as deterministic JSON with --json.
+function renderScopeListText(result) {
+  if (result.count === 0) return `No scope targets in ${result.store}.`;
+  const lines = [`Scope targets in ${result.store} (${result.count}):`];
+  for (const entry of result.targets) {
+    if (!entry.valid) {
+      lines.push(`  ${entry.targetId || '(no target_id)'} | INVALID: ${entry.error}`);
+      continue;
+    }
+    const decision = entry.decision ? entry.decision.reason : '—';
+    const defaults = entry.defaultExcludedPathsOverridden ? ' | defaults: overridden' : '';
+    lines.push(`  ${entry.targetId} | valid | decision: ${decision} | allowed_domains: ${entry.allowedDomains.join(', ')} | excluded_paths: ${entry.excludedPaths.join(', ')}${defaults}`);
+  }
+  return lines.join('\n');
+}
+
 async function runScopeCommand(args) {
   const [action, value, ...optionArgs] = args;
+  if (action === 'list') {
+    // `scope list` takes no positional value: every argument after the
+    // action is an option, so parse from args.slice(1) — not from
+    // optionArgs, which would swallow the first option as the value.
+    const listArgs = args.slice(1);
+    const json = listArgs.includes('--json');
+    const options = parseOptions(listArgs.filter((argument) => argument !== '--json'), ['--state-dir', '--store', '--url']);
+    if (options.stateDir && options.store) throw new Error('scope list: --state-dir and --store are mutually exclusive.');
+    const storePath = options.store
+      ? path.resolve(options.store)
+      : storePathFor(path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY));
+    const result = await listScopeTargets(storePath, { url: options.url });
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`${renderScopeListText(result)}\n`);
+    return;
+  }
   if (action !== 'add' && action !== 'remove') {
-    throw new Error('scope requires an action: add or remove.');
+    throw new Error('scope requires an action: add, remove, or list.');
   }
   if (!value || value.startsWith('--')) {
     throw new Error(action === 'add' ? 'scope add requires a <target.json> file.' : 'scope remove requires a <target-id>.');

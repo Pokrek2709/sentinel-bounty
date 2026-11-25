@@ -247,7 +247,7 @@ test('scope commands reject missing actions and values', async (t) => {
   assert.equal(noAction.code, 1);
   assert.match(noAction.stderr, /scope requires an action/);
 
-  const unknownAction = await runCli(['scope', 'list']);
+  const unknownAction = await runCli(['scope', 'frobnicate']);
   assert.equal(unknownAction.code, 1);
   assert.match(unknownAction.stderr, /scope requires an action/);
 

@@ -52,6 +52,17 @@ function normalizePath(value, field) {
   return raw.length > 1 ? raw.replace(/\/+$/, '') : raw;
 }
 
+function normalizeDefaultExcludedPaths(value) {
+  // `default_excluded_paths` is the target file's override for the
+  // built-in default excluded paths (round 54, Phase 3). An absent field
+  // keeps the built-in defaults; a present field REPLACES them for this
+  // target only — an empty array means "no default exclusions". A
+  // non-array value, or an entry that is not an absolute path, fails
+  // loudly; there is no silent fallback to the built-in list.
+  if (!Array.isArray(value)) fail('default_excluded_paths must be an array of absolute paths.');
+  return value.map((entry, index) => normalizePath(entry, `default_excluded_paths[${index}]`));
+}
+
 function normalizeRateLimit(value) {
   if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) fail('rate_limit must be an object.');
   const requestsPerSecond = value?.requests_per_second ?? 2;
@@ -121,6 +132,7 @@ function freezeTarget(target) {
   Object.freeze(target.allowedDomains);
   Object.freeze(target.excludedDomains);
   Object.freeze(target.excludedPaths);
+  Object.freeze(target.defaultExcludedPaths);
   Object.freeze(target.allowedUrls);
   Object.freeze(target.allowedMethods);
   return Object.freeze(target);
@@ -147,10 +159,14 @@ function normalizeTarget(target) {
 
   const allowedDomains = target.allowed_domains.map((entry, index) => normalizeDomain(entry, `allowed_domains[${index}]`));
   const excludedDomains = (target.excluded_domains || []).map((entry, index) => normalizeDomain(entry, `excluded_domains[${index}]`));
+  const defaultExcludedPathsOverridden = target.default_excluded_paths !== undefined;
+  const defaultExcludedPaths = defaultExcludedPathsOverridden
+    ? normalizeDefaultExcludedPaths(target.default_excluded_paths)
+    : [...DEFAULT_EXCLUDED_PATHS];
   const excludedPaths = [...new Set([
-    ...DEFAULT_EXCLUDED_PATHS,
-    ...(target.excluded_paths || []),
-  ].map((entry, index) => normalizePath(entry, `excluded_paths[${index}]`)))];
+    ...defaultExcludedPaths,
+    ...(target.excluded_paths || []).map((entry, index) => normalizePath(entry, `excluded_paths[${index}]`)),
+  ])];
   const allowedUrls = (target.allowed_urls || []).map((entry, index) => normalizeUrl(entry, `allowed_urls[${index}]`));
 
   for (const allowedUrl of allowedUrls) {
@@ -173,6 +189,12 @@ function normalizeTarget(target) {
     allowedDomains,
     excludedDomains,
     excludedPaths,
+    // The effective default excluded-path list for this target, and
+    // whether it came from the target file's `default_excluded_paths`
+    // override (round 54) rather than the built-in defaults. The trail
+    // and the suggestion use these to cite the right source.
+    defaultExcludedPaths,
+    defaultExcludedPathsOverridden,
     allowedUrls,
     allowedMethods: [...new Set(allowedMethods)],
     rateLimit: normalizeRateLimit(target.rate_limit),
@@ -229,7 +251,7 @@ function targetFileSource(targetFile, field) {
   return targetFile ? `target file: ${targetFile} (${field})` : `target file (${field})`;
 }
 
-function suggestionFor(reason, detail, targetFile) {
+function suggestionFor(reason, detail, targetFile, context = {}) {
   switch (reason) {
     case 'TARGET_NOT_REGISTERED':
       return `Register the target first: sentinel check-scope --target <target.json> --url <url> with target_id "${detail.targetId}".`;
@@ -240,8 +262,15 @@ function suggestionFor(reason, detail, targetFile) {
     case 'HOST_OUT_OF_SCOPE':
       return `Add "${detail.hostname}" (or a matching wildcard) to allowed_domains in ${targetFile || 'the target file'}.`;
     case 'EXCLUDED_PATH':
-      if (DEFAULT_EXCLUDED_PATHS.includes(detail.pattern)) {
-        return `"${detail.pattern}" is a built-in policy default (policies/scope-policy.md section 4) and cannot be un-excluded from the target file; use a different path.`;
+      // Round 54 changed the policy: a built-in default path CAN now be
+      // overridden for a target by declaring `default_excluded_paths` in
+      // the target file. The suggestion therefore names the override
+      // instead of saying "cannot be un-excluded" (the round-52 wording).
+      if (context.fromDefaultList) {
+        if (context.defaultExcludedPathsOverridden) {
+          return `Remove "${detail.pattern}" from default_excluded_paths in ${targetFile || 'the target file'}, or use a different path.`;
+        }
+        return `"${detail.pattern}" is a built-in policy default (policies/scope-policy.md section 4). To allow it for this target, declare "default_excluded_paths" in the target file — a list that replaces the built-in defaults — or use a different path.`;
       }
       return `Remove "${detail.pattern}" from excluded_paths in ${targetFile || 'the target file'}, or use a different path.`;
     case 'IN_SCOPE':
@@ -309,14 +338,20 @@ function evaluateTargetRequestWithTrail(target, requestUrl, source = {}) {
   const excludedPath = target.excludedPaths.find((entry) => pathMatches(request.path, entry));
   if (excludedPath) {
     const detail = { hostname: request.hostname, path: request.path, pattern: excludedPath };
-    const pathSource = DEFAULT_EXCLUDED_PATHS.includes(excludedPath) ? BUILTIN_PATH_SOURCE : targetFileSource(targetFile, 'excluded_paths');
+    // The decision detail stays exactly {hostname, path, pattern} (the
+    // pre-existing shape); the default-list provenance is passed to the
+    // suggestion separately, so the decision object never changes shape.
+    const fromDefaultList = target.defaultExcludedPaths.includes(excludedPath);
+    const pathSource = fromDefaultList
+      ? (target.defaultExcludedPathsOverridden ? targetFileSource(targetFile, 'default_excluded_paths') : BUILTIN_PATH_SOURCE)
+      : targetFileSource(targetFile, 'excluded_paths');
     trail.push(trailEntry('EXCLUDED_PATH', true, true, 'deny', pathSource, detail, `Path "${request.path}" matches excluded path "${excludedPath}".`));
     trail.push(...rest(5));
     return {
       decision: decision(false, 'EXCLUDED_PATH', detail),
       trail,
       decidingRule: 'EXCLUDED_PATH',
-      suggestion: suggestionFor('EXCLUDED_PATH', detail, targetFile),
+      suggestion: suggestionFor('EXCLUDED_PATH', detail, targetFile, { fromDefaultList, defaultExcludedPathsOverridden: target.defaultExcludedPathsOverridden }),
     };
   }
   trail.push(trailEntry('EXCLUDED_PATH', true, false, 'pass', targetFileSource(targetFile, 'excluded_paths'), { hostname: request.hostname, path: request.path }, `Path "${request.path}" matches no excluded path.`));
@@ -431,4 +466,4 @@ class TargetRegistry {
   }
 }
 
-module.exports = { DEFAULT_EXCLUDED_PATHS, TargetRegistry, evaluateTargetRequest, evaluateTargetRequestWithTrail, renderScopeExplanationText, normalizeTarget };
+module.exports = { DEFAULT_EXCLUDED_PATHS, TargetRegistry, evaluateTargetRequest, evaluateTargetRequestWithTrail, renderScopeExplanationText, normalizeTarget, normalizeUrl };

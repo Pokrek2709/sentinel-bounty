@@ -7,6 +7,46 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Scope list and overridable default excluded paths (round 54, 2026-11-26)
+
+- `sentinel scope list [--state-dir <path>] [--store <file>] [--url
+  <url>] [--json]` lists every target in the persistent store
+  (`<state-dir>/scope-targets.json`), sorted by `target_id`, each with
+  its validation status and a summary of the normalized target. Without
+  `--url` there is no decision to report (`decision: null` in JSON,
+  `—` in text) — a scope decision is a property of a (target, URL)
+  pair, and inventing a probe URL would fabricate data; with `--url`,
+  each valid target is evaluated with the same
+  `evaluateTargetRequest` that `check-scope` uses. One invalid entry
+  is reported as `valid: false` with its validation error instead of
+  hiding the rest of the list; a damaged store *shape* still fails
+  loudly (`SCOPE_STORE_CORRUPT` /
+  `SCOPE_STORE_UNSUPPORTED_SCHEMA`), a symlinked store is refused
+  (`SCOPE_STORE_SYMLINK_REFUSED`), and an invalid `--url` fails with
+  `SCOPE_LIST_INVALID_URL`. JSON output is deterministic (same store
+  twice, or written in the opposite order, lists byte-identically).
+  The command is read-only, needs no kill-switch guard, and works
+  while the switch is armed. An empty store prints `No scope targets
+  in <store>.` and exits 0.
+- A target file may now declare `default_excluded_paths` — a list
+  that replaces the built-in default excluded paths
+  (`DEFAULT_EXCLUDED_PATHS`: `/logout`, `/signout`, `/delete`,
+  `/reset-password`, `/unsubscribe`) for that target only; an empty
+  list means no default exclusions. Absent the field, the built-ins
+  stand. An invalid value (non-array, or an entry that is not an
+  absolute path) fails `normalizeTarget` loudly with no silent
+  fallback; `scope add` of such a target fails with
+  `SCOPE_TARGET_INVALID` and writes nothing. The decision object is
+  unchanged; the `--explain` trail now cites the right source for a
+  default-list denial (built-in vs. `target file:
+  <file> (default_excluded_paths)`) and the suggestion names the
+  override instead of the round-52 "cannot be un-excluded" wording
+  (one round-52 test expectation was updated for the intentional
+  policy change). `policies/scope-policy.md` section 4 records the
+  override. Open items from round 53 are now both closed; what
+  remains for Phase 3 is the Meta-side ceiling, not reachable by
+  rounds.
+
 ### Scope target management (round 53, 2026-11-26)
 
 - `sentinel scope add <target.json> [--state-dir <path>]` and

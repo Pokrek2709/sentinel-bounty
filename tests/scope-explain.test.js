@@ -95,12 +95,15 @@ test('out-of-scope host explanation names ALLOWED_DOMAIN and suggests adding the
   assert.equal(rule(explanation, 'IN_SCOPE').evaluated, false);
 });
 
-test('built-in default excluded path cites the built-in source and cannot be un-excluded', () => {
+test('built-in default excluded path cites the built-in source and suggests the override', () => {
   const explanation = explained({}, 'https://app.example.test/logout');
   assert.equal(explanation.decidingRule, 'EXCLUDED_PATH');
   assert.equal(explanation.decision.reason, 'EXCLUDED_PATH');
   assert.match(rule(explanation, 'EXCLUDED_PATH').source, /built-in default: .*DEFAULT_EXCLUDED_PATHS/);
-  assert.match(explanation.suggestion, /built-in policy default.*cannot be un-excluded/);
+  // Round 54 changed the policy: the built-in defaults CAN now be
+  // overridden per target via `default_excluded_paths`, so the
+  // suggestion names the override instead of "cannot be un-excluded".
+  assert.match(explanation.suggestion, /built-in policy default.*declare "default_excluded_paths"/);
 });
 
 test('configured excluded path cites the target file and suggests removing it', () => {

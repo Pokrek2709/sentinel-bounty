@@ -40,7 +40,7 @@ const { writeFileRefusingSymlink } = require('../policy/safe-write');
 const { ensurePrivateDir } = require('../policy/state-permissions');
 const { readJsonFileBounded } = require('../policy/input-limits');
 const { closeAndRemoveLock } = require('../policy/lock-file');
-const { normalizeTarget } = require('./target-registry');
+const { normalizeTarget, normalizeUrl, evaluateTargetRequest } = require('./target-registry');
 
 const SCHEMA_VERSION = 1;
 const STORE_FILE_NAME = 'scope-targets.json';
@@ -91,31 +91,105 @@ function validateStoreShape(parsed, storePath) {
   if (!Array.isArray(parsed.targets)) {
     fail('SCOPE_STORE_CORRUPT', `Scope store has no targets array: ${storePath}`);
   }
-  parsed.targets.forEach((entry, index) => validateTargetEntry(entry, index));
+  // Entry validation is separate: `loadScopeTargets` fails loudly on a
+  // bad entry (a damaged entry must never silently change scope),
+  // while `listScopeTargets` reports bad entries per entry instead.
   return { schema_version: SCHEMA_VERSION, targets: parsed.targets };
 }
 
-async function loadScopeTargets(storePath) {
+async function readStoreJson(storePath) {
+  // Reads and parses the store file with the same guards as the loader:
+  // symlinks refused, bounded JSON, non-files refused. Returns null when
+  // the file does not exist yet (an empty store). Shape and entry
+  // validation are the caller's job — `loadScopeTargets` validates the
+  // whole store, `listScopeTargets` validates per entry so one damaged
+  // entry does not hide the rest of the list.
   let stat = null;
   try {
     stat = await fs.lstat(storePath);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  if (!stat) return emptyStore();
+  if (!stat) return null;
   if (stat.isSymbolicLink()) {
     fail('SCOPE_STORE_SYMLINK_REFUSED', `Refusing to read a scope store through a symbolic link: ${storePath}`);
   }
   if (!stat.isFile()) {
     fail('SCOPE_STORE_CORRUPT', `Scope store is not a regular file: ${storePath}`);
   }
-  let parsed;
   try {
-    parsed = await readJsonFileBounded(storePath);
+    return await readJsonFileBounded(storePath);
   } catch (error) {
     fail('SCOPE_STORE_CORRUPT', `Scope store cannot be read as JSON: ${error.message}`);
   }
-  return validateStoreShape(parsed, storePath);
+}
+
+async function loadScopeTargets(storePath) {
+  const parsed = await readStoreJson(storePath);
+  if (!parsed) return emptyStore();
+  const shaped = validateStoreShape(parsed, storePath);
+  shaped.targets.forEach((entry, index) => validateTargetEntry(entry, index));
+  return shaped;
+}
+
+// Lists every target in the store, sorted by target_id (plain string
+// comparison; entries without a usable target_id sort last), each with
+// its validation status and a summary of the normalized target. Unlike
+// `loadScopeTargets`, one invalid entry does NOT fail the whole list:
+// it is reported as `valid: false` with its validation error, and the
+// valid entries are still listed. A damaged store SHAPE (not an object,
+// unsupported schema, no targets array) still fails loudly, because
+// there is no list to report. When `url` is given, each valid target is
+// evaluated against it with the same `evaluateTargetRequest` the
+// `check-scope` command uses, and the decision is attached; without a
+// URL there is no decision to report (`decision: null`) — a decision
+// needs a request URL, and inventing one would fabricate data.
+async function listScopeTargets(storePath, options = {}) {
+  const url = options.url === undefined ? null : options.url;
+  if (url !== null) {
+    try {
+      normalizeUrl(url, 'request URL');
+    } catch (error) {
+      fail('SCOPE_LIST_INVALID_URL', `Cannot list scope targets for an invalid URL: ${error.message}`);
+    }
+  }
+  const parsed = await readStoreJson(storePath);
+  const rawTargets = parsed ? validateStoreShape(parsed, storePath).targets : [];
+  const entries = rawTargets.map((entry) => {
+    let normalized = null;
+    let error = null;
+    try {
+      normalized = normalizeTarget(entry);
+    } catch (validationError) {
+      error = validationError.message;
+    }
+    if (!normalized) {
+      const targetId = entry && typeof entry === 'object' && !Array.isArray(entry)
+        && typeof entry.target_id === 'string' && entry.target_id.trim() !== ''
+        ? entry.target_id.trim() : null;
+      return Object.freeze({ targetId, valid: false, error, decision: null });
+    }
+    return Object.freeze({
+      targetId: normalized.targetId,
+      valid: true,
+      programName: normalized.programName,
+      authorizationReference: normalized.authorizationReference,
+      allowedDomains: normalized.allowedDomains.map((pattern) => pattern.raw),
+      excludedDomains: normalized.excludedDomains.map((pattern) => pattern.raw),
+      excludedPaths: [...normalized.excludedPaths],
+      defaultExcludedPathsOverridden: normalized.defaultExcludedPathsOverridden,
+      allowedMethods: [...normalized.allowedMethods],
+      requiresApproval: normalized.requiresApproval,
+      decision: url === null ? null : evaluateTargetRequest(normalized, url),
+    });
+  });
+  entries.sort((a, b) => {
+    if (a.targetId === null && b.targetId === null) return 0;
+    if (a.targetId === null) return 1;
+    if (b.targetId === null) return -1;
+    return a.targetId < b.targetId ? -1 : a.targetId > b.targetId ? 1 : 0;
+  });
+  return Object.freeze({ store: storePath, count: entries.length, targets: Object.freeze(entries) });
 }
 
 async function saveScopeTargets(storePath, store) {
@@ -244,4 +318,5 @@ module.exports = {
   addScopeTarget,
   removeScopeTarget,
   findScopeTarget,
+  listScopeTargets,
 };
