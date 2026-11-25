@@ -34,6 +34,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { PersistentKillSwitch } = require('./persistent-kill-switch');
 const { AuditLog } = require('../audit/audit-log');
+const { ensurePrivateDir } = require('./state-permissions');
 
 const DRILL_DIR_NAME = 'drill';
 const DRILL_ACTOR = 'drill';
@@ -181,7 +182,9 @@ async function runDrill({
   const fail = (id, detail, reason) => record(id, 'FAIL', detail, reason);
 
   try {
-    await fs.mkdir(drillDir, { recursive: true, mode: 0o700 });
+    // ensurePrivateDir (round 45): mkdir({ recursive, mode }) alone
+    // never chmods a directory that already exists.
+    await ensurePrivateDir(drillDir);
     audit = new AuditLog({ logFile: drillAuditFile, skillDirectory, clock });
     // Ephemeral reset token, in memory only: the drill can reset its
     // own scoped switch, and a dead drill leaves no usable token behind.

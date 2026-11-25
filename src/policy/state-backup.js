@@ -39,6 +39,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { ensurePrivateDir } = require('./state-permissions');
 const { writeFileRefusingSymlink } = require('./safe-write');
 
 const BACKUP_SCHEMA_VERSION = 1;
@@ -102,7 +103,11 @@ async function backupState({ stateDir, outPath }) {
     state,
   };
   const output = path.resolve(outPath);
-  await fs.mkdir(path.dirname(output), { recursive: true });
+  // The output directory is operator-chosen (it may be anywhere), so
+  // only a newly created directory gets 0700 — an existing directory
+  // is never chmodded. The backup FILE itself is written 0600
+  // through writeFileRefusingSymlink below.
+  await fs.mkdir(path.dirname(output), { recursive: true, mode: 0o700 });
   try {
     await writeFileRefusingSymlink(output, `${JSON.stringify(envelope, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   } catch (error) {
@@ -160,7 +165,9 @@ async function restoreState({ stateDir, fromPath }) {
     if (error.message === 'BACKUP_STATE_LOCKED') throw error;
     if (error.code !== 'ENOENT') throw error;
   }
-  await fs.mkdir(stateDir, { recursive: true });
+  // The restore target IS a state directory: guarantee 0700 even if
+  // it already exists (round 45, ensurePrivateDir).
+  await ensurePrivateDir(stateDir);
   try {
     await writeFileRefusingSymlink(stateFile, `${JSON.stringify(envelope.state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   } catch (error) {

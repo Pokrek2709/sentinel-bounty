@@ -370,14 +370,21 @@ test('classifies EACCES as KILL_SWITCH_STATE_PERMISSION_DENIED, not STATE_LOCKED
     await fs.mkdir(skillDirectory, { mode: 0o755 });
     // The probe runs as nobody, so it cannot read the repo checkout itself
     // (checkout files are group-only readable). Copy the module plus its
-    // storage-errors dependency into the scratch directory, world-readable,
-    // and probe the copies: the modules have no dependencies beyond node
-    // builtins.
-    const probeModule = path.join(directory, 'probe-persistent-kill-switch.js');
+    // dependencies into the scratch directory, world-readable, mirroring
+    // the repo layout (policy/): the module depends on
+    // ./storage-errors and ./state-permissions (round 45), so a flat
+    // single-file copy no longer loads.
+    await fs.mkdir(path.join(directory, 'policy'));
+    // mkdir's mode is masked by the umask (0007 turns 0755 into
+    // 0750): set world-traversal explicitly for the nobody probe.
+    await fs.chmod(path.join(directory, 'policy'), 0o755);
+    const probeModule = path.join(directory, 'policy', 'persistent-kill-switch.js');
     await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'persistent-kill-switch.js'), probeModule);
-    await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'storage-errors.js'), path.join(directory, 'storage-errors.js'));
+    await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'storage-errors.js'), path.join(directory, 'policy', 'storage-errors.js'));
+    await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'state-permissions.js'), path.join(directory, 'policy', 'state-permissions.js'));
     await fs.chmod(probeModule, 0o644);
-    await fs.chmod(path.join(directory, 'storage-errors.js'), 0o644);
+    await fs.chmod(path.join(directory, 'policy', 'storage-errors.js'), 0o644);
+    await fs.chmod(path.join(directory, 'policy', 'state-permissions.js'), 0o644);
     const probe = `
       const { PersistentKillSwitch } = require(process.env.PROBE_MODULE);
       (async () => {

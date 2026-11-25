@@ -37,7 +37,8 @@ what was fixed, and what is still deliberately left out.
 - **check-env reports; it does not gate.** It exits 0 even when tools are
   unavailable or the Node floor fails — it is a capability report.
   `sentinel verify-install` is the gate (Node >= 18, CLI reachable,
-  kill-switch inactive, audit healthy, scope config, skill files).
+  kill-switch inactive, audit healthy, state permissions private,
+  scope config, skill files).
 - **Python version is not enforced** (no documented minimum — see above).
 - **The process-termination probe verifies the machinery, not a kill.**
   It proves the kill-switch state path works in isolation; the actual

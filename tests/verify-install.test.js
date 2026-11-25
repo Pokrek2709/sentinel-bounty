@@ -34,6 +34,9 @@ async function makeSkillRoot(directory) {
 
 async function makeStateDirectory(directory, { killSwitch, audit } = {}) {
   await fs.mkdir(directory, { recursive: true });
+  // Fixtures comply with the round-45 permission standard (state
+  // directory 0700); mkdir alone would leave 0770 under umask 0007.
+  await fs.chmod(directory, 0o700);
   if (killSwitch !== undefined) {
     await fs.writeFile(path.join(directory, 'kill-switch.json'), typeof killSwitch === 'string' ? killSwitch : JSON.stringify(killSwitch), { mode: 0o600 });
   }
@@ -74,9 +77,9 @@ test('verify-install passes on a well-formed install with inactive kill-switch',
   });
   const result = await runVerifyInstall({ skillDirectory, stateDirectory });
   assert.equal(result.overall, 'PASS');
-  assert.equal(result.passed, 6);
+  assert.equal(result.passed, 7);
   assert.equal(result.failed, 0);
-  assert.deepEqual(result.checks.map((check) => check.id), ['node-version', 'cli-reachable', 'kill-switch', 'audit-log', 'scope-config', 'skill-files']);
+  assert.deepEqual(result.checks.map((check) => check.id), ['node-version', 'cli-reachable', 'kill-switch', 'audit-log', 'state-permissions', 'scope-config', 'skill-files']);
   assert.ok(result.checks.every((check) => check.status === 'PASS' && typeof check.reason === 'string' && check.reason.length > 0));
 });
 
@@ -86,6 +89,7 @@ test('verify-install passes with no state files yet', async () => {
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
   await fs.mkdir(stateDirectory, { recursive: true });
+  await fs.chmod(stateDirectory, 0o700);
   const result = await runVerifyInstall({ skillDirectory, stateDirectory });
   assert.equal(result.overall, 'PASS');
   assert.equal(result.checks.find((check) => check.id === 'kill-switch').reason, 'No kill-switch state file exists yet; kill-switch is inactive.');
@@ -219,9 +223,10 @@ test('CLI verify-install exits 0 with one PASS line per check on a good install'
   assert.match(result.stdout, /^PASS cli-reachable: /m);
   assert.match(result.stdout, /^PASS kill-switch: /m);
   assert.match(result.stdout, /^PASS audit-log: /m);
+  assert.match(result.stdout, /^PASS state-permissions: /m);
   assert.match(result.stdout, /^PASS scope-config: /m);
   assert.match(result.stdout, /^PASS skill-files: /m);
-  assert.match(result.stdout, /verify-install: 6 passed, 0 failed — PASS/);
+  assert.match(result.stdout, /verify-install: 7 passed, 0 failed — PASS/);
   assert.deepEqual(await snapshotTree(stateDirectory), beforeState);
 });
 
@@ -240,5 +245,5 @@ test('CLI verify-install exits non-zero with FAIL lines on a broken install', as
   assert.match(result.stdout, /^FAIL kill-switch: Kill-switch is ACTIVE/m);
   assert.match(result.stdout, /^FAIL audit-log: /m);
   assert.match(result.stdout, /^FAIL skill-files: /m);
-  assert.match(result.stdout, /verify-install: 3 passed, 3 failed — FAIL/);
+  assert.match(result.stdout, /verify-install: 4 passed, 3 failed — FAIL/);
 });

@@ -7,6 +7,30 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### State-file permissions audit and repair (round 45, 2026-11-26)
+
+- New permission standard for the state directory (files `0600`,
+  directories `0700`, no symlinks), enforced and verified in
+  `src/policy/state-permissions.js`: `sentinel verify-install`
+  gained a seventh check (`state-permissions`, reporting each
+  violation by path with actual vs expected mode), and
+  `sentinel verify-install --fix` tightens loose modes inside the
+  state dir only, refusing symlinks (`STATE_PERMISSION_SYMLINK_REFUSED`).
+  Writers now guarantee the state directory itself is `0700` even
+  when it already exists (`ensurePrivateDir` — `mkdir({ recursive,
+  mode })` alone never chmods an existing directory, which is how
+  the live state dir stayed `2770`). The live install's audit
+  found exactly three violations (state dir `2770`, two legacy
+  `0660` files from Nov 18) and `--fix` repaired all three; the
+  install now passes 7/7. A chmod that fails with `EACCES`/`EPERM`
+  inside `ensurePrivateDir` is swallowed so the caller's next
+  operation surfaces the properly classified permission error —
+  throwing the raw `EPERM` regressed the round-27 EACCES probes
+  (fixed here, and the probes now mirror the repo layout to load
+  the new dependency). Fresh writes stay `0600`/`0700` under
+  umask `022` (tested). Suite 316 → 327 tests. See
+  `docs/state-permissions-v1.md`.
+
 ### Standalone HTML report export (round 44, 2026-11-26)
 
 - `sentinel report --format html` renders the same validated,

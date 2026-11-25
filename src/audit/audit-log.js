@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { ensurePrivateDir } = require('../policy/state-permissions');
 
 const MAX_RECORD_BYTES = 32 * 1024;
 const MAX_LOG_BYTES = 10 * 1024 * 1024;
@@ -105,7 +106,9 @@ class AuditLog {
 
   async #withLock(operation) {
     try {
-      await fs.mkdir(path.dirname(this.#logFile), { recursive: true, mode: 0o700 });
+      // ensurePrivateDir (round 45): mkdir({ recursive, mode })
+      // alone never chmods a directory that already exists.
+      await ensurePrivateDir(path.dirname(this.#logFile));
     } catch (error) {
       const classified = classifyAuditStorageError(error);
       if (classified) throw new Error(classified);

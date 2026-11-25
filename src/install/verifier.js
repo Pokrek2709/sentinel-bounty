@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { PersistentKillSwitch } = require('../policy/persistent-kill-switch');
 const { classifyStateReadError } = require('../policy/storage-errors');
+const { auditStatePermissions } = require('../policy/state-permissions');
 
 const MIN_NODE_MAJOR = 18;
 // Repo layout keeps the skill doc under skills/, an installed copy keeps it
@@ -106,6 +107,27 @@ async function checkAuditLog(stateDirectory) {
   return pass('audit-log', 'Audit log is readable and every record parses.');
 }
 
+async function checkStatePermissions(stateDirectory) {
+  let audit;
+  try {
+    audit = await auditStatePermissions(stateDirectory);
+  } catch (error) {
+    if (['EACCES', 'EPERM'].includes(error.code)) return fail('state-permissions', 'State directory is not readable (STATE_PERMISSION_DENIED).');
+    if (error.code === 'ENOTDIR') return fail('state-permissions', 'State directory path is invalid (STATE_PERMISSION_PATH_INVALID).');
+    return fail('state-permissions', 'State directory permissions could not be checked (STATE_PERMISSION_UNAVAILABLE).');
+  }
+  if (!audit.exists) return pass('state-permissions', 'No state directory exists yet; nothing to verify.');
+  if (audit.violations.length === 0) {
+    return pass('state-permissions', `State directory permissions are private (${audit.checked} entr${audit.checked === 1 ? 'y' : 'ies'} checked: files 0600, directories 0700, no symlinks).`);
+  }
+  const detail = audit.violations.map((violation) => {
+    if (violation.kind === 'symlink') return `${violation.path} is a symlink (expected: no symlink)`;
+    if (violation.kind === 'other') return `${violation.path} is an unexpected special file (${violation.actualMode})`;
+    return `${violation.path} is ${violation.actualMode} (expected ${violation.expectedMode})`;
+  }).join('; ');
+  return fail('state-permissions', `${audit.violations.length} permission violation${audit.violations.length === 1 ? '' : 's'} (STATE_PERMISSION_VIOLATION): ${detail}. Run verify-install --fix to tighten them.`);
+}
+
 async function checkScopeConfig(skillDirectory) {
   const configFile = path.join(skillDirectory, SCOPE_CONFIG_RELATIVE);
   let content;
@@ -146,7 +168,9 @@ async function checkSkillFiles(skillDirectory) {
 // Read-only install verification: every check is a local read (stat /
 // readFile) only. No writes, no network requests, no security tools.
 // Returns a frozen { checks, passed, failed, overall } summary; callers
-// decide the exit code from `failed`.
+// decide the exit code from `failed`. checkStatePermissions is also
+// exported for the CLI --fix path, which re-runs just that check after
+// a repair instead of re-running the whole suite.
 async function runVerifyInstall({ skillDirectory, stateDirectory, nodeVersion = process.version } = {}) {
   if (typeof skillDirectory !== 'string' || !path.isAbsolute(skillDirectory)) throw new TypeError('skillDirectory must be an absolute path.');
   if (typeof stateDirectory !== 'string' || !path.isAbsolute(stateDirectory)) throw new TypeError('stateDirectory must be an absolute path.');
@@ -155,6 +179,7 @@ async function runVerifyInstall({ skillDirectory, stateDirectory, nodeVersion = 
     await checkCliReachable(skillDirectory),
     await checkKillSwitch(stateDirectory, skillDirectory),
     await checkAuditLog(stateDirectory),
+    await checkStatePermissions(stateDirectory),
     await checkScopeConfig(skillDirectory),
     await checkSkillFiles(skillDirectory),
   ];
@@ -168,4 +193,4 @@ async function runVerifyInstall({ skillDirectory, stateDirectory, nodeVersion = 
   });
 }
 
-module.exports = { runVerifyInstall, MIN_NODE_MAJOR };
+module.exports = { runVerifyInstall, checkStatePermissions, MIN_NODE_MAJOR };

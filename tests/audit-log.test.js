@@ -46,11 +46,23 @@ test('audit health classifies EACCES as AUDIT_LOG_PERMISSION_DENIED, not AUDIT_L
     await fs.writeFile(logFile, '', { mode: 0o644 });
     const skillDirectory = path.join(directory, 'skill');
     await fs.mkdir(skillDirectory, { mode: 0o755 });
-    // Same nobody-readability constraint as the kill-switch probe: copy the
-    // single-file module into the scratch directory, world-readable.
-    const probeModule = path.join(directory, 'probe-audit-log.js');
+    // Same nobody-readability constraint as the kill-switch probe: copy
+    // the module into the scratch directory, world-readable. The
+    // module now depends on ../policy/state-permissions (round 45),
+    // so the scratch copy mirrors the repo layout (audit/ + policy/)
+    // instead of a single flat file.
+    await fs.mkdir(path.join(directory, 'audit'));
+    await fs.mkdir(path.join(directory, 'policy'));
+    // mkdir's mode is masked by the umask (0007 turns 0755 into
+    // 0750), so set world-traversal explicitly: the probe runs as
+    // nobody and must be able to enter these directories.
+    await fs.chmod(path.join(directory, 'audit'), 0o755);
+    await fs.chmod(path.join(directory, 'policy'), 0o755);
+    const probeModule = path.join(directory, 'audit', 'audit-log.js');
     await fs.copyFile(path.resolve(__dirname, '..', 'src', 'audit', 'audit-log.js'), probeModule);
+    await fs.copyFile(path.resolve(__dirname, '..', 'src', 'policy', 'state-permissions.js'), path.join(directory, 'policy', 'state-permissions.js'));
     await fs.chmod(probeModule, 0o644);
+    await fs.chmod(path.join(directory, 'policy', 'state-permissions.js'), 0o644);
     const probe = `
       const { AuditLog } = require(process.env.PROBE_MODULE);
       (async () => {

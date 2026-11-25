@@ -10,7 +10,8 @@ const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch')
 const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
 const { generateReport } = require('../src/report/generator');
-const { runVerifyInstall } = require('../src/install/verifier');
+const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
+const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
 const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/state-backup');
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
@@ -51,7 +52,7 @@ function usage() {
     '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html] [--generated-at <iso>] [--program <name>]',
-    '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>]',
+    '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
   ].join('\n');
@@ -558,10 +559,39 @@ async function runDrillCommand(args) {
   if (result.verdict !== 'PASS') process.exitCode = 1;
 }
 
-async function runVerifyInstallCommand(args) {  const options = parseOptions(args, ['--state-dir', '--skill-dir']);
+async function runVerifyInstallCommand(args) {
+  // --fix is a boolean flag (same pattern as drill --recover):
+  // parseOptions requires a value for every permitted option, so it
+  // is filtered out first. Without --fix, verify-install is strictly
+  // read-only; with --fix it repairs ONLY state-permission
+  // violations (chmod inside the state dir, never following a
+  // symlink) and re-runs just that check.
+  const fix = args.includes('--fix');
+  const options = parseOptions(args.filter((argument) => argument !== '--fix'), ['--state-dir', '--skill-dir']);
   const skillDirectory = path.resolve(options.skillDir || path.resolve(__dirname, '..'));
   const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
-  const result = await runVerifyInstall({ skillDirectory, stateDirectory });
+  let result = await runVerifyInstall({ skillDirectory, stateDirectory });
+  if (fix) {
+    const permissionsCheck = result.checks.find((check) => check.id === 'state-permissions');
+    if (permissionsCheck && permissionsCheck.status === 'FAIL') {
+      const repair = await repairStatePermissions(stateDirectory);
+      for (const entry of repair.repaired) {
+        process.stdout.write(`fixed ${entry.path}: ${entry.fromMode} -> ${entry.toMode}\n`);
+      }
+      for (const entry of repair.refused) {
+        process.stdout.write(`refused ${entry.path}: ${entry.reason}\n`);
+      }
+      const rechecked = await checkStatePermissions(stateDirectory);
+      const checks = result.checks.map((check) => (check.id === 'state-permissions' ? rechecked : check));
+      const passed = checks.filter((check) => check.status === 'PASS').length;
+      result = Object.freeze({
+        checks: Object.freeze(checks),
+        passed,
+        failed: checks.length - passed,
+        overall: checks.length - passed === 0 ? 'PASS' : 'FAIL',
+      });
+    }
+  }
   for (const check of result.checks) {
     process.stdout.write(`${check.status} ${check.id}: ${check.reason}\n`);
   }

@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { classifyStorageError, classifyStateReadError, isCorruptStateError } = require('./storage-errors');
+const { ensurePrivateDir } = require('./state-permissions');
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_LOCK_RETRY_MS = 25;
@@ -99,7 +100,11 @@ class PersistentKillSwitch {
 
   async #withLock(operation) {
     try {
-      await fs.mkdir(path.dirname(this.#stateFile), { recursive: true, mode: 0o700 });
+      // ensurePrivateDir (round 45) also chmods a directory that
+      // already exists: mkdir({ recursive, mode }) alone never does,
+      // which is how a state dir created under a permissive umask
+      // stayed loose forever.
+      await ensurePrivateDir(path.dirname(this.#stateFile));
     } catch (error) {
       const classified = classifyStorageError(error);
       if (classified) throw new Error(classified);
