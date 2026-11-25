@@ -68,11 +68,11 @@ The default state directory is `~/workspace/sentinel-bounty/state/`, outside the
 - `src/policy/` — local request governor.
 - `skills/sentinel-bounty/SKILL.md` — source custom-skill contract, not an official Muse manifest.
 - `policies/` and `schemas/` — design policies and data contracts.
-- `docs/` — PoC, implementation, and sharing status.
+- `docs/` — PoC, implementation, and sharing status. Adapting the skill to an agent platform: [adapt-to-agent](docs/adapt-to-agent.md). Removing it again: [uninstall-restore](docs/uninstall-restore.md).
 
 ## Sharing and Muse trial
 
-Read [GitHub prototype readiness](docs/github-prototype-readiness.md) before sharing. A Muse agent may download this repository and run the local Node commands above. Custom-skill discovery has been observed when `SKILL.md` is placed at the installed skill directory's root, but the project cannot yet activate as an official verified Muse skill. That requires Meta's supported manifest format and a successful official integration invocation.
+Read [GitHub prototype readiness](docs/github-prototype-readiness.md) before sharing. A Muse agent may download this repository and run the local Node commands above. Custom-skill discovery has been observed when `SKILL.md` is placed at the installed skill directory's root, but the project cannot yet activate as an official verified Muse skill. That requires Meta's supported manifest format and a successful official integration invocation. To adapt the contract to an agent platform, follow [adapt-to-agent](docs/adapt-to-agent.md); to remove the skill again, follow [uninstall-restore](docs/uninstall-restore.md).
 
 ## License
 

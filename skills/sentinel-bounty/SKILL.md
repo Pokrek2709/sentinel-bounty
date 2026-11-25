@@ -78,3 +78,8 @@ Promote this draft to a Muse-specific integration only after recording:
 - A successful invocation through an official supported Muse integration, rather than the observed custom-skill shell invocation.
 - The supported tool/process/file/network permission model.
 - An approved local-lab test of the scope/policy gate and kill switch.
+
+Adapting this contract to an agent platform is documented in
+`docs/adapt-to-agent.md`; removing the installed skill is documented
+in `docs/uninstall-restore.md`. Neither document changes this
+contract.
