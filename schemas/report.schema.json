@@ -36,6 +36,32 @@
       "type": "array",
       "items": { "$ref": "finding.schema.json" }
     },
+    "groups": {
+      "type": "array",
+      "description": "Findings grouped by asset_id (generic reports only; platform-template JSON omits this field). Groups are ordered by asset_id ascending; findings inside a group by severity then finding_id. The flat findings array carries the same findings in grouped order.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset_id": { "type": "string" },
+          "findings_count": { "type": "integer" },
+          "findings_summary": {
+            "type": "object",
+            "properties": {
+              "critical": { "type": "integer" },
+              "high": { "type": "integer" },
+              "medium": { "type": "integer" },
+              "low": { "type": "integer" },
+              "informational": { "type": "integer" },
+              "total": { "type": "integer" }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": { "$ref": "finding.schema.json" }
+          }
+        }
+      }
+    },
     "methodology": { "type": "string" }
   }
 }

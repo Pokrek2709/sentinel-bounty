@@ -1,6 +1,19 @@
 // Reporting engine (Phase 7): renders VALIDATED finding objects into a
 // deterministic bug-bounty report (Markdown or JSON).
 //
+// Grouping: findings are grouped by `asset_id` before rendering.
+// Groups are ordered by asset_id ascending (plain string order, never
+// locale-dependent), findings inside a group by severity (critical
+// first) then finding_id. The order is a pure function of the finding
+// SET, never of the input order, so the same findings in any input
+// order produce byte-identical output. A finding whose asset_id is
+// missing, empty, or not a string falls into the "unassigned" group;
+// in practice `validateFinding` rejects such a finding first (asset_id
+// is a required schema field), so the unassigned bucket is defensive
+// for direct callers of `groupFindingsByAsset`. Grouping never changes
+// a verdict: validation and deduplication happen before grouping, and
+// the validator's verdict is carried per finding, untouched.
+//
 // Determinism: the same input always produces byte-identical output. No
 // wall-clock timestamp is ever generated here: `generated_at` comes from
 // the caller (the `--generated-at` flag, or the newest `created_at` among
@@ -225,6 +238,45 @@ function countBySeverity(findings) {
   return counts;
 }
 
+const UNASSIGNED_ASSET = 'unassigned';
+
+// Plain string comparison (never localeCompare, which is
+// locale-dependent): the group order must be identical on every host.
+function compareStrings(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+// Group findings by asset_id. Returns [{ asset_id, findings }] with
+// groups ordered by asset_id ascending and findings inside a group
+// ordered by severity (critical first) then finding_id. The input
+// array is never mutated. A missing, empty, whitespace-only, or
+// non-string asset_id maps to the "unassigned" group.
+function groupFindingsByAsset(findings) {
+  if (!Array.isArray(findings)) {
+    throw new Error('groupFindingsByAsset expects an array of findings.');
+  }
+  const byAsset = new Map();
+  for (const finding of findings) {
+    const raw = finding && typeof finding.asset_id === 'string' ? finding.asset_id.trim() : '';
+    const key = raw === '' ? UNASSIGNED_ASSET : raw;
+    if (!byAsset.has(key)) byAsset.set(key, []);
+    byAsset.get(key).push(finding);
+  }
+  const groups = [...byAsset.entries()]
+    .sort((a, b) => compareStrings(a[0], b[0]))
+    .map(([assetId, groupFindings]) => ({
+      asset_id: assetId,
+      findings: [...groupFindings].sort((a, b) => {
+        const severityDelta = SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
+        if (severityDelta !== 0) return severityDelta;
+        return compareStrings(String(a.finding_id), String(b.finding_id));
+      }),
+    }));
+  return groups;
+}
+
 // Deterministic report id: a hash of the program name and the sorted
 // finding ids only, so the same findings under the same program always
 // get the same id, independent of when the report was generated.
@@ -319,7 +371,7 @@ function markdownFinding(finding, number) {
   return lines.join('\n');
 }
 
-function renderMarkdown({ programName, generatedAt, counts, findings }) {
+function renderMarkdown({ programName, generatedAt, counts, groups }) {
   const lines = [];
   lines.push(`# Bug Bounty Report — ${programName}`);
   lines.push('');
@@ -336,13 +388,25 @@ function renderMarkdown({ programName, generatedAt, counts, findings }) {
   lines.push('');
   lines.push(executiveSummary(counts, programName));
   lines.push('');
-  findings.forEach((finding, index) => {
-    lines.push(markdownFinding(finding, index + 1));
+  // Findings render grouped by asset; the finding number is global
+  // and sequential across groups, so a single-finding report keeps
+  // its existing numbering (only the group header is new).
+  let number = 0;
+  groups.forEach((group) => {
+    const groupCounts = countBySeverity(group.findings);
+    const severitySummary = SEVERITY_ORDER.map((severity) => `${severity}: ${groupCounts[severity]}`).join(', ');
+    const noun = group.findings.length === 1 ? 'finding' : 'findings';
+    lines.push(`## Asset: ${group.asset_id} — ${group.findings.length} ${noun} (${severitySummary})`);
+    lines.push('');
+    group.findings.forEach((finding) => {
+      number += 1;
+      lines.push(markdownFinding(finding, number));
+    });
   });
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template }) {
+function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template, groups }) {
   // Each finding carries its per-class evidence checklist (see
   // src/analysis/validator.js evidenceChecklistForClass): the class
   // that matched, and every checklist item with present/required.
@@ -361,6 +425,21 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
     findings_summary: counts,
     findings: findingsWithChecklist,
   };
+  // Generic reports carry the asset grouping alongside the flat
+  // findings array (which stays in grouped order). Platform-template
+  // JSON keeps its previous flat shape: a template renders one
+  // finding per report, so grouping adds nothing and is omitted.
+  if (groups) {
+    report.groups = groups.map((group) => ({
+      asset_id: group.asset_id,
+      findings_count: group.findings.length,
+      findings_summary: countBySeverity(group.findings),
+      findings: group.findings.map((finding) => ({
+        ...finding,
+        evidence_checklist: evidenceChecklistForClass(finding),
+      })),
+    }));
+  }
   if (sessionId) report.session_id = sessionId;
   if (template) report.template = template;
   return `${JSON.stringify(report, null, 2)}\n`;
@@ -372,14 +451,23 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
 // name of a platform template (see src/report/templates.js). A named
 // template renders exactly one finding per report — the platforms accept
 // one bug per submission — and its required sections fail cleanly when
-// their source field is missing, instead of inventing content. Throws on
-// any validation failure; nothing is written by this function, so a
-// failure can never leave a half-written output file.
+// their source field is missing, instead of inventing content. Findings
+// are grouped by asset_id before rendering (see groupFindingsByAsset);
+// the flat JSON `findings` array follows the same grouped order, and
+// `target_id` / `session_id` come from the first finding in grouped
+// order. Throws on any validation failure; nothing is written by this
+// function, so a failure can never leave a half-written output file.
 function generateReport(findings, options = {}) {
   if (!Array.isArray(findings) || findings.length === 0) {
     throw new Error('At least one finding is required to generate a report.');
   }
   const validated = findings.map((finding, index) => validateFinding(finding, index));
+  // Grouping is a pure reorder of the validated set: verdicts were
+  // already computed by the validator (and deduplication, when the
+  // caller runs it, happens before this call), so grouping cannot
+  // change what a finding says — only where it renders.
+  const groups = groupFindingsByAsset(validated);
+  const orderedFindings = groups.flatMap((group) => group.findings);
   const programName = typeof options.programName === 'string' && options.programName.trim()
     ? options.programName.trim()
     : 'Unnamed Program';
@@ -423,31 +511,32 @@ function generateReport(findings, options = {}) {
     if (format === 'json') {
       return renderJson({
         reportId: deriveReportId(programName, validated),
-        targetId: validated[0].target_id,
-        sessionId: validated[0].session_id,
+        targetId: orderedFindings[0].target_id,
+        sessionId: orderedFindings[0].session_id,
         programName,
         generatedAt,
         counts,
-        findings: validated,
+        findings: orderedFindings,
         summary,
         template: templateName,
       });
     }
-    return renderTemplateReport(template, validated[0], { programName, generatedAt });
+    return renderTemplateReport(template, orderedFindings[0], { programName, generatedAt });
   }
   if (format === 'json') {
     return renderJson({
       reportId: deriveReportId(programName, validated),
-      targetId: validated[0].target_id,
-      sessionId: validated[0].session_id,
+      targetId: orderedFindings[0].target_id,
+      sessionId: orderedFindings[0].session_id,
       programName,
       generatedAt,
       counts,
-      findings: validated,
+      findings: orderedFindings,
       summary,
+      groups,
     });
   }
-  return renderMarkdown({ programName, generatedAt, counts, findings: validated });
+  return renderMarkdown({ programName, generatedAt, counts, groups });
 }
 
-module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, SEVERITY_ORDER };
+module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, SEVERITY_ORDER };

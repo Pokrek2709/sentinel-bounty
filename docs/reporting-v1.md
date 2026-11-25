@@ -18,16 +18,26 @@ Markdown by default, JSON with `--format json`.
   (critical / high / medium / low / informational / total), then one
   section per finding with severity, CVSS and CWE line, affected
   component (`asset_id` / `asset_url`), reproduction steps, PoC reference
-  and evidence, impact, remediation, and references.
+  and evidence, impact, remediation, and references. Findings render
+  grouped by `asset_id` (see [report-grouping-v1](report-grouping-v1.md)):
+  groups ordered by asset_id ascending, findings inside a group by
+  severity then finding_id, with a global finding number across groups.
 - JSON output: an object conforming to `schemas/report.schema.json`
   (`report_id`, `target_id`, `program_name`, `generated_at`,
   `executive_summary`, `findings_summary` counts, `findings` array).
+  Generic reports additionally carry a `groups` array (one entry per
+  asset, with per-group counts and findings); the flat `findings`
+  array follows the same grouped order. Platform-template JSON omits
+  `groups`.
   `report_id` is deterministic: `RPT-` plus the first 12 hex characters
   of a SHA-256 over the program name and the sorted finding ids, so the
   same findings under the same program always get the same id.
 - Tests: `tests/report-generator.test.js` (determinism, every severity
   band boundary, mismatch and missing-field errors, summary counts, JSON
-  shape, CLI end-to-end). Fixtures in `tests/fixtures/`:
+  shape, CLI end-to-end) and `tests/report-grouping.test.js` (group
+  order, within-group severity order, unassigned bucket, single-finding
+  report, determinism across input orders, verdict stability, JSON
+  shape, dedupe-before-grouping, template JSON exclusion). Fixtures in `tests/fixtures/`:
   `report-critical.json` (critical, full evidence), `report-medium.json`
   (medium, minimal but complete), `report-findings-array.json`
   (critical + medium + low), `report-incomplete.json` (deliberately
@@ -106,8 +116,11 @@ refusing the link would add no security.
 - No PDF output (markdown and JSON only).
 - No report signing, submission, or platform upload.
 - No multi-program aggregation: `target_id` / `session_id` in JSON output
-  come from the first finding; findings from mixed targets are rendered
-  as-is and are not grouped or split.
+  come from the first finding in grouped order; findings from mixed
+  targets are grouped by asset but are not split into separate
+  per-target reports. Grouping across targets (split, tag, or refuse)
+  is an open policy decision — see
+  [report-grouping-v1](report-grouping-v1.md).
 
 ## Platform templates
 

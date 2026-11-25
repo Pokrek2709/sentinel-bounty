@@ -31,6 +31,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [cvss-temporal-environmental-v1](cvss-temporal-environmental-v1.md) — CVSS 3.1 temporal (E, RL, RC) and environmental (CR, IR, AR, MAV, MAC, MPR, MUI, MS, MC, MI, MA) metrics: parser extensions, formulas, precedence rules, and the no-offline-oracle limitation; for implementers and reviewers of scoring.
 - [pipeline-v1](pipeline-v1.md) — End-to-end lab-local pipeline (stub detector → validator → dedup → report generator) over fixtures; for implementers and reviewers of the full chain.
 - [reporting-v1](reporting-v1.md) — Deterministic bug-bounty report generator (`sentinel report`, Markdown or JSON); for implementers and users rendering validated findings.
+- [report-grouping-v1](report-grouping-v1.md) — Findings grouped by `asset_id` in reports (group order, within-group severity order, JSON `groups` shape, template exclusion, mixed-target limitation); for implementers and users rendering multi-finding reports.
 - [report-templates-v1](report-templates-v1.md) — Platform report templates (`--template immunefi|code4rena`, data files in `knowledge/report-templates/`); for users submitting to Immunefi, Code4rena, or Cantina.
 
 ## Muse capability evidence (user-supplied lab reports)

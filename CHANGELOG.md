@@ -7,6 +7,30 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report grouping by asset (round 42, 2026-11-26)
+
+- `sentinel report` now groups findings by `asset_id` in both output
+  formats (generic template only): groups ordered by asset_id
+  ascending (plain string order, never locale-dependent), findings
+  inside a group by severity (critical first) then finding_id, with a
+  global finding number across groups. The order is a pure function
+  of the finding set, so the same findings in any input order produce
+  byte-identical output (tested). Markdown gains a per-asset section
+  (`## Asset: <id> — N finding(s) (critical: …, …)`); JSON gains a
+  `groups` array (per-group counts and findings, each carrying its
+  evidence checklist) alongside the flat `findings` array, which
+  follows the same grouped order (documented in
+  `schemas/report.schema.json`). A missing/empty/non-string asset_id
+  maps to the `"unassigned"` group (defensive: the generator rejects
+  such findings first, since asset_id is a required schema field).
+  Grouping never changes a verdict — validation and deduplication
+  happen before it. Platform-template JSON keeps its previous flat
+  shape (no `groups` key); grouping across different targets
+  (split, tag, or refuse) remains an open policy decision. One test
+  expectation was corrected during the round (MIX-003 is low, CVSS
+  2.0 — not high as first assumed; the code was already correct).
+  Suite 284 → 295 tests. See `docs/report-grouping-v1.md`.
+
 ### check-env completion audit (round 41, 2026-11-26)
 
 - `sentinel check-env` now enforces the documented Node.js 18 minimum
