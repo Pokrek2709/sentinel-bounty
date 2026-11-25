@@ -25,8 +25,7 @@ test('audit health reports healthy for a writable log', async () => {
   }
 });
 
-test('audit health classifies ENOTDIR as AUDIT_LOG_PATH_INVALID', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-enotdir-'));
+test('audit health classifies ENOTDIR as AUDIT_LOG_PATH_INVALID', async () => {  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-enotdir-'));
   try {
     const notADir = path.join(directory, 'notadir');
     await fs.writeFile(notADir, 'I am a regular file, not a directory');
@@ -78,6 +77,110 @@ test('audit health classifies EACCES as AUDIT_LOG_PERMISSION_DENIED, not AUDIT_L
     assert.equal(require('node:fs').existsSync(`${logFile}.lock`), false);
   } finally {
     await fs.chmod(directory, 0o700).catch(() => {});
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+// --- Rotation (round 37): the rotation itself already existed; these
+// tests PROVE it. rotationBytes is injected small so the limit is hit
+// with a handful of records instead of 8 MiB of lab data.
+
+test('audit rotation triggers at the configured limit and keeps the active log small', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-rotate-'));
+  try {
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 300, retentionCount: 3 });
+    // One record is ~130 bytes, so three appends (~390) cross the
+    // 300-byte limit: the first two rotate into .1, only the third
+    // remains active.
+    await audit.append('EVENT_A', { n: 1 });
+    await audit.append('EVENT_B', { n: 2 });
+    await audit.append('EVENT_C', { n: 3 });
+    assert.ok((await fs.stat(path.join(directory, 'state', 'audit.jsonl.1'))).isFile());
+    const active = await fs.readFile(path.join(directory, 'state', 'audit.jsonl'), 'utf8');
+    assert.equal(active.trim().split('\n').length, 1);
+    assert.match(active, /EVENT_C/);
+    const archived = await fs.readFile(path.join(directory, 'state', 'audit.jsonl.1'), 'utf8');
+    assert.match(archived, /EVENT_A/);
+    assert.match(archived, /EVENT_B/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('audit rotation loses no records: active log plus archives hold every event in order', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-noloss-'));
+  try {
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 700, retentionCount: 3 });
+    // 700 bytes rotates every ~5 records, so 12 records rotate twice
+    // while still fitting inside 3 retained archives: every record must
+    // survive. (With a 300-byte limit the same 12 records would exceed
+    // retention and the oldest would be dropped by design — that is the
+    // bounded-archives test below, not a loss bug.)
+    const written = [];
+    for (let index = 0; index < 12; index += 1) {
+      written.push((await audit.append(`EVENT_${index}`, { n: index })).eventId);
+    }
+    const all = await audit.readAllEvents();
+    assert.deepEqual(all.map((event) => event.eventId), written);
+    assert.deepEqual(all.map((event) => event.event), written.map((_, index) => `EVENT_${index}`));
+    // readEvents() is active-log-only by design: it sees the tail, not
+    // the history. The rotated records are only in readAllEvents().
+    const activeOnly = await audit.readEvents();
+    assert.ok(activeOnly.length < written.length);
+    assert.deepEqual(activeOnly.map((event) => event.eventId), written.slice(written.length - activeOnly.length));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('audit archives stay bounded at the retention count', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-bounded-'));
+  try {
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 300, retentionCount: 2 });
+    for (let index = 0; index < 30; index += 1) {
+      await audit.append(`EVENT_${index}`, { n: index });
+    }
+    const entries = await fs.readdir(path.join(directory, 'state'));
+    assert.ok(entries.includes('audit.jsonl.1'));
+    assert.ok(entries.includes('audit.jsonl.2'));
+    assert.equal(entries.includes('audit.jsonl.3'), false);
+    assert.equal(entries.includes('audit.jsonl.4'), false);
+    // Bounded does not mean lossy while within retention: the newest
+    // records are all still present across active + archives.
+    const all = await audit.readAllEvents();
+    assert.ok(all.length >= 3);
+    assert.equal(all[all.length - 1].event, 'EVENT_29');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('audit health reports a corrupt archive instead of silently dropping it', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-corrupt-archive-'));
+  try {
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 300, retentionCount: 3 });
+    await audit.append('EVENT_A', { n: 1 });
+    await audit.append('EVENT_B', { n: 2 });
+    await audit.append('EVENT_C', { n: 3 });
+    // Healthy archives keep the existing healthy result and reason codes.
+    assert.deepEqual(await audit.healthCheck({ additionalBytes: 0 }), { healthy: true });
+    // Corrupt the rotated archive: a garbage line, not a deleted file.
+    await fs.appendFile(path.join(directory, 'state', 'audit.jsonl.1'), 'this is not JSONL\n');
+    assert.deepEqual(await audit.healthCheck({ additionalBytes: 0 }), { healthy: false, reason: 'AUDIT_LOG_ARCHIVE_CORRUPT' });
+    // The corrupt archive is still there to be repaired, not dropped.
+    assert.match(await fs.readFile(path.join(directory, 'state', 'audit.jsonl.1'), 'utf8'), /EVENT_A/);
+    // A corrupt ACTIVE log still reports the pre-existing code, not the
+    // new archive code.
+    const directory2 = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-corrupt-active-'));
+    try {
+      const audit2 = new AuditLog({ logFile: path.join(directory2, 'state', 'audit.jsonl'), skillDirectory: path.join(directory2, 'skill'), rotationBytes: 300, retentionCount: 3 });
+      await audit2.append('EVENT_A', { n: 1 });
+      await fs.appendFile(path.join(directory2, 'state', 'audit.jsonl'), 'garbage\n');
+      assert.deepEqual(await audit2.healthCheck({ additionalBytes: 0 }), { healthy: false, reason: 'AUDIT_LOG_CORRUPT' });
+    } finally {
+      await fs.rm(directory2, { recursive: true, force: true });
+    }
+  } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
 });

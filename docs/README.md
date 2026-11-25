@@ -17,6 +17,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [request-governor-v1](request-governor-v1.md) — Per-domain token-bucket rate governor, request budgets, concurrency limits, and backoff state; for implementers and reviewers of request policy.
 - [kill-switch-v1](kill-switch-v1.md) — In-memory, fail-closed kill switch core; for implementers and reviewers of cancellation.
 - [persistent-kill-switch-v1](persistent-kill-switch-v1.md) — Cross-process, file-backed persistent kill switch with a token-gated operator CLI; for operators and implementers of the lab kill switch.
+- [backup-restore-v1](backup-restore-v1.md) — State backup/restore (`sentinel backup` / `sentinel restore`, schema-versioned envelope with SHA-256, fail-closed refusals) and audit-log rotation proof (archive corruption reporting, `readAllEvents()`); for operators backing up or recovering kill-switch state.
 - [local-http-adapter-v1](local-http-adapter-v1.md) — GET-only `localhost` HTTP adapter for the local lab; for implementers and reviewers of lab network access.
 
 ## Finding pipeline (phases 5–7, fixtures only)

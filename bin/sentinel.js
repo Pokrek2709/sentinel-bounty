@@ -12,6 +12,7 @@ const { AuditLog } = require('../src/audit/audit-log');
 const { generateReport } = require('../src/report/generator');
 const { runVerifyInstall } = require('../src/install/verifier');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
+const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/state-backup');
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
@@ -43,6 +44,8 @@ function usage() {
     '  sentinel kill-switch audit-health [--state-dir <path>]',
     '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
+    '  sentinel backup --out <file> [--state-dir <path>]',
+    '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>]',
@@ -473,6 +476,43 @@ async function runReport(args) {
   process.stdout.write(report);
 }
 
+async function runBackup(args) {
+  const options = parseOptions(args, ['--out', '--state-dir']);
+  if (!options.out) throw new Error('backup requires --out.');
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  try {
+    const result = await backupState({ stateDir: stateDirectory, outPath: path.resolve(options.out) });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } catch (error) {
+    // Named backup refusals are reported as JSON with a reason, like the
+    // kill-switch refusals: integrity refusals exit 3 (fail-closed),
+    // operational ones (missing state, live lock, oversized input) exit 1.
+    if (INTEGRITY_REASONS.has(error.message) || ['BACKUP_STATE_MISSING', 'BACKUP_NOT_FOUND', 'BACKUP_TOO_LARGE', 'BACKUP_STATE_LOCKED'].includes(error.message)) {
+      process.stdout.write(`${JSON.stringify({ backedUp: false, reason: error.message }, null, 2)}\n`);
+      process.exitCode = INTEGRITY_REASONS.has(error.message) ? 3 : 1;
+      return;
+    }
+    throw error;
+  }
+}
+
+async function runRestore(args) {
+  const options = parseOptions(args, ['--from', '--state-dir']);
+  if (!options.from) throw new Error('restore requires --from.');
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  try {
+    const result = await restoreState({ stateDir: stateDirectory, fromPath: path.resolve(options.from) });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } catch (error) {
+    if (INTEGRITY_REASONS.has(error.message) || ['BACKUP_STATE_MISSING', 'BACKUP_NOT_FOUND', 'BACKUP_TOO_LARGE', 'BACKUP_STATE_LOCKED'].includes(error.message)) {
+      process.stdout.write(`${JSON.stringify({ restored: false, reason: error.message }, null, 2)}\n`);
+      process.exitCode = INTEGRITY_REASONS.has(error.message) ? 3 : 1;
+      return;
+    }
+    throw error;
+  }
+}
+
 async function runVerifyInstallCommand(args) {
   const options = parseOptions(args, ['--state-dir', '--skill-dir']);
   const skillDirectory = path.resolve(options.skillDir || path.resolve(__dirname, '..'));
@@ -487,6 +527,14 @@ async function runVerifyInstallCommand(args) {
 
 async function main(argv) {
   const [command, ...args] = argv;
+  if (command === 'backup') {
+    await runBackup(args);
+    return;
+  }
+  if (command === 'restore') {
+    await runRestore(args);
+    return;
+  }
   if (command === 'verify-install') {
     await runVerifyInstallCommand(args);
     return;

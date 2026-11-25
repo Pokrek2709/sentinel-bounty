@@ -7,6 +7,31 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### State backup/restore and audit-log rotation proof (round 37, 2026-11-26)
+
+- `sentinel backup --out <file>` / `sentinel restore --from <file>`
+  (`src/policy/state-backup.js`, `--state-dir` supported): backup
+  captures only `kill-switch.json` in a schema-version 1 envelope
+  carrying a SHA-256 integrity hash; the audit log is deliberately
+  excluded (append-only evidence — restoring an old copy would erase
+  intervening events). Restore verifies hash and schema version before
+  writing anything and refuses with a named error and no partial write
+  on corrupt input, hash mismatch, or unsupported schema. The
+  armed-with-leased-workers rule is REFUSE
+  (`BACKUP_ARMED_WITH_LEASED_WORKERS`): an armed state holding a live
+  lease is not restored, so no phantom workers can block a later reset;
+  an armed state with no live leases restores normally and stays armed.
+  Backup/restore never follow symlinks for output or input, and restore
+  refuses while a fresh state lock is held. See
+  `docs/backup-restore-v1.md`. Audit rotation itself was NOT rebuilt
+  (8 MiB / retain 3 already existed): this round proves it with tests
+  (trigger at limit, no records lost across rotation, archives bounded
+  at retention) and completes it — `healthCheck()` now validates the
+  rotated archives and reports a corrupt one as
+  `AUDIT_LOG_ARCHIVE_CORRUPT` instead of silently dropping it, and
+  `readAllEvents()` returns active plus archives, oldest first, while
+  `readEvents()` stays active-log-only by design.
+
 ### CVSS 3.1 base-vector parsing and scoring (round 36, 2026-11-26)
 
 - `src/analysis/cvss.js` parses a CVSS 3.1 base vector and computes the

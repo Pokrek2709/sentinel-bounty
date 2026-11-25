@@ -201,6 +201,35 @@ class AuditLog {
             throw new Error('AUDIT_LOG_CORRUPT');
           }
         }
+        // Archives are validated too (round 37): a corrupt rotated file
+        // is REPORTED as AUDIT_LOG_ARCHIVE_CORRUPT, never silently
+        // dropped. Only archives 1..retentionCount are checked — the
+        // rotation itself never creates more, so a stray file beyond
+        // retention is out of scope for this check (see
+        // docs/backup-restore-v1.md). The healthy case is unchanged:
+        // valid archives keep the result { healthy: true }.
+        for (let index = 1; index <= this.#retentionCount; index += 1) {
+          const archive = `${this.#logFile}.${index}`;
+          let archiveText = '';
+          try {
+            const archiveStat = await fs.lstat(archive);
+            if (!archiveStat.isFile()) throw new Error('AUDIT_LOG_ARCHIVE_CORRUPT');
+            archiveText = await fs.readFile(archive, 'utf8');
+          } catch (error) {
+            if (error.code === 'ENOENT') continue;
+            if (error.message === 'AUDIT_LOG_ARCHIVE_CORRUPT') throw error;
+            throw new Error('AUDIT_LOG_ARCHIVE_CORRUPT');
+          }
+          for (const line of archiveText.split('\n').filter(Boolean)) {
+            try {
+              const parsed = JSON.parse(line);
+              if (!parsed || typeof parsed !== 'object' || typeof parsed.event !== 'string') throw new Error('AUDIT_LOG_ARCHIVE_CORRUPT');
+            } catch (error) {
+              if (error.message === 'AUDIT_LOG_ARCHIVE_CORRUPT') throw error;
+              throw new Error('AUDIT_LOG_ARCHIVE_CORRUPT');
+            }
+          }
+        }
         const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.health.tmp`;
         try {
           await fs.writeFile(temporary, '0'.repeat(Buffer.byteLength(existing) + 2 * 1024 + additionalBytes), { encoding: 'utf8', mode: 0o600 });
@@ -215,6 +244,7 @@ class AuditLog {
       if (error.message === 'AUDIT_LOG_PATH_INVALID') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_PATH_INVALID' });
       if (error.message === 'AUDIT_LOG_STORAGE_UNAVAILABLE' || ['ENOSPC', 'EDQUOT'].includes(error.code)) return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_STORAGE_UNAVAILABLE' });
       if (error.message === 'AUDIT_LOG_CORRUPT') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_CORRUPT' });
+      if (error.message === 'AUDIT_LOG_ARCHIVE_CORRUPT') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_ARCHIVE_CORRUPT' });
       if (error.message === 'AUDIT_LOG_INVALID') return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_INVALID' });
       return Object.freeze({ healthy: false, reason: 'AUDIT_LOG_UNAVAILABLE' });
     }
@@ -229,6 +259,36 @@ class AuditLog {
         if (error.code !== 'ENOENT') throw error;
       }
       return existing.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    }));
+  }
+
+  // Active log PLUS rotated archives, oldest first (.N … .1, then the
+  // active log). This is the complete record set: rotation never drops a
+  // record, it only moves it. readEvents() stays active-log-only by
+  // design — callers that need history (revoke-token recovery, audits)
+  // use this method instead. Like readEvents(), a corrupt line throws
+  // rather than being skipped; use healthCheck() to REPORT corruption
+  // (AUDIT_LOG_CORRUPT / AUDIT_LOG_ARCHIVE_CORRUPT) instead of throwing.
+  async readAllEvents() {
+    return Object.freeze(await this.#withLock(async () => {
+      const events = [];
+      for (let index = this.#retentionCount; index >= 1; index -= 1) {
+        let archived = '';
+        try {
+          archived = await fs.readFile(`${this.#logFile}.${index}`, 'utf8');
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        events.push(...archived.split('\n').filter(Boolean).map((line) => JSON.parse(line)));
+      }
+      let existing = '';
+      try {
+        existing = await fs.readFile(this.#logFile, 'utf8');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      events.push(...existing.split('\n').filter(Boolean).map((line) => JSON.parse(line)));
+      return events;
     }));
   }
 }
