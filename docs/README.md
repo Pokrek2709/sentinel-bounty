@@ -28,6 +28,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 ## Finding pipeline (phases 5–7, fixtures only)
 
 - [detection-stub-v1](detection-stub-v1.md) — Fixture-only detector stub that reshapes local JSON fixtures into normalized findings (no real scanner); for implementers of the finding pipeline.
+- [detector-interface-v1](detector-interface-v1.md) — Pluggable detector interface (synchronous detector contract, built-in stub as reference implementation, safe loader for custom modules, `sentinel detect` CLI); for implementers and reviewers of finding detection.
 - [validation-v1](validation-v1.md) — Rule-based finding validator with deduplication and an evidence checklist; for implementers and reviewers of finding validation.
 - [semantic-dedup-v1](semantic-dedup-v1.md) — Conservative semantic dedup v1 (second pass after exact-key dedup: same type + asset + base vector/severity band + shared evidence entry; merged finding keeps the evidence union, highest score, and `merged_from`; fuzzy matching out of scope, open policy question); for implementers and reviewers of finding validation.
 - [ai-verdict-v1](ai-verdict-v1.md) — Pluggable AI-verdict interface (synchronous verifier contract, built-in stub that always answers needs_evidence, safe loader for custom modules, advisory-only precedence); for implementers and reviewers of finding validation.

@@ -12,7 +12,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const { normalizeRawFinding } = require('./normalized-record');
+const { runDetectorOnRecords } = require('./detector');
 
 function runStubDetector(fixturePath, defaults) {
   let text;
@@ -39,21 +39,12 @@ function runStubDetector(fixturePath, defaults) {
     throw new Error(`stub detector fixture must have a "results" array: ${fixturePath}`);
   }
 
-  const findings = [];
-  const errors = [];
-  let skipped = 0;
-
-  for (const result of fixture.results) {
-    try {
-      // Fixture-level tool is authoritative: it overrides any per-result
-      // tool/discovery_tool so every finding is attributed to the fixture.
-      const raw = { ...result, tool: fixture.tool, discovery_tool: fixture.tool };
-      findings.push(normalizeRawFinding(raw, defaults));
-    } catch (error) {
-      skipped += 1;
-      errors.push(error instanceof Error ? error.message : String(error));
-    }
-  }
+  // The normalization loop lives in detector.js (round 51) so the
+  // stub detector and the detector interface normalize identically:
+  // a single bad result is counted in `skipped` with its error
+  // recorded, and the fixture-level tool is authoritative for every
+  // finding's discovery_tool.
+  const { findings, skipped, errors } = runDetectorOnRecords(fixture.results, fixture.tool, defaults);
 
   return { tool: fixture.tool, findings, skipped, errors };
 }

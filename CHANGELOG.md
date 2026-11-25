@@ -7,6 +7,45 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Pluggable detector interface (round 51, 2026-11-26)
+
+- The detector contract is defined (`src/detection/detector.js`):
+  a SYNCHRONOUS function `detector(input, defaults) -> {
+  findings, skipped, errors }` where `input` is a raw
+  detector-input record (the shape `normalizeRawFinding()`
+  accepts) or a batch record `{ tool, results: [...] }`, and the
+  envelope carries normalized finding records (each re-normalized
+  on validation, so a non-conformant finding is refused, not
+  repaired), a non-negative integer `skipped` count, and an
+  `errors` array of strings. A detector must not make network
+  requests, write outside its return value, or invent data; a
+  Promise return is refused (`DETECTOR_INVALID_RESULT`). The
+  built-in stub detector is the reference implementation (it
+  normalizes its input and nothing else; batch `tool` forced as
+  `discovery_tool`; bad records counted in `skipped`). The shared
+  batch normalizer `runDetectorOnRecords` is now used by both the
+  stub detector and `runStubDetector` (round 31, behavior
+  unchanged — verified by test). `loadDetector` loads a custom
+  module only from inside the skill directory (same safety rules
+  as the round-50 verifier loader: no symlinks, realpath inside
+  the real skill root, export a function or an object with a
+  `detect` function), with named refusals
+  (`DETECTOR_NOT_FOUND`, `DETECTOR_SYMLINK_REFUSED`,
+  `DETECTOR_PATH_OUTSIDE_SKILL`, `DETECTOR_INVALID_MODULE`,
+  `DETECTOR_LOAD_FAILED`). `runDetector` runs against a defensive
+  copy and records a throwing or invalid detector as an error
+  envelope, never a crash. `sentinel detect [--detector
+  stub|<path>] --input <record.json> [--session-id <id>]
+  [--target-id <id>] [--asset-id <id>] [--out <findings.json>]`
+  prints the findings as JSON (or writes them mode `0600`,
+  symlink-refusing); a bad detector path fails cleanly with no
+  output file. The output findings are directly consumable by the
+  validator (detect → validate → dedupe → report proven end to
+  end by test). NO real detector is built; which detectors to
+  build, whether detection should ever run automatically, and
+  whether detectors may be asynchronous remain open user
+  decisions.
+
 ### Pluggable AI-verdict interface, advisory only (round 50, 2026-11-26)
 
 - The verifier contract is defined (`src/analysis/ai-verdict.js`):

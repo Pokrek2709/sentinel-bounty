@@ -17,6 +17,7 @@ const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
+const { getDetector, runDetector } = require('../src/detection/detector');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -53,6 +54,7 @@ function usage() {
     '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
+    '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -511,6 +513,55 @@ async function runReport(args) {
   process.stdout.write(report);
 }
 
+async function runDetect(args) {
+  // `sentinel detect` runs a conforming detector (round 51) over a
+  // LOCAL input record and prints the findings as JSON. The input
+  // is a raw detector-input record (the shape normalizeRawFinding
+  // accepts) or a batch record `{ tool, results: [...] }`; it is
+  // read bounded (size + nesting depth) like every other JSON
+  // input. The detector defaults to the built-in stub; a path
+  // loads a custom detector module from inside the skill
+  // directory (refused with a named DETECTOR_* error when it is
+  // missing, malformed, a symlink, or outside the skill root).
+  // The output findings are normalized finding records, directly
+  // consumable by the validator (`sentinel report` or
+  // validateFinding). The optional --session-id / --target-id /
+  // --asset-id options supply the `defaults` fallback for input
+  // records that do not carry those ids themselves (a detector
+  // never invents them); without them, a record missing an id is
+  // counted in `skipped`. A bad detector path fails before any
+  // output is written, so --out can never leave a half-written
+  // file behind; a detector that throws or returns an invalid
+  // result is recorded in the output envelope (`error` field),
+  // never a crash. No network request, no scanner, no live target.
+  const options = parseOptions(args, ['--detector', '--input', '--out', '--session-id', '--target-id', '--asset-id']);
+  if (!options.input) throw new Error('detect requires --input.');
+  const resolved = getDetector(options.detector || 'stub', path.resolve(__dirname, '..'));
+  const input = await readJsonFileBounded(path.resolve(options.input));
+  const defaults = {
+    ...(options.sessionId ? { session_id: options.sessionId } : {}),
+    ...(options.targetId ? { target_id: options.targetId } : {}),
+    ...(options.assetId ? { asset_id: options.assetId } : {}),
+  };
+  const result = runDetector(resolved.detector, input, defaults);
+  const output = {
+    detector: resolved.source,
+    findings: result.findings,
+    skipped: result.skipped,
+    errors: result.errors,
+    ...(result.error ? { error: result.error } : {}),
+  };
+  const serialized = `${JSON.stringify(output, null, 2)}\n`;
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileRefusingSymlink(outputPath, serialized, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Findings written to ${outputPath}\n`);
+    return;
+  }
+  process.stdout.write(serialized);
+}
+
 async function runBackup(args) {
   const options = parseOptions(args, ['--out', '--state-dir']);
   if (!options.out) throw new Error('backup requires --out.');
@@ -632,6 +683,10 @@ async function main(argv) {
   }
   if (command === 'report') {
     await runReport(args);
+    return;
+  }
+  if (command === 'detect') {
+    await runDetect(args);
     return;
   }
   if (command === 'kill-switch') {
