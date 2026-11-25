@@ -81,7 +81,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { resolveCvss } = require('./cvss');
+const { parseCvssVector, resolveCvss, BASE_METRIC_KEYS } = require('./cvss');
 
 // The five band names a severity must be one of (schema enum; also the
 // report generator's SEVERITY_ORDER). The ratings are loaded LAZILY
@@ -333,6 +333,233 @@ function dedupeFindings(findings) {
   return { groups, duplicates };
 }
 
+// Conservative semantic dedup (round 48): a SECOND dedup pass, run
+// AFTER the exact-key dedup above, over that pass's representatives
+// (first finding of each exact group). Two findings merge ONLY when
+// ALL of these hold:
+//   (a) same normalized vulnerability_type (trim + lowercase — the
+//       same normalization rootCauseKey uses);
+//   (b) same asset_id (exact, case-sensitive — assets are identifiers);
+//   (c) same CVSS base vector (the eight base metrics, parsed —
+//       temporal and environmental metrics are ignored for the
+//       comparison) AND the same severity; OR, when NEITHER finding
+//       carries a vector, the same severity band;
+//   (d) at least one shared evidence entry (same entry value).
+// The same-severity requirement in the vector branch is a deliberate
+// tightening beyond the brief's minimum: identical base vectors imply
+// identical computed scores, so two valid findings with the same
+// vector always share a severity — a pair that differs there is
+// mislabelled input, and merging it would silently drop one label.
+//
+// Deliberately OUT of scope: fuzzy text similarity, same type +
+// asset without shared evidence, and any looser matching. Those need
+// the user's policy decision (see docs/semantic-dedup-v1.md).
+//
+// Grouping is greedy in input order: each finding is compared against
+// the representative (first finding) of each existing group, and joins
+// the first group it matches. That is deterministic for a given input
+// order, and deliberately NOT transitive-closure: A~B and B~C with
+// A!~C leaves C in its own group rather than pulling it into A's
+// group on B's say-so. The representative is the first finding in
+// input order, so the merged finding's title/description/impact/
+// remediation/vector are the representative's; only the evidence,
+// steps, references, and (where safe) scores are combined — see
+// mergeFindingGroup. A merged finding is only built for groups with
+// two or more members; a singleton group's `merged` is the finding
+// itself, so no report gains a spurious `merged_from`.
+function normalizedVulnerabilityType(finding) {
+  const record = finding && typeof finding === 'object' ? finding : {};
+  return record.vulnerability_type == null ? '' : String(record.vulnerability_type).trim().toLowerCase();
+}
+
+function hasCvssVector(finding) {
+  return finding && typeof finding === 'object'
+    && typeof finding.cvss_vector === 'string' && finding.cvss_vector.trim() !== '';
+}
+
+// Canonical base-metrics key ('AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N'),
+// or null when the finding carries no vector or its vector does not
+// parse. A malformed vector never merges: it cannot prove "same base
+// vector", and it is not vector-less either, so neither branch of
+// rule (c) can hold for it.
+function baseMetricsKey(finding) {
+  if (!hasCvssVector(finding)) return null;
+  let metrics;
+  try {
+    metrics = parseCvssVector(finding.cvss_vector);
+  } catch {
+    return null;
+  }
+  return BASE_METRIC_KEYS.map((key) => `${key}:${metrics[key]}`).join('/');
+}
+
+// An evidence entry is "meaningful" when at least one of its three
+// subfields is a non-empty string; an empty {} entry (or a non-object
+// entry) carries no evidence and can never be the shared item rule
+// (d) requires. Canonical form fixes the key order so the same entry
+// written with different key order still matches.
+function canonicalEvidenceEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return { key: JSON.stringify(entry), meaningful: false };
+  }
+  const field = (name) => (typeof entry[name] === 'string' && entry[name].trim() !== '' ? entry[name] : null);
+  const request = field('request');
+  const response = field('response');
+  const notes = field('notes');
+  return {
+    key: JSON.stringify({ request, response, notes }),
+    meaningful: request !== null || response !== null || notes !== null,
+  };
+}
+
+function meaningfulEvidenceKeys(finding) {
+  if (!finding || typeof finding !== 'object' || !Array.isArray(finding.evidence)) return new Set();
+  const keys = new Set();
+  for (const entry of finding.evidence) {
+    const { key, meaningful } = canonicalEvidenceEntry(entry);
+    if (meaningful) keys.add(key);
+  }
+  return keys;
+}
+
+function sharesEvidence(a, b) {
+  const keysA = meaningfulEvidenceKeys(a);
+  if (keysA.size === 0) return false;
+  const keysB = meaningfulEvidenceKeys(b);
+  for (const key of keysA) {
+    if (keysB.has(key)) return true;
+  }
+  return false;
+}
+
+function semanticallyDuplicates(a, b) {
+  if (!a || typeof a !== 'object' || Array.isArray(a) || !b || typeof b !== 'object' || Array.isArray(b)) return false;
+  const typeA = normalizedVulnerabilityType(a);
+  if (typeA === '' || typeA !== normalizedVulnerabilityType(b)) return false;
+  const assetA = a.asset_id == null ? '' : String(a.asset_id);
+  const assetB = b.asset_id == null ? '' : String(b.asset_id);
+  if (assetA === '' || assetA !== assetB) return false;
+  if (a.severity !== b.severity) return false;
+  const aHasVector = hasCvssVector(a);
+  const bHasVector = hasCvssVector(b);
+  if (aHasVector || bHasVector) {
+    if (!aHasVector || !bHasVector) return false;
+    const keyA = baseMetricsKey(a);
+    const keyB = baseMetricsKey(b);
+    if (keyA === null || keyB === null || keyA !== keyB) return false;
+  }
+  return sharesEvidence(a, b);
+}
+
+function semanticKeyFor(finding) {
+  const type = normalizedVulnerabilityType(finding);
+  const asset = finding && typeof finding === 'object' && finding.asset_id != null ? String(finding.asset_id) : '';
+  if (hasCvssVector(finding)) {
+    const key = baseMetricsKey(finding);
+    return `${type}|${asset}|vector:${key === null ? 'unparseable' : key}`;
+  }
+  return `${type}|${asset}|band:${finding && typeof finding === 'object' ? String(finding.severity) : ''}`;
+}
+
+// Union of list items, first-seen order, deduped by a key function.
+// The first occurrence's object identity is kept (no copies made).
+function unionByKey(items, keyFn) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+// Build the merged finding for a group of two or more members: a copy
+// of the representative (first member) with the union of evidence,
+// steps_to_reproduce, and references (first-seen order, exact-value
+// dedup), the highest effective base score, and `merged_from` listing
+// every member id including the representative's. Score safety:
+//   - With a shared vector, the merged cvss_score is the score the
+//     VECTOR computes (all members share the base metrics, so the
+//     computed score is the same for every member) — never the max of
+//     declared scores, because a declared score that disagrees with
+//     the vector would make the merged finding fail the generator's
+//     strict vector rule. Temporal/environmental declared scores stay
+//     the representative's, matching its kept full vector string.
+//   - Without a vector, cvss_score is the max of the declared scores
+//     present, and temporal/environmental scores are the max of the
+//     declared values present (no vector exists to disagree with).
+// The merged finding is built from validated-shape members, so it
+// still validates: same severity (rule (c) enforces it), a score that
+// agrees with its vector, and evidence that is the union of members
+// that each carried the required items.
+function mergeFindingGroup(members) {
+  const representative = members[0];
+  const merged = { ...representative };
+  const allEvidence = members.flatMap((member) => (Array.isArray(member.evidence) ? member.evidence : []));
+  if (allEvidence.length > 0) {
+    merged.evidence = unionByKey(allEvidence, (entry) => canonicalEvidenceEntry(entry).key);
+  }
+  const allSteps = members.flatMap((member) => (Array.isArray(member.steps_to_reproduce) ? member.steps_to_reproduce : []));
+  merged.steps_to_reproduce = unionByKey(allSteps, (step) => (typeof step === 'string' ? step : JSON.stringify(step)));
+  const allReferences = members.flatMap((member) => (Array.isArray(member.references) ? member.references : []));
+  if (allReferences.length > 0) {
+    merged.references = unionByKey(allReferences, (ref) => (typeof ref === 'string' ? ref : JSON.stringify(ref)));
+  }
+  const anyVector = members.some(hasCvssVector);
+  if (anyVector) {
+    const vectorScore = resolveCvss(representative).vectorScore;
+    if (vectorScore !== null) merged.cvss_score = vectorScore;
+  } else {
+    const scores = members
+      .map((member) => resolveCvss(member).effectiveScore)
+      .filter((score) => typeof score === 'number');
+    if (scores.length > 0) merged.cvss_score = Math.max(...scores);
+    const temporal = members
+      .map((member) => member.cvss_temporal_score)
+      .filter((score) => typeof score === 'number');
+    if (temporal.length > 0) merged.cvss_temporal_score = Math.max(...temporal);
+    else delete merged.cvss_temporal_score;
+    const environmental = members
+      .map((member) => member.cvss_environmental_score)
+      .filter((score) => typeof score === 'number');
+    if (environmental.length > 0) merged.cvss_environmental_score = Math.max(...environmental);
+    else delete merged.cvss_environmental_score;
+  }
+  merged.merged_from = members
+    .map((member) => member.finding_id)
+    .filter((id) => typeof id === 'string');
+  return merged;
+}
+
+function semanticDedupeFindings(findings) {
+  if (!Array.isArray(findings)) return { groups: [], duplicates: 0 };
+  const groups = [];
+  for (const finding of findings) {
+    let target = null;
+    for (const group of groups) {
+      if (semanticallyDuplicates(group.findings[0], finding)) {
+        target = group;
+        break;
+      }
+    }
+    if (target) {
+      target.findings.push(finding);
+    } else {
+      groups.push({ key: semanticKeyFor(finding), findings: [finding], merged: finding });
+    }
+  }
+  let duplicates = 0;
+  for (const group of groups) {
+    if (group.findings.length > 1) {
+      group.merged = mergeFindingGroup(group.findings);
+      duplicates += group.findings.length - 1;
+    }
+  }
+  return { groups, duplicates };
+}
+
 // Evidence checklist. Per-class, loaded at runtime from
 // knowledge/evidence-checklists.json (see docs/evidence-checklists-v1.md).
 // Every item is always listed with present true/false and a required
@@ -487,4 +714,4 @@ function evidenceChecklist(finding) {
   return evidenceChecklistForClass(finding).items.map(({ item, present }) => ({ item, present }));
 }
 
-module.exports = { validateFinding, dedupeFindings, evidenceChecklist, evidenceChecklistForClass, loadEvidenceChecklists, resolveEvidenceClass, rootCauseKey };
+module.exports = { validateFinding, dedupeFindings, semanticDedupeFindings, semanticallyDuplicates, evidenceChecklist, evidenceChecklistForClass, loadEvidenceChecklists, resolveEvidenceClass, rootCauseKey };

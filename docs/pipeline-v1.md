@@ -10,12 +10,18 @@ fixtures. No scanner, no network, no live target.
 ```text
 runStubDetector(fixture, defaults)   # src/detection/stub-detector.js
   -> validateFinding(finding)         # src/analysis/validator.js
-  -> dedupeFindings(findings)         # src/analysis/validator.js
-  -> generateReport(deduped, opts)    # src/report/generator.js
+  -> dedupeFindings(findings)         # exact-key dedup (round 32)
+  -> semanticDedupeFindings(reps)     # conservative semantic pass (round 48)
+  -> generateReport(merged, opts)     # src/report/generator.js
 ```
 
 The report is built over the **deduped** set (first finding of each
 group, in group order), so the same root cause is reported once.
+Since round 48 the deduped set goes through a second, semantic
+pass first: findings that share type, asset, base vector (or
+severity band when vector-less), severity, and at least one
+evidence entry merge into one finding carrying `merged_from`
+(see `docs/semantic-dedup-v1.md`).
 
 ## Fixtures
 
@@ -59,5 +65,8 @@ group, in group order), so the same root cause is reported once.
   (documented limitation of the report generator; needs a grouping
   rule decision).
 - False-positive findings are included in reports (see MIX-003 above).
-- No AI-model verdict, no semantic dedup, no real detector — all need
-  scope decisions, per the round-31 open items.
+- No AI-model verdict, no real detector — both need scope
+  decisions, per the round-31 open items. Semantic dedup exists
+  since round 48, but only in its conservative form
+  (`docs/semantic-dedup-v1.md`); looser matching is still an open
+  policy question.

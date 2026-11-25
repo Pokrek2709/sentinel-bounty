@@ -7,6 +7,33 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Conservative semantic dedup v1 (round 48, 2026-11-26)
+
+- Second dedup pass after the exact-key dedup (`semanticDedupeFindings`
+  in `src/analysis/validator.js`, run over the exact pass's
+  representatives): two findings merge ONLY when all four hold — same
+  normalized `vulnerability_type`, same `asset_id` (exact), same CVSS
+  base vector AND same severity (or, when neither carries a vector,
+  the same severity band), and at least one shared evidence entry
+  (same entry value; an empty `{}` entry never counts). The
+  same-severity requirement in the vector branch is a deliberate
+  tightening beyond the brief's minimum (identical base vectors
+  imply identical computed scores, so a pair that differs there is
+  mislabelled input). The merged finding keeps the union of
+  evidence, steps, and references, the highest effective base score
+  (with a shared vector, the score the vector computes — never a
+  declared score that would disagree with it), and `merged_from`,
+  the list of all member ids including the representative's (also
+  declared as an optional property in `schemas/finding.schema.json`).
+  Grouping is greedy on the representative, not transitive-closure.
+  The generator renders `merged_from` in Markdown, JSON, and HTML;
+  singletons render exactly as before (the golden hashes in
+  `tests/report-html.test.js` still pass unchanged). Fuzzy text
+  similarity and same type + asset without shared evidence are
+  deliberately out of scope — looser matching is an open policy
+  question for the user. Suite 341 → 356 tests. See
+  `docs/semantic-dedup-v1.md`.
+
 ### Pending-promise audit (round 47, 2026-11-26)
 
 - Audited every unawaited async call in `src/` and `bin/` (all

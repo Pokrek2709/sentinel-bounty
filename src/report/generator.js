@@ -41,6 +41,16 @@
 // — and a vector-derived score is written into the rendered finding
 // instead of "Not scored".
 //
+// Merged findings: a finding produced by the semantic dedup pass
+// (`src/analysis/validator.js` `semanticDedupeFindings`) carries
+// `merged_from`, the list of finding ids it was merged from. The
+// Markdown and HTML renderers show it as a "Merged from" line right
+// after the finding id; the JSON renderer carries it through the
+// spread, so it appears on the finding in both the flat `findings`
+// array and the grouped `groups`. A finding without `merged_from`
+// renders exactly as before — no line is added for singletons, so an
+// unmerged report is byte-identical to the pre-round-48 output.
+//
 // Completeness: a finding missing any field required by
 // `schemas/finding.schema.json` fails validation with an error naming the
 // missing field(s), before any output is produced, so a failed run can
@@ -334,6 +344,9 @@ function markdownFinding(finding, number) {
   lines.push(`## ${number}. ${finding.title} [${finding.severity.toUpperCase()}]`);
   lines.push('');
   lines.push(`- **Finding ID:** ${finding.finding_id}`);
+  if (Array.isArray(finding.merged_from) && finding.merged_from.length > 0) {
+    lines.push(`- **Merged from:** ${finding.merged_from.join(', ')}`);
+  }
   lines.push(`- **Severity:** ${finding.severity}`);
   lines.push(`- **CVSS:** ${finding.cvss_score !== undefined && finding.cvss_score !== null ? String(finding.cvss_score) : 'Not scored'}${finding.cvss_vector ? ` (${finding.cvss_vector})` : ''}`);
   if (finding.cvss_temporal_score !== undefined && finding.cvss_temporal_score !== null) {
@@ -458,6 +471,9 @@ function htmlFinding(finding, number) {
   lines.push(`<h3>${number}. ${escapeHtml(finding.title)} <span class="sev sev-${finding.severity}">${escapeHtml(finding.severity.toUpperCase())}</span></h3>`);
   lines.push('<dl>');
   lines.push(`<dt>Finding ID</dt><dd>${escapeHtml(finding.finding_id)}</dd>`);
+  if (Array.isArray(finding.merged_from) && finding.merged_from.length > 0) {
+    lines.push(`<dt>Merged from</dt><dd>${escapeHtml(finding.merged_from.join(', '))}</dd>`);
+  }
   lines.push(`<dt>Severity</dt><dd>${escapeHtml(finding.severity)}</dd>`);
   const cvssLine = finding.cvss_score !== undefined && finding.cvss_score !== null
     ? escapeHtml(String(finding.cvss_score)) + (finding.cvss_vector ? ` (${escapeHtml(finding.cvss_vector)})` : '')

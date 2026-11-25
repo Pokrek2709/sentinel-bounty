@@ -42,6 +42,11 @@
       "type": "string",
       "enum": ["detected", "needs_review", "validated", "false_positive", "duplicate", "rejected"]
     },
+    "merged_from": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Finding ids this finding was merged from by the semantic dedup pass (src/analysis/validator.js semanticDedupeFindings). Present only on merged findings; singletons omit it. Includes the representative's own id, so the list is the complete member set."
+    },
     "description": { "type": "string" },
     "steps_to_reproduce": {
       "type": "array",

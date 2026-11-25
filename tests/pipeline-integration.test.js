@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { runStubDetector } = require('../src/detection/stub-detector');
-const { validateFinding, dedupeFindings } = require('../src/analysis/validator');
+const { validateFinding, dedupeFindings, semanticDedupeFindings } = require('../src/analysis/validator');
 const { generateReport } = require('../src/report/generator');
 
 const DEFAULTS = { session_id: 'sess-1', target_id: 'tgt-1', asset_id: 'ast-1' };
@@ -134,6 +134,42 @@ test('pipeline mixed fixture: XSS pair dedupes, verdicts, report over the dedupe
     informational: 0,
     total: 3,
   });
+});
+
+test('pipeline semantic pass: exact dedup keeps the pair, semantic dedup merges it, report shows merged_from', () => {
+  // Two Stored XSS findings on the same asset with the same vector and
+  // one shared evidence entry, but different first reproduction steps:
+  // the exact-key dedup (first step is the key) keeps both; the
+  // semantic pass merges them; the report renders the merged finding
+  // with its merged_from ids visible.
+  const sharedEntry = loadFixture('confirmed-full.json').evidence[0];
+  const first = loadFixture('confirmed-full.json');
+  first.finding_id = 'F-PIPE-SEM-A';
+  const second = loadFixture('confirmed-full.json');
+  second.finding_id = 'F-PIPE-SEM-B';
+  second.steps_to_reproduce = [
+    'Post a comment with an <img onerror> payload on https://lab.local/comments',
+    'Reload the comments page as another lab user',
+  ];
+  second.evidence = [sharedEntry, { request: 'GET https://lab.local/comments', response: '200 OK', notes: 'Second lab run' }];
+
+  const exact = dedupeFindings([first, second]);
+  assert.equal(exact.groups.length, 2);
+  assert.equal(exact.duplicates, 0);
+  const representatives = exact.groups.map((group) => group.findings[0]);
+  const semantic = semanticDedupeFindings(representatives);
+  assert.equal(semantic.groups.length, 1);
+  assert.equal(semantic.duplicates, 1);
+  const merged = semantic.groups.map((group) => group.merged);
+  assert.deepEqual(merged[0].merged_from, ['F-PIPE-SEM-A', 'F-PIPE-SEM-B']);
+  assert.equal(validateFinding(merged[0]).verdict, 'valid');
+
+  const options = { programName: PROGRAM, generatedAt: GENERATED_AT };
+  const markdown = generateReport(merged, options);
+  assert.match(markdown, /\| total \| 1 \|/);
+  assert.match(markdown, /- \*\*Merged from:\*\* F-PIPE-SEM-A, F-PIPE-SEM-B/);
+  const parsed = JSON.parse(generateReport(merged, { ...options, format: 'json' }));
+  assert.deepEqual(parsed.findings[0].merged_from, ['F-PIPE-SEM-A', 'F-PIPE-SEM-B']);
 });
 
 test('CLI report with a missing-field finding fails with no half-written output', () => {

@@ -15,7 +15,7 @@ truth.
 ## API
 
 ```js
-const { validateFinding, dedupeFindings, evidenceChecklist } = require('../src/analysis/validator');
+const { validateFinding, dedupeFindings, semanticDedupeFindings, evidenceChecklist } = require('../src/analysis/validator');
 ```
 
 All three functions are pure and never throw on malformed input.
@@ -120,6 +120,24 @@ order. A non-array input returns `{ groups: [], duplicates: 0 }`.
 
 This is exact-key dedup only. It does not detect the same root cause
 expressed in different words, different steps, or a different asset.
+
+## Conservative semantic dedup (`semanticDedupeFindings`, round 48)
+
+A second pass, run after the exact-key dedup, over that pass's
+representatives. Two findings merge ONLY when all four hold: same
+normalized `vulnerability_type`, same `asset_id` (exact), same
+CVSS base vector AND same severity — or, when neither carries a
+vector, the same severity band — and at least one shared evidence
+entry (same entry value; an empty `{}` entry never counts). The
+merged finding keeps the union of evidence, steps, and references,
+the highest effective base score (with a shared vector, the score
+the vector computes — never a declared score that would disagree
+with it), and `merged_from`, the list of all member ids including
+the representative's. Grouping is greedy on the representative,
+not transitive-closure. Fuzzy text similarity and same type + asset
+without shared evidence are deliberately out of scope — they need
+the user's policy decision. Full rule, merge behavior, and the open
+question: `docs/semantic-dedup-v1.md`.
 
 ## Evidence checklist (`evidenceChecklist`)
 

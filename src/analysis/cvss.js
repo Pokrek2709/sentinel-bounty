@@ -423,6 +423,7 @@ function resolveCvss(finding) {
 }
 
 module.exports = {
+  BASE_METRIC_KEYS,
   parseCvssVector,
   computeBaseScore,
   computeTemporalScore,
