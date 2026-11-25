@@ -29,6 +29,12 @@ An in-scope decision does not authorize execution. No real target may be tested 
 - Node.js 18 or later.
 - No npm dependencies are currently required.
 
+`sentinel check-env` enforces the Node.js 18 floor and reports, for each
+unavailable documented tool, why it matters and how to install it; see
+[docs/check-env-audit-v1.md](docs/check-env-audit-v1.md). Note that
+`check-env` is a capability report, not a gate — it exits 0 even when
+tools are unavailable; `sentinel verify-install` is the gate.
+
 ## Install (for other people)
 
 Install this prototype as a local custom skill. It is not an official or verified Meta Muse integration, and installing it does not authorize testing any real target.

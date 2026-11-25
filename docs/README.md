@@ -12,6 +12,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 ## Core components (v1)
 
 - [approval-gate-v1](approval-gate-v1.md) — Bound, single-use, fail-closed approval gate primitive; for implementers and reviewers of the approval flow.
+- [check-env-audit-v1](check-env-audit-v1.md) — Round-41 audit of `sentinel check-env` against the documented requirements (Node >= 18 enforcement, config-sourced tool list, actionable missing-tool messages, kill-switch probe); for implementers and reviewers of the environment checker.
 - [controlled-wrapper-v1](controlled-wrapper-v1.md) — Fixed-command execution boundary for local lab execution; for implementers and reviewers of controlled execution.
 - [scope-manager-v1](scope-manager-v1.md) — Default-deny target registration and HTTP(S) DNS-host scope matching; for implementers and reviewers of scope enforcement.
 - [request-governor-v1](request-governor-v1.md) — Per-domain token-bucket rate governor, request budgets, concurrency limits, and backoff state; for implementers and reviewers of request policy.

@@ -7,6 +7,31 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### check-env completion audit (round 41, 2026-11-26)
+
+- `sentinel check-env` now enforces the documented Node.js 18 minimum
+  (`runtime` reports `not_verified` below the floor, with the floor
+  named; the constant mirrors `package.json` engines), loads its tool
+  list from `config/environment-tools.json` at runtime (new
+  `toolConfiguration` capability reports the source; a missing,
+  unreadable, or malformed config falls back to the built-in
+  definitions and says so; a config tool with no checker definition is
+  reported `not_verified`, never silently skipped; a drift-guard test
+  asserts the built-in definitions match the config list), reports
+  each tool's purpose and — when unavailable — an install hint (plus
+  the docker-CLI-is-not-a-daemon caveat), and probes the kill-switch
+  state machinery in an isolated temporary directory
+  (`processTermination` verified; end-to-end cancellation is proven by
+  `sentinel drill`). The stale `processTermination` text (`Controlled
+  cancellation has not been implemented…`) is gone. Considered and
+  excluded: git/npm (install-time only), a Python minimum version
+  (none documented), and `implementation-status.md` (a dated 21 Nov
+  snapshot, left untouched). Remaining: check-env reports but does not
+  gate (exit 0 even on failures; `verify-install` is the gate), and
+  the probe verifies the machinery, not a kill. See
+  `docs/check-env-audit-v1.md`. Suite 275 → 284 tests. This round also
+  repairs the CHANGELOG gap below (round 39 was missing).
+
 ### Per-class evidence checklists (round 40, 2026-11-26)
 
 - `knowledge/evidence-checklists.json` defines eight vulnerability
@@ -35,6 +60,29 @@ are the reports' own first-implementation estimates, not test counts.
   `bin/`+`src/`-only copy run as `nobody` once the generator
   required the validator — the ratings are now loaded lazily on
   first use. Checklists verify PRESENCE, not truth.
+
+### Incident-response drill (round 39, 2026-11-26)
+
+- `sentinel drill [--state-dir <path>] [--recover]`
+  (`src/policy/incident-drill.js`): kill-switch end-to-end against
+  fake lab workers — two phases (cooperative worker cancelled via
+  SIGTERM; stubborn SIGTERM-ignoring worker escalated to SIGKILL
+  after a 1,000 ms grace), then audit verification and reset. Drill
+  state is scoped to the drill directory and never touches real
+  state; the drill refuses while the real kill switch is armed or
+  real workers are registered, and only ever cancels workers it
+  started itself; `--recover` recovers an interrupted run (PID
+  liveness check, `DRILL_RECOVERED` audit record). Three bugs were
+  caught by the drill's own tests during the round and fixed: a
+  readiness race (SIGTERM before the handler was installed), an
+  `exitCode`-only aliveness check (signal-killed reads null), a
+  `DRILL_START` record written before pre-checks (refusals posed as
+  abandoned runs), and an unawaited `unregister()` racing `reset()`
+  (suite flake under load). CLI drill 30/30 PASS standalone; suite
+  254 → 261 tests. Phase 8 ~80% → ~82%. The drill proves the
+  machinery against a local sleep loop; it does not prove
+  cancellation of a real tool or a networked worker. See
+  `docs/drill-v1.md`.
 
 ### CVSS 3.1 temporal + environmental metrics (round 38, 2026-11-26)
 

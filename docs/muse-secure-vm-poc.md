@@ -19,19 +19,21 @@ The checker executes version commands only for its configured local tools. It ma
 
 | Capability | Evidence | Pass condition |
 | --- | --- | --- |
-| Node runtime | Current process metadata | `runtime.status` is `verified` |
+| Node runtime | Current process metadata | `runtime.status` is `verified` (Node.js 18 or later — the floor is enforced since round 41; see [check-env audit](check-env-audit-v1.md)) |
 | External-binary execution | Child process running a version command | `binaryExecution.status` is `verified` |
 | Python | `python3 --version`, then `python --version` as fallback | `python.status` is `verified` |
-| Tool availability | Tool-specific version command exits successfully | The individual `tools.<name>.status` is `verified` |
+| Tool availability | Tool-specific version command exits successfully | The individual `tools.<name>.status` is `verified`; an unavailable tool reports its purpose and an install hint |
+| Tool list source | `config/environment-tools.json` | `toolConfiguration.status` is `verified` (falls back to the checker's built-in definitions, and says so, when the config cannot be read) |
 | Writable storage | A local marker is written then read back | `filesystem.status` is `verified` |
 | Cross-run persistence | Marker from the first run exists at the start of the second | `filesystem.persistence.status` is `verified` |
+| Process termination machinery | Isolated kill-switch probe (fresh temporary state directory, never the real state dir, never armed) | `processTermination.status` is `verified`; end-to-end cancellation of a real worker is proven by `sentinel drill` (round 39) |
 
 ## Capabilities deliberately left unverified
 
 - Outbound networking: this checker does not make a network request. Verify only with an approved, non-target endpoint and a separately documented test.
 - Muse skill invocation: requires Meta's supported skill manifest/activation mechanism and an actual invocation.
 - CPU, memory, disk, and execution-duration quotas: host-visible values are not Secure VM quotas.
-- Process cancellation: requires the future execution wrapper and a controlled local test subprocess.
+- End-to-end process cancellation of a real worker: check-env probes only the kill-switch machinery in isolation; the full proof is `sentinel drill`.
 - Docker: a detected CLI is not evidence that a Docker daemon or container execution is usable.
 
 ## Current decision
