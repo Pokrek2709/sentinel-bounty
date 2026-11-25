@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const { writeFileRefusingSymlink } = require('../policy/safe-write');
 
 const execFileAsync = promisify(execFile);
 
@@ -77,7 +78,12 @@ async function checkStorage(probeDirectory, now = new Date()) {
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    await fs.writeFile(probePath, JSON.stringify(marker), { encoding: 'utf8', mode: 0o600 });
+    // The marker write refuses a planted symlink at the probe path:
+    // the probe directory is operator-chosen, but a predictable marker
+    // filename in a shared directory must not let the write be
+    // redirected to the link target. The read above still follows a
+    // link (read-only); a hostile prior marker only fails validation.
+    await writeFileRefusingSymlink(probePath, JSON.stringify(marker), { encoding: 'utf8', mode: 0o600 });
     const reread = JSON.parse(await fs.readFile(probePath, 'utf8'));
     if (reread.nonce !== marker.nonce) throw new Error('Read-back marker did not match written marker.');
 

@@ -129,6 +129,12 @@ function validateFinding(finding, index) {
 function countBySeverity(findings) {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0, total: 0 };
   for (const finding of findings) {
+    // Defensive: only schema severities are counted. generateReport
+    // validates first, so this only matters for direct callers — a
+    // hostile severity such as '__proto__' must never reach a bucket,
+    // and must not silently inflate `total` either (the increment is
+    // a no-op on the prototype setter, so the count would be lost).
+    if (!SEVERITY_ORDER.includes(finding.severity)) continue;
     counts[finding.severity] += 1;
     counts.total += 1;
   }

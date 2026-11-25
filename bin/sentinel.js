@@ -11,6 +11,8 @@ const { classifyRotationLockError, classifyTokenFileError } = require('../src/po
 const { AuditLog } = require('../src/audit/audit-log');
 const { generateReport } = require('../src/report/generator');
 const { runVerifyInstall } = require('../src/install/verifier');
+const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
+const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -442,12 +444,18 @@ async function runReport(args) {
   }
   // The report is generated fully in memory first; the output file is
   // only written after generation succeeds, so a validation failure can
-  // never leave a half-written report behind.
+  // never leave a half-written report behind. Input files are bounded
+  // (size + nesting depth) so a hostile finding file cannot exhaust
+  // memory or the call stack; the write refuses a planted symlink at
+  // the output path so attacker-influenced report content can never be
+  // redirected to the link target.
   let findings;
   if (options.finding) {
-    findings = [JSON.parse(await fs.readFile(path.resolve(options.finding), 'utf8'))];
+    findings = [await readJsonFileBounded(path.resolve(options.finding))];
   } else {
-    findings = JSON.parse(await fs.readFile(path.resolve(options.findings), 'utf8'));
+    findings = await readJsonFileBounded(path.resolve(options.findings));
+    if (!Array.isArray(findings)) throw new Error('--findings must contain a JSON array.');
+    if (findings.length > MAX_FINDINGS) throw new Error(`Too many findings: ${findings.length} (maximum ${MAX_FINDINGS}).`);
   }
   const report = generateReport(findings, {
     programName: options.program,
@@ -457,7 +465,7 @@ async function runReport(args) {
   if (options.out) {
     const outputPath = path.resolve(options.out);
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, report, { encoding: 'utf8', mode: 0o600 });
+    await writeFileRefusingSymlink(outputPath, report, { encoding: 'utf8', mode: 0o600 });
     process.stdout.write(`Report written to ${outputPath}\n`);
     return;
   }
@@ -494,7 +502,7 @@ async function main(argv) {
   if (command === 'check-scope') {
     const options = parseOptions(args, ['--target', '--url']);
     if (!options.target || !options.url) throw new Error('check-scope requires --target and --url.');
-    const target = JSON.parse(await fs.readFile(path.resolve(options.target), 'utf8'));
+    const target = await readJsonFileBounded(path.resolve(options.target));
     const registry = new TargetRegistry();
     const registered = registry.register(target);
     process.stdout.write(`${JSON.stringify({
@@ -519,7 +527,7 @@ async function main(argv) {
   if (options.output) {
     const outputPath = path.resolve(options.output);
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, serialized, { encoding: 'utf8', mode: 0o600 });
+    await writeFileRefusingSymlink(outputPath, serialized, { encoding: 'utf8', mode: 0o600 });
     process.stdout.write(`Environment report written to ${outputPath}\n`);
     return;
   }

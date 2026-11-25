@@ -67,6 +67,38 @@ before any output is produced. The CLI generates the full report in
 memory first and only writes `--out` after generation succeeds, so a
 failed run can never leave a half-written report file behind.
 
+## Input bounds and output safety (round 34)
+
+Finding and target input files are bounded before they are read
+(`src/policy/input-limits.js`): 10 MiB per file, at most 10,000
+findings per `--findings` array, and at most 100 levels of JSON
+nesting (checked with an explicit stack, never recursion, so the
+check itself cannot overflow). Over-limit input fails with a clear
+error and exit 1 instead of being rendered.
+
+Output writes refuse a planted symlink at the exact output path
+(`src/policy/safe-write.js`: lstat pre-check plus `O_NOFOLLOW` on
+POSIX). The `--out` path itself is operator-chosen, so writing to an
+absolute or `..` path is expected CLI behavior — but a symlink at
+that path is never followed, so attacker-influenced report content
+(a finding's description is untrusted data) cannot be redirected to
+the link target. The same guard covers `check-env --output` and the
+storage marker written by the environment checker.
+
+Probed and found NOT vulnerable in the same round (regression tests
+in `tests/cli-security-self-review.test.js`): prototype pollution via
+parsed JSON (no `Object.assign` anywhere; all merges are spreads or
+`Map`s; validator/generator/normalizer read named fields only);
+argument injection (`spawn` runs with `shell: false` and fixed
+allowlisted args; hostile metacharacters arrive literally); malicious
+kill-switch state and audit-log lines (unparseable/wrong-shape state
+is `KILL_SWITCH_STATE_CORRUPT`, hostile worker entries are dropped,
+corrupt audit lines make `audit-health` report `AUDIT_LOG_CORRUPT`).
+A symlinked state file is still read through — deliberately not
+fixed: planting it already requires state-directory write access, in
+which case the attacker could replace the state file outright, so
+refusing the link would add no security.
+
 ## What is NOT implemented yet
 
 - No live data: the engine renders only finding objects supplied as

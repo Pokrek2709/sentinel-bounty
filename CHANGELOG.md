@@ -5,6 +5,25 @@ from the capability reports in `~/workspace/sentinel-bounty/`
 (`capability-report-*.md`, rounds 1–32, 18–26 Nov 2026). Phase percentages
 are the reports' own first-implementation estimates, not test counts.
 
+## [Unreleased]
+
+### Security self-review of the CLI (round 34, 2026-11-26)
+
+- Report/check-env output writes now refuse a planted symlink at the
+  exact output path (`src/policy/safe-write.js`: lstat pre-check plus
+  `O_NOFOLLOW` on POSIX), so attacker-influenced report content can
+  never be redirected to the link target. The check-env storage marker
+  write uses the same guard.
+- Finding/target input files are bounded (`src/policy/input-limits.js`):
+  10 MiB per file, 10,000 findings per `--findings` array, 100 nesting
+  levels (checked iteratively, never recursively).
+- `countBySeverity` ignores severities outside the schema bands, so a
+  hostile severity can never reach a bucket or inflate the total.
+- Probed and found NOT vulnerable (regression tests added):
+  prototype pollution via parsed JSON, argument injection (spawn is
+  `shell: false` with fixed allowlisted args), malicious kill-switch
+  state and audit-log lines (fail closed, hostile entries dropped).
+
 ## [1.0.0] — 2026-11-26
 
 First consolidated release of the lab-local Sentinel Bounty skill, as
