@@ -14,6 +14,7 @@ const { runVerifyInstall } = require('../src/install/verifier');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
 const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/state-backup');
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
+const { runDrill } = require('../src/policy/incident-drill');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -46,6 +47,7 @@ function usage() {
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
+    '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>]',
@@ -513,8 +515,27 @@ async function runRestore(args) {
   }
 }
 
-async function runVerifyInstallCommand(args) {
-  const options = parseOptions(args, ['--state-dir', '--skill-dir']);
+async function runDrillCommand(args) {
+  // --recover is a boolean flag, not a valued option: strip it before
+  // parseOptions (which requires a value for every permitted option).
+  const recover = args.includes('--recover');
+  const options = parseOptions(args.filter((argument) => argument !== '--recover'), ['--state-dir']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const result = await runDrill({
+    stateDir: stateDirectory,
+    skillDirectory: path.resolve(__dirname, '..'),
+    recover,
+  });
+  for (const step of result.steps) {
+    process.stdout.write(`${step.status} ${step.id}: ${step.detail}${step.reason ? ` (${step.reason})` : ''}\n`);
+  }
+  const passed = result.steps.filter((step) => step.status === 'PASS').length;
+  process.stdout.write(`drill: ${result.verdict} (${passed} passed, ${result.steps.length - passed} failed)\n`);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (result.verdict !== 'PASS') process.exitCode = 1;
+}
+
+async function runVerifyInstallCommand(args) {  const options = parseOptions(args, ['--state-dir', '--skill-dir']);
   const skillDirectory = path.resolve(options.skillDir || path.resolve(__dirname, '..'));
   const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
   const result = await runVerifyInstall({ skillDirectory, stateDirectory });
@@ -533,6 +554,10 @@ async function main(argv) {
   }
   if (command === 'restore') {
     await runRestore(args);
+    return;
+  }
+  if (command === 'drill') {
+    await runDrillCommand(args);
     return;
   }
   if (command === 'verify-install') {
