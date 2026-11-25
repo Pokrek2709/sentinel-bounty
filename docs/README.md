@@ -16,6 +16,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [controlled-wrapper-v1](controlled-wrapper-v1.md) — Fixed-command execution boundary for local lab execution; for implementers and reviewers of controlled execution.
 - [scope-manager-v1](scope-manager-v1.md) — Default-deny target registration and HTTP(S) DNS-host scope matching; for implementers and reviewers of scope enforcement.
 - [scope-explain-v1](scope-explain-v1.md) — Scope-decision explainability (`sentinel check-scope --explain`, text and JSON trails: ordered rule evaluation, deciding rule, policy source, suggestion; plain output byte-identical); for operators asking why a target is in or out of scope.
+- [scope-manage-v1](scope-manage-v1.md) — Scope target management (`sentinel scope add/remove`, persistent store `<state-dir>/scope-targets.json`, `check-scope --store`, armed-switch guard, named errors); for operators keeping a standing list of in-scope targets.
 - [request-governor-v1](request-governor-v1.md) — Per-domain token-bucket rate governor, request budgets, concurrency limits, and backoff state; for implementers and reviewers of request policy.
 - [kill-switch-v1](kill-switch-v1.md) — In-memory, fail-closed kill switch core; for implementers and reviewers of cancellation.
 - [persistent-kill-switch-v1](persistent-kill-switch-v1.md) — Cross-process, file-backed persistent kill switch with a token-gated operator CLI; for operators and implementers of the lab kill switch.

@@ -7,6 +7,36 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Scope target management (round 53, 2026-11-26)
+
+- `sentinel scope add <target.json> [--state-dir <path>]` and
+  `sentinel scope remove <target-id> [--state-dir <path>]` manage the
+  persistent store `<state-dir>/scope-targets.json` (`{schema_version:
+  1, targets: [...]}`; the store lives in the state directory, not
+  the skill directory, so it survives reinstalls). Entries are the raw
+  target objects as supplied and are re-validated with
+  `normalizeTarget` on every load, so a damaged entry fails loudly
+  instead of silently changing scope. The parent directory is created
+  private (`0700`), the file is written `0600` with planted symlinks
+  refused, and mutations run under an exclusive lock file
+  (`scope-targets.json.lock`, 5 s timeout, 60 s stale reaper).
+  Successful mutations write an audit record (`SCOPE_TARGET_ADDED` /
+  `SCOPE_TARGET_REMOVED`); a mutation whose audit append fails exits
+  4. Adding an already-present `target_id` is an idempotent no-op
+  (exit 0, `added: false, alreadyPresent: true`, no rewrite, no audit
+  record). Both commands refuse while the kill-switch is armed
+  (`SCOPE_CHANGE_REFUSED_KILL_SWITCH_ACTIVE`, exit 1, JSON result).
+  `sentinel check-scope --store <scope-targets.json> --target-id <id>
+  --url <url> [--explain] [--json]` resolves a stored target and
+  evaluates it with the unchanged decision logic (`--store` and
+  `--target` are mutually exclusive). Named errors:
+  `SCOPE_TARGET_INVALID`, `SCOPE_TARGET_NOT_FOUND`,
+  `SCOPE_STORE_CORRUPT`, `SCOPE_STORE_UNSUPPORTED_SCHEMA`,
+  `SCOPE_STORE_SYMLINK_REFUSED`, `SCOPE_STORE_LOCKED`. The decision
+  logic is unchanged and the plain `--target` path is byte-identical.
+  Open items: no `scope list` yet; the built-in default excluded
+  paths still cannot be overridden from the target file.
+
 ### Scope-decision explainability (round 52, 2026-11-26)
 
 - `sentinel check-scope --target <target.json> --url <url> [--explain]

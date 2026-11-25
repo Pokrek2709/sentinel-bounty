@@ -22,6 +22,9 @@ The personas do not expand permissions. They must preserve default-deny scope, e
 ```text
 sentinel check-env [--output <path>] [--probe-dir <path>]
 sentinel check-scope --target <target.json> --url <url> [--explain] [--json]
+sentinel check-scope --store <scope-targets.json> --target-id <id> --url <url> [--explain] [--json]
+sentinel scope add <target.json> [--state-dir <path>]
+sentinel scope remove <target-id> [--state-dir <path>]
 sentinel kill-switch status [--state-dir <path>]
 sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]
 sentinel kill-switch reset --actor <id> [--state-dir <path>]
@@ -37,6 +40,8 @@ sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id
 ```
 
 `sentinel check-env` is a local capability report (zero network requests, no scanner): it enforces the Node.js 18 minimum (`runtime`), checks the documented tools from `config/environment-tools.json` (`docker`, `subfinder`, `dnsx`, `httpx`, `katana`) and reports each unavailable tool's purpose and install hint, probes writable storage and cross-run persistence (`filesystem`), and probes the kill-switch state machinery in an isolated temporary directory (`processTermination`; end-to-end cancellation is proven by `sentinel drill`). It exits 0 even when tools are unavailable — it reports, it does not gate; `sentinel verify-install` is the gate. See `docs/check-env-audit-v1.md`.
+
+`sentinel scope add <target.json>` / `sentinel scope remove <target-id>` manage the persistent scope-target store `<state-dir>/scope-targets.json` (`{schema_version: 1, targets: [...]}`; the store lives in the state directory so it survives skill reinstalls). Entries are the raw target objects as supplied and are re-validated with `normalizeTarget` on every load. Adding an already-present `target_id` is an idempotent no-op; removing an absent id fails with `SCOPE_TARGET_NOT_FOUND`. Both commands refuse while the kill-switch is armed (`SCOPE_CHANGE_REFUSED_KILL_SWITCH_ACTIVE`), and successful mutations write an audit record (`SCOPE_TARGET_ADDED` / `SCOPE_TARGET_REMOVED`). `sentinel check-scope --store <scope-targets.json> --target-id <id> --url <url>` resolves a stored target and evaluates it with the unchanged decision logic. There is no `scope list` yet. See `docs/scope-manage-v1.md`.
 
 `sentinel detect` runs a detector over a local input record and prints normalized findings as JSON (or writes them with `--out`, mode `0600`, planted symlinks refused). The detector interface is a synchronous function `detector(input, defaults) -> { findings, skipped, errors }` (`src/detection/detector.js`): `input` is a raw detector-input record or a batch `{ tool, results: [...] }`, `defaults` supplies `session_id`/`target_id`/`asset_id` when the record does not carry them (a detector never invents them), and every returned finding is re-normalized on validation, so a non-conformant finding is refused, not repaired. The built-in stub detector (`--detector stub`, the default) is the reference implementation — it normalizes its input and nothing else, counts bad records in `skipped`, and performs no detection against any target. A path loads a custom detector module from inside the skill directory, refused when it is missing, malformed, a symlink, or outside the skill root; a detector that throws or returns an invalid result is recorded as an error envelope, never a crash. No real detector exists yet; which detectors to build, whether detection should ever run automatically, and whether detectors may be asynchronous are open decisions. See `docs/detector-interface-v1.md`.
 

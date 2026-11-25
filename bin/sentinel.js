@@ -18,6 +18,7 @@ const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limit
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
 const { getDetector, runDetector } = require('../src/detection/detector');
+const { storePathFor, addScopeTarget, removeScopeTarget, findScopeTarget } = require('../src/scope/target-store');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -42,6 +43,9 @@ function usage() {
     'Usage:',
     '  sentinel check-env [--output <path>] [--probe-dir <path>]',
     '  sentinel check-scope --target <target.json> --url <url> [--explain] [--json]',
+    '  sentinel check-scope --store <scope-targets.json> --target-id <id> --url <url> [--explain] [--json]',
+    '  sentinel scope add <target.json> [--state-dir <path>]',
+    '  sentinel scope remove <target-id> [--state-dir <path>]',
     '  sentinel kill-switch status [--state-dir <path>]',
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
@@ -156,6 +160,61 @@ async function killSwitchFor(options, resetTokenHash) {
     }),
     stateDirectory,
   };
+}
+
+// Scope target management (Phase 3, round 53). The persistent store is
+// `<state-dir>/scope-targets.json`; scope changes are operator config
+// writes, so they are refused while the kill-switch is ARMED — changing
+// what a stopped run covers, silently, would defeat the switch. The
+// guard is checked before any target is read or written. A successful
+// mutation writes an audit record (SCOPE_TARGET_ADDED /
+// SCOPE_TARGET_REMOVED); a mutation whose audit append fails reports
+// `auditLogged: false` and exits 4, following the kill-switch trigger
+// pattern. A duplicate add is an idempotent no-op (exit 0, no rewrite,
+// no audit record).
+async function runScopeCommand(args) {
+  const [action, value, ...optionArgs] = args;
+  if (action !== 'add' && action !== 'remove') {
+    throw new Error('scope requires an action: add or remove.');
+  }
+  if (!value || value.startsWith('--')) {
+    throw new Error(action === 'add' ? 'scope add requires a <target.json> file.' : 'scope remove requires a <target-id>.');
+  }
+  const options = parseOptions(optionArgs, ['--state-dir']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const storePath = storePathFor(stateDirectory);
+  const { killSwitch } = await killSwitchFor({ stateDir: stateDirectory });
+  const guard = await killSwitch.assertNotTriggered();
+  if (!guard.allowed) {
+    process.stdout.write(`${JSON.stringify({ [action === 'add' ? 'added' : 'removed']: false, reason: 'SCOPE_CHANGE_REFUSED_KILL_SWITCH_ACTIVE', trigger: guard.trigger || null }, null, 2)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (action === 'add') {
+    const targetPath = path.resolve(value);
+    let targetObject;
+    try {
+      targetObject = await readJsonFileBounded(targetPath);
+    } catch (error) {
+      throw new Error(`SCOPE_TARGET_INVALID: cannot read target file: ${error.message}`);
+    }
+    const result = await addScopeTarget(storePath, targetObject);
+    if (!result.added) {
+      // Idempotent no-op: nothing was written and nothing was logged, so
+      // there is no auditLogged field to report (false would imply a
+      // failed append).
+      process.stdout.write(`${JSON.stringify({ ...result, store: storePath }, null, 2)}\n`);
+      return;
+    }
+    const auditLogged = await appendOperatorAudit(stateDirectory, 'SCOPE_TARGET_ADDED', { targetId: result.targetId, store: storePath });
+    process.stdout.write(`${JSON.stringify({ ...result, store: storePath, auditLogged }, null, 2)}\n`);
+    if (!auditLogged) process.exitCode = 4;
+    return;
+  }
+  const result = await removeScopeTarget(storePath, value);
+  const auditLogged = await appendOperatorAudit(stateDirectory, 'SCOPE_TARGET_REMOVED', { targetId: result.targetId, store: storePath });
+  process.stdout.write(`${JSON.stringify({ ...result, store: storePath, auditLogged }, null, 2)}\n`);
+  if (!auditLogged) process.exitCode = 4;
 }
 
 async function runKillSwitch(action, args) {
@@ -694,16 +753,35 @@ async function main(argv) {
     await runKillSwitch(action, actionArgs);
     return;
   }
+  if (command === 'scope') {
+    await runScopeCommand(args);
+    return;
+  }
   if (command === 'check-scope') {
     // --explain and --json are boolean flags (same pattern as report
     // --allow-mixed-targets and drill --recover): strip them before
     // parseOptions, which only accepts valued options.
     const explain = args.includes('--explain');
     const json = args.includes('--json');
-    const options = parseOptions(args.filter((argument) => argument !== '--explain' && argument !== '--json'), ['--target', '--url']);
-    if (!options.target || !options.url) throw new Error('check-scope requires --target and --url.');
-    const targetPath = path.resolve(options.target);
-    const target = await readJsonFileBounded(targetPath);
+    const options = parseOptions(args.filter((argument) => argument !== '--explain' && argument !== '--json'), ['--target', '--url', '--store', '--target-id']);
+    if (options.store && options.target) throw new Error('check-scope: --store and --target are mutually exclusive.');
+    if (!options.url) throw new Error('check-scope requires --url.');
+    let target;
+    let targetPath;
+    if (options.store) {
+      // Resolve the target from the persistent scope store (round 53).
+      // --store is the store FILE path (<state-dir>/scope-targets.json);
+      // the decision logic below is unchanged.
+      if (!options.targetId) throw new Error('check-scope --store requires --target-id.');
+      const storePath = path.resolve(options.store);
+      target = await findScopeTarget(storePath, options.targetId);
+      if (!target) throw new Error(`SCOPE_TARGET_NOT_FOUND: no scope target with target_id "${options.targetId}" in ${storePath}`);
+      targetPath = storePath;
+    } else {
+      if (!options.target) throw new Error('check-scope requires --target and --url.');
+      targetPath = path.resolve(options.target);
+      target = await readJsonFileBounded(targetPath);
+    }
     const registry = new TargetRegistry();
     const registered = registry.register(target);
     const decision = registry.evaluate(registered.targetId, options.url);
