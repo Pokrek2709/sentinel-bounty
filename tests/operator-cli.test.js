@@ -135,6 +135,49 @@ test('operator CLI rejects an expired token metadata file', async () => {
   }
 });
 
+test('reset, rotate-token, and revoke-token report RESET_TOKEN_FILE_CORRUPT for a damaged digest file', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-corrupt-'));
+  const token = 'operator-token-for-local-lab-1234';
+  const hashFile = path.join(directory, 'operator-reset-token.sha256');
+  const corruptContents = {
+    'unparseable JSON': '{"version": 1, "keyId": "k1", "digest": "abc',
+    'wrong-shape JSON (bad digest)': JSON.stringify({ version: 1, keyId: 'k1', digest: 'not-a-hex-digest', validUntil: new Date(Date.now() + 60000).toISOString() }),
+    'wrong-shape JSON (missing keyId)': JSON.stringify({ version: 1, digest: crypto.createHash('sha256').update(token).digest('hex'), validUntil: new Date(Date.now() + 60000).toISOString() }),
+    'legacy garbage': 'this is not a digest\n',
+    'empty file': '',
+  };
+  const actions = [
+    { args: ['reset', '--actor', 'operator'], key: 'reset' },
+    { args: ['rotate-token', '--actor', 'operator'], key: 'rotated' },
+    { args: ['revoke-token', '--actor', 'operator'], key: 'revoked' },
+  ];
+  try {
+    for (const [label, contents] of Object.entries(corruptContents)) {
+      await fs.writeFile(hashFile, contents, { mode: 0o600 });
+      const before = await fs.readFile(hashFile, 'utf8');
+      for (const { args, key } of actions) {
+        const result = await invoke(args, directory, token, hashFile, 'operator-token-rotated-local-5678');
+        assert.equal(result.code, 3, `${label} ${args[0]} exit`);
+        const body = parse(result.stdout);
+        assert.equal(body.reason, 'RESET_TOKEN_FILE_CORRUPT', `${label} ${args[0]} reason`);
+        assert.equal(body[key], false);
+        assert.equal(body.auditLogged, false);
+        assert.equal(result.stdout.includes(token), false);
+      }
+      // Fail-closed: a rejected operator action never rewrites the file.
+      assert.equal(await fs.readFile(hashFile, 'utf8'), before, `${label} file unchanged`);
+    }
+    // Controls: a missing digest file stays RESET_OPERATOR_UNAUTHORIZED,
+    // not CORRUPT (an expired digest is covered by the expired test).
+    await fs.rm(hashFile, { force: true });
+    const missing = await invoke(['reset', '--actor', 'operator'], directory, token, hashFile);
+    assert.equal(missing.code, 3);
+    assert.equal(parse(missing.stdout).reason, 'RESET_OPERATOR_UNAUTHORIZED');
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('serializes concurrent token rotations so exactly one writer wins', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rotate-race-'));
   const token = 'operator-token-for-local-lab-1234';
@@ -263,7 +306,11 @@ test('revoke-token recovers an older pending marker hidden by a newer completed 
   }
 });
 
-test('status falls back to a lockless read on a full disk', async (t) => {
+// tmpfs is POSIX-only: skip these two tests outright on Windows instead
+// of relying on the mount-failure catch (round 30 hypothesis fix for the
+// round-28 Windows run failure). The mount-failure catch stays as a
+// second line of defence for non-root Linux runs.
+test('status falls back to a lockless read on a full disk', { skip: process.platform === 'win32' }, async (t) => {
   const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-full-disk-'));
   const mount = async () => execFileAsync('mount', ['-t', 'tmpfs', '-o', 'size=64k', 'tmpfs', mountPoint]);
   const unmount = async () => execFileAsync('umount', [mountPoint]).catch(() => {});
@@ -425,7 +472,7 @@ test('revoke-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent 
   }
 });
 
-test('rotate-token reports RESET_TOKEN_ROTATION_UNAVAILABLE on a full digest disk', async (t) => {
+test('rotate-token reports RESET_TOKEN_ROTATION_UNAVAILABLE on a full digest disk', { skip: process.platform === 'win32' }, async (t) => {
   const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-full-'));
   const mount = async () => execFileAsync('mount', ['-t', 'tmpfs', '-o', 'size=64k', 'tmpfs', mountPoint]);
   const unmount = async () => execFileAsync('umount', [mountPoint]).catch(() => {});

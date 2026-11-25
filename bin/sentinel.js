@@ -14,6 +14,7 @@ const { AuditLog } = require('../src/audit/audit-log');
 // pass through verbatim (stable operator-facing codes, never raw paths).
 // Anything else from the rotation path is a generic write/revoke failure.
 const ROTATION_FAILURE_REASONS = [
+  'RESET_TOKEN_FILE_CORRUPT',
   'RESET_TOKEN_FILE_UNAVAILABLE',
   'RESET_TOKEN_ROTATION_LOCKED',
   'RESET_TOKEN_ROTATION_PERMISSION_DENIED',
@@ -89,19 +90,39 @@ async function readExpectedResetTokenHash() {
     let keyId = 'legacy';
     let validUntil = stat.mtimeMs + DEFAULT_TOKEN_VALIDITY_MS;
     if (value.startsWith('{')) {
-      const metadata = JSON.parse(value);
+      let metadata;
+      try {
+        metadata = JSON.parse(value);
+      } catch {
+        // Unparseable JSON in a file that exists and is readable: the
+        // token file is damaged, not merely absent or wrong.
+        throw new Error('RESET_TOKEN_FILE_CORRUPT');
+      }
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('RESET_TOKEN_FILE_CORRUPT');
       digest = typeof metadata.digest === 'string' ? metadata.digest.toLowerCase() : '';
       keyId = typeof metadata.keyId === 'string' && metadata.keyId.trim() ? metadata.keyId.trim() : '';
       validUntil = typeof metadata.validUntil === 'number' ? metadata.validUntil : Date.parse(metadata.validUntil);
+      // Wrong-shape JSON (bad digest, missing keyId, unusable validUntil)
+      // is corruption, not a wrong token. Expiry below stays
+      // RESET_OPERATOR_UNAUTHORIZED: a valid digest that lapsed is not
+      // a damaged file.
+      if (!/^[a-f0-9]{64}$/.test(digest) || !keyId || !Number.isFinite(validUntil)) throw new Error('RESET_TOKEN_FILE_CORRUPT');
+    } else if (!/^[a-f0-9]{64}$/.test(digest)) {
+      // Legacy plain-text value that is not a 64-hex hash: the file
+      // exists and is readable but holds no usable digest.
+      throw new Error('RESET_TOKEN_FILE_CORRUPT');
     }
-    if (!/^[a-f0-9]{64}$/.test(digest) || !keyId || !Number.isFinite(validUntil) || validUntil <= Date.now()) return undefined;
+    if (validUntil <= Date.now()) return undefined;
     return { digest, keyId, validUntil, filePath: realHashFile };
   } catch (error) {
+    // A corrupt digest file is reported distinctly (fail-closed): the
+    // operator can tell a damaged token file apart from a wrong token.
     // A permission/path failure reading the digest is a storage failure,
-    // not an authorization failure: surface the classified code instead of
-    // swallowing it into "no usable token" (which the CLI reports as
-    // RESET_OPERATOR_UNAUTHORIZED). Missing file, bad format, expired, or
-    // corrupt JSON still returns undefined (fail-closed).
+    // not an authorization failure: surface the classified code instead
+    // of swallowing it into "no usable token" (which the CLI reports
+    // as RESET_OPERATOR_UNAUTHORIZED). A missing file or an expired
+    // digest still returns undefined (fail-closed, unauthorized).
+    if (error.message === 'RESET_TOKEN_FILE_CORRUPT') throw error;
     const classified = classifyTokenFileError(error);
     if (classified) throw new Error(classified);
     return undefined;
@@ -122,9 +143,36 @@ async function killSwitchFor(options, resetTokenHash) {
 
 async function runKillSwitch(action, args) {
   const options = parseOptions(args, ['--state-dir', '--actor', '--reason']);
-  const resetTokenHash = ['reset', 'rotate-token', 'revoke-token'].includes(action) ? await readExpectedResetTokenHash() : undefined;
+  // A damaged digest file is fail-closed and reported distinctly from a
+  // wrong token (RESET_TOKEN_FILE_CORRUPT, exit 3), before any state is
+  // touched. The digest is read first, matching the pre-existing order,
+  // so a corrupt file surfaces ahead of the audit-health gate.
+  let resetTokenHash;
+  let digestCorrupt = false;
+  try {
+    resetTokenHash = ['reset', 'rotate-token', 'revoke-token'].includes(action) ? await readExpectedResetTokenHash() : undefined;
+  } catch (error) {
+    if (error.message === 'RESET_TOKEN_FILE_CORRUPT') {
+      digestCorrupt = true;
+    } else {
+      throw error;
+    }
+  }
   const { killSwitch, stateDirectory } = await killSwitchFor(options, resetTokenHash);
   const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
+  if (digestCorrupt) {
+    const auditHealth = await auditHealthWithStateReserve(audit, stateDirectory);
+    const reason = 'RESET_TOKEN_FILE_CORRUPT';
+    if (action === 'reset') {
+      process.stdout.write(`${JSON.stringify({ reset: false, reason, auditHealth, auditLogged: false }, null, 2)}\n`);
+    } else if (action === 'rotate-token') {
+      process.stdout.write(`${JSON.stringify({ rotated: false, reason, auditHealth, auditLogged: false }, null, 2)}\n`);
+    } else if (action === 'revoke-token') {
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason, auditHealth, auditLogged: false }, null, 2)}\n`);
+    }
+    process.exitCode = 3;
+    return;
+  }
   if (action === 'audit-health') {
     const health = await auditHealthWithStateReserve(audit, stateDirectory);
     process.stdout.write(`${JSON.stringify(health, null, 2)}\n`);
@@ -194,7 +242,10 @@ async function runKillSwitch(action, args) {
       });
     } catch (error) {
       process.stdout.write(`${JSON.stringify({ rotated: false, reason: ROTATION_FAILURE_REASONS.includes(error.message) ? error.message : 'RESET_TOKEN_WRITE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
-      process.exitCode = 1;
+      // A corrupt digest file discovered inside the rotation lock is a
+      // fail-closed authorization outcome (exit 3), like a wrong token;
+      // other rotation failures stay operational (exit 1).
+      process.exitCode = error.message === 'RESET_TOKEN_FILE_CORRUPT' ? 3 : 1;
       return;
     }
     if (!rotation.rotated) {
@@ -252,7 +303,9 @@ async function runKillSwitch(action, args) {
       });
     } catch (error) {
       process.stdout.write(`${JSON.stringify({ revoked: false, reason: ROTATION_FAILURE_REASONS.includes(error.message) ? error.message : 'RESET_TOKEN_REVOKE_FAILED', auditHealth, auditLogged: false }, null, 2)}\n`);
-      process.exitCode = 1;
+      // Same fail-closed exit as the rotate path: a corrupt digest file
+      // is an authorization outcome (exit 3), not an operational failure.
+      process.exitCode = error.message === 'RESET_TOKEN_FILE_CORRUPT' ? 3 : 1;
       return;
     }
     process.stdout.write(`${JSON.stringify({ ...revocation, auditHealth }, null, 2)}\n`);

@@ -21,6 +21,44 @@ function nowFrom(clock) {
   return value;
 }
 
+// Workers recorded in the state file must be objects; anything else (a
+// string, number, null, or array) is malformed data from a hand-edited
+// file. The locked path prunes such entries; the lockless path drops them
+// for exact parity instead of spreading them into phantom workers
+// (spreading "x" yields {"0": "x"} with leaseExpired true).
+function isWorkerRecord(worker) {
+  return worker !== null && typeof worker === 'object' && !Array.isArray(worker);
+}
+
+// Pure v1/legacy -> v2 migration, shared by the locked reader (which
+// writes the migrated state back) and the lockless parser (in-memory
+// only), so the two paths cannot drift apart. Throws
+// KILL_SWITCH_STATE_CORRUPT for shapes that are neither v2, v1, nor
+// legacy. `now` is injected so the lockless path uses the same clock as
+// the locked path.
+function migrateKillSwitchState(parsed, now) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('KILL_SWITCH_STATE_CORRUPT');
+  if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
+  if (parsed.version === 1 && typeof parsed.active === 'boolean') {
+    return { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
+  }
+  if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
+    const timestamp = parsed.updatedAt || parsed.updated_at;
+    return {
+      version: 2,
+      active: parsed.enabled,
+      trigger: parsed.enabled ? {
+        triggerId: 'legacy-state',
+        triggeredBy: 'legacy-state',
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
+        triggeredAt: Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : now,
+      } : null,
+      workers: [],
+    };
+  }
+  throw new Error('KILL_SWITCH_STATE_CORRUPT');
+}
+
 // Classify a filesystem error from a lock/state-storage operation into the
 // operator-facing error taxonomy. Lives in storage-errors.js so the
 // operator CLI can reuse the same taxonomy for the rotation lock.
@@ -122,29 +160,12 @@ class PersistentKillSwitch {
   async #readUnlocked() {
     try {
       const parsed = JSON.parse(await fs.readFile(this.#stateFile, 'utf8'));
-      if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
-      if (parsed.version === 1 && typeof parsed.active === 'boolean') {
-        const migrated = { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
-        await this.#writeUnlocked(migrated);
-        return migrated;
-      }
-      if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
-        const timestamp = parsed.updatedAt || parsed.updated_at;
-        const migrated = {
-          version: 2,
-          active: parsed.enabled,
-          trigger: parsed.enabled ? {
-            triggerId: 'legacy-state',
-            triggeredBy: 'legacy-state',
-            reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
-            triggeredAt: Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : nowFrom(this.#clock),
-          } : null,
-          workers: [],
-        };
-        await this.#writeUnlocked(migrated);
-        return migrated;
-      }
-      throw new Error('KILL_SWITCH_STATE_CORRUPT');
+      // v1/legacy migration is shared with the lockless parser (see
+      // migrateKillSwitchState): the locked path writes the migrated
+      // state back, the lockless path keeps it in memory only.
+      const migrated = migrateKillSwitchState(parsed, nowFrom(this.#clock));
+      if (parsed.version !== 2) await this.#writeUnlocked(migrated);
+      return migrated;
     } catch (error) {
       if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
       const classified = classifyStateReadError(error);
@@ -178,7 +199,9 @@ class PersistentKillSwitch {
   // snapshot() (which prunes before counting).
   #locklessSnapshot(state) {
     const now = nowFrom(this.#clock);
-    const workers = state.workers.map((worker) => Object.freeze({ ...worker, leaseExpired: !Number.isFinite(worker.leaseExpiresAt) || worker.leaseExpiresAt <= now }));
+    // Non-object workers are dropped, not spread: lockless must report
+    // exactly the same workers the locked path would prune to.
+    const workers = state.workers.filter(isWorkerRecord).map((worker) => Object.freeze({ ...worker, leaseExpired: !Number.isFinite(worker.leaseExpiresAt) || worker.leaseExpiresAt <= now }));
     return Object.freeze({
       active: state.active,
       trigger: state.trigger ? Object.freeze({ ...state.trigger }) : null,
@@ -192,7 +215,10 @@ class PersistentKillSwitch {
   }
 
   #pruneWorkers(state, now = nowFrom(this.#clock)) {
-    const workers = state.workers.filter((worker) => Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now);
+    // A non-object worker (null, string, number, array) is malformed
+    // data: drop it here instead of letting Number.isFinite throw on
+    // null.leaseExpiresAt. Matches the lockless filter exactly.
+    const workers = state.workers.filter((worker) => isWorkerRecord(worker) && Number.isFinite(worker.leaseExpiresAt) && worker.leaseExpiresAt > now);
     return workers.length === state.workers.length ? state : { ...state, workers };
   }
 
@@ -281,25 +307,9 @@ class PersistentKillSwitch {
     } catch (error) {
       throw new Error('KILL_SWITCH_STATE_CORRUPT');
     }
-    if (parsed.version === 2 && typeof parsed.active === 'boolean' && Array.isArray(parsed.workers)) return parsed;
-    if (parsed.version === 1 && typeof parsed.active === 'boolean') {
-      return { version: 2, active: parsed.active, trigger: parsed.trigger || null, workers: [] };
-    }
-    if (parsed.version === undefined && typeof parsed.enabled === 'boolean') {
-      const timestamp = parsed.updatedAt || parsed.updated_at;
-      return {
-        version: 2,
-        active: parsed.enabled,
-        trigger: parsed.enabled ? {
-          triggerId: 'legacy-state',
-          triggeredBy: 'legacy-state',
-          reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : 'Migrated legacy kill-switch state',
-          triggeredAt: Number.isFinite(Date.parse(timestamp)) ? Date.parse(timestamp) : nowFrom(this.#clock),
-        } : null,
-        workers: [],
-      };
-    }
-    throw new Error('KILL_SWITCH_STATE_CORRUPT');
+    // Same migration as the locked reader; the lockless path never
+    // writes the migrated state back.
+    return migrateKillSwitchState(parsed, nowFrom(this.#clock));
   }
 
   async trigger({ triggeredBy, reason }) {

@@ -227,6 +227,75 @@ test('snapshotLockless marks without pruning while the locked snapshot prunes', 
   }
 });
 
+test('lockless and locked snapshots drop non-object workers instead of spreading them', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-nonobject-'));
+  const skillDirectory = path.join(directory, 'skill');
+  const stateFile = path.join(directory, 'state', 'kill-switch.json');
+  try {
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    const now = Date.now();
+    const stored = {
+      version: 2,
+      active: false,
+      trigger: null,
+      workers: [
+        'x',
+        42,
+        null,
+        ['array-worker'],
+        { workerId: 'live-worker', pid: 1111, leaseExpiresAt: now + 60000 },
+        { workerId: 'expired-worker', pid: 2222, leaseExpiresAt: now - 60000 },
+      ],
+    };
+    await fs.writeFile(stateFile, JSON.stringify(stored), { mode: 0o600 });
+    const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    // Lockless: non-objects are dropped (no phantom {"0": "x"} worker);
+    // expired object leases are reported, not pruned.
+    const lockless = await killSwitch.snapshotLockless();
+    assert.equal(lockless.workers.length, 2);
+    assert.deepEqual(lockless.workers.map((worker) => worker.workerId).sort(), ['expired-worker', 'live-worker']);
+    assert.equal(lockless.registeredWorkers, 1);
+    // Locked: the same malformed entries are pruned (and a null worker
+    // no longer throws TypeError), leaving only the live lease.
+    const locked = await killSwitch.snapshot();
+    assert.equal(locked.workers.length, 1);
+    assert.equal(locked.workers[0].workerId, 'live-worker');
+    assert.equal(JSON.parse(await fs.readFile(stateFile, 'utf8')).workers.length, 1);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('locked and lockless migration agree on v1 and legacy shapes', async () => {
+  const cases = [
+    { name: 'v1', state: { version: 1, active: true, trigger: { triggerId: 't1', triggeredBy: 'op', reason: 'v1 reason', triggeredAt: Date.now() - 1000 } } },
+    { name: 'legacy-enabled', state: { enabled: true, reason: 'old stop', updatedAt: new Date(Date.now() - 5000).toISOString() } },
+    { name: 'legacy-disabled', state: { enabled: false } },
+  ];
+  for (const { name, state } of cases) {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-migrate-parity-'));
+    const skillDirectory = path.join(directory, 'skill');
+    const stateFile = path.join(directory, 'state', 'kill-switch.json');
+    try {
+      await fs.mkdir(path.dirname(stateFile), { recursive: true });
+      const before = JSON.stringify(state);
+      await fs.writeFile(stateFile, before, { mode: 0o600 });
+      const killSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+      const lockless = await killSwitch.snapshotLockless();
+      assert.equal(await fs.readFile(stateFile, 'utf8'), before, `${name} lockless must not write`);
+      const locked = await killSwitch.snapshot();
+      const persisted = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+      assert.equal(locked.version, 2, name);
+      assert.equal(locked.active, lockless.active, `${name} active parity`);
+      assert.deepEqual(locked.trigger, lockless.trigger, `${name} trigger parity`);
+      assert.equal(persisted.version, 2, `${name} persisted v2`);
+      assert.equal(persisted.active, lockless.active, `${name} persisted active parity`);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test('migrates the legacy enabled schema atomically without reviving approvals', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
   const skillDirectory = path.join(directory, 'skill');
