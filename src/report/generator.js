@@ -25,6 +25,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { loadTemplate, renderTemplateReport } = require('./templates');
+
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'];
 
 let cachedSeverityRatings = null;
@@ -242,7 +244,7 @@ function renderMarkdown({ programName, generatedAt, counts, findings }) {
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary }) {
+function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template }) {
   const report = {
     report_id: reportId,
     target_id: targetId,
@@ -253,14 +255,19 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
     findings,
   };
   if (sessionId) report.session_id = sessionId;
+  if (template) report.template = template;
   return `${JSON.stringify(report, null, 2)}\n`;
 }
 
 // Generate a report from one or more validated findings.
-// options: { programName, generatedAt, format } — format is
-// 'markdown' (default) or 'json'. Throws on any validation failure;
-// nothing is written by this function, so a failure can never leave a
-// half-written output file.
+// options: { programName, generatedAt, format, template } — format is
+// 'markdown' (default) or 'json'; template is 'generic' (default) or the
+// name of a platform template (see src/report/templates.js). A named
+// template renders exactly one finding per report — the platforms accept
+// one bug per submission — and its required sections fail cleanly when
+// their source field is missing, instead of inventing content. Throws on
+// any validation failure; nothing is written by this function, so a
+// failure can never leave a half-written output file.
 function generateReport(findings, options = {}) {
   if (!Array.isArray(findings) || findings.length === 0) {
     throw new Error('At least one finding is required to generate a report.');
@@ -294,6 +301,32 @@ function generateReport(findings, options = {}) {
     // string, so a JSON report cannot be produced without one: pass
     // --generated-at or give the findings created_at values.
     throw new Error('JSON output requires a generated_at timestamp: pass --generated-at or include created_at on the findings.');
+  }
+  const templateName = typeof options.template === 'string' && options.template.trim()
+    ? options.template.trim()
+    : 'generic';
+  if (templateName !== 'generic') {
+    const template = loadTemplate(templateName);
+    if (validated.length !== 1) {
+      throw new Error(
+        `Template "${templateName}" renders one finding per report; got ${validated.length} findings. ` +
+        'Generate one report per finding, or use the generic template.',
+      );
+    }
+    if (format === 'json') {
+      return renderJson({
+        reportId: deriveReportId(programName, validated),
+        targetId: validated[0].target_id,
+        sessionId: validated[0].session_id,
+        programName,
+        generatedAt,
+        counts,
+        findings: validated,
+        summary,
+        template: templateName,
+      });
+    }
+    return renderTemplateReport(template, validated[0], { programName, generatedAt });
   }
   if (format === 'json') {
     return renderJson({

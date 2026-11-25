@@ -29,6 +29,7 @@
         "total": { "type": "integer" }
       }
     },
+    "template": { "type": "string", "description": "Platform template the report was rendered with (generic reports omit this field)." },
     "scope_details": { "type": "object" },
     "attack_surface_summary": { "type": "object" },
     "findings": {

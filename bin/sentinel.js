@@ -43,7 +43,7 @@ function usage() {
     '  sentinel kill-switch audit-health [--state-dir <path>]',
     '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
-    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
+    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>]',
     '',
@@ -438,7 +438,7 @@ async function appendOperatorAudit(stateDirectory, event, details) {
 }
 
 async function runReport(args) {
-  const options = parseOptions(args, ['--finding', '--findings', '--out', '--format', '--generated-at', '--program']);
+  const options = parseOptions(args, ['--finding', '--findings', '--out', '--format', '--template', '--generated-at', '--program']);
   if ((options.finding && options.findings) || (!options.finding && !options.findings)) {
     throw new Error('report requires exactly one of --finding and --findings.');
   }
@@ -461,6 +461,7 @@ async function runReport(args) {
     programName: options.program,
     generatedAt: options.generatedAt,
     format: options.format,
+    template: options.template,
   });
   if (options.out) {
     const outputPath = path.resolve(options.out);

@@ -28,11 +28,11 @@ sentinel kill-switch reset --actor <id> [--state-dir <path>]
 sentinel kill-switch audit-health [--state-dir <path>]
 sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]
 sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]
-sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]
+sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]
 sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]
 ```
 
-`sentinel report` renders validated findings into a deterministic bug-bounty report (Markdown by default, JSON with `--format json`); a finding whose severity disagrees with its CVSS score, or that is missing a required field, fails instead of producing a report.
+`sentinel report` renders validated findings into a deterministic bug-bounty report (Markdown by default, JSON with `--format json`); a finding whose severity disagrees with its CVSS score, or that is missing a required field, fails instead of producing a report. `--template immunefi|code4rena` renders one finding into a platform's section layout (one finding per report; a finding without a proof of concept fails for those templates); `--template generic` is the default multi-finding report.
 
 These commands make no network request and execute no security scanner.
 

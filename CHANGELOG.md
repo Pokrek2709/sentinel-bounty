@@ -7,6 +7,22 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report templates for Immunefi and Code4rena (round 35, 2026-11-26)
+
+- `sentinel report --template immunefi|code4rena` renders one validated
+  finding into a platform's section layout (one finding per report;
+  `--findings` with a template fails cleanly). Templates are data, not
+  code: JSON files in `knowledge/report-templates/`, loaded and
+  shape-validated at runtime by `src/report/templates.js`; adding a
+  platform is a new data file. A required section with no source data
+  fails with a named field (a finding without `proof_of_concept` cannot
+  be rendered in either template); an optional section with no data is
+  omitted. `--format json --template <name>` keeps the generic JSON
+  shape and adds a `"template"` field. Cantina submissions use the
+  Code4rena template (same section set; see
+  `docs/report-templates-v1.md` for the caveat). Deterministic:
+  same input, byte-identical output, Markdown and JSON.
+
 ### Security self-review of the CLI (round 34, 2026-11-26)
 
 - Report/check-env output writes now refuse a planted symlink at the

@@ -25,6 +25,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [validation-v1](validation-v1.md) — Rule-based finding validator with deduplication and an evidence checklist; for implementers and reviewers of finding validation.
 - [pipeline-v1](pipeline-v1.md) — End-to-end lab-local pipeline (stub detector → validator → dedup → report generator) over fixtures; for implementers and reviewers of the full chain.
 - [reporting-v1](reporting-v1.md) — Deterministic bug-bounty report generator (`sentinel report`, Markdown or JSON); for implementers and users rendering validated findings.
+- [report-templates-v1](report-templates-v1.md) — Platform report templates (`--template immunefi|code4rena`, data files in `knowledge/report-templates/`); for users submitting to Immunefi, Code4rena, or Cantina.
 
 ## Muse capability evidence (user-supplied lab reports)
 

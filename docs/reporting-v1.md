@@ -108,4 +108,11 @@ refusing the link would add no security.
 - No multi-program aggregation: `target_id` / `session_id` in JSON output
   come from the first finding; findings from mixed targets are rendered
   as-is and are not grouped or split.
-- No templating or styling options beyond the two formats.
+
+## Platform templates
+
+`sentinel report --finding <finding.json> --template immunefi|code4rena`
+renders one finding into the section layout a platform expects (one
+finding per report; `--findings` with a template fails cleanly). The
+templates are data files in `knowledge/report-templates/`, loaded at
+runtime — see [report-templates-v1](report-templates-v1.md).
