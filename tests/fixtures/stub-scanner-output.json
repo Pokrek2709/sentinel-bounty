@@ -1,7 +1,7 @@
 {
     "results": [
         {
-            "cvss_score": 8.2,
+            "cvss_score": 6.1,
             "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
             "cwe_id": "CWE-79",
             "description": "The search parameter reflects input without encoding, allowing script execution in a victim browser.",

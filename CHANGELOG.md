@@ -7,6 +7,24 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### CVSS 3.1 base-vector parsing and scoring (round 36, 2026-11-26)
+
+- `src/analysis/cvss.js` parses a CVSS 3.1 base vector and computes the
+  base score per the FIRST specification (scope-changed formula and
+  Roundup included), with severity bands from the shared
+  `knowledge/cvss/cvss-calc.json` table — no second band table. The
+  validator and the report generator share `resolveCvss()`: a malformed
+  vector fails by name, a vector disagreeing with a declared score
+  fails by name, and a vector-only finding derives its score (and is
+  checked/rendered with it) instead of going unscored. Four lab
+  fixtures carried declared scores contradicting their own vectors
+  (STUB-001 8.2 vs 6.1, potential-full 6.5 vs 5.4, duplicate-a/b 5.3
+  vs 5.4); the declared scores were corrected to the computed values
+  and the affected test expectations updated. See
+  `docs/cvss-vector-v1.md`. Temporal/environmental metrics are out of
+  scope; the stub normalizer still derives severity from the declared
+  score only (documented limitation).
+
 ### Report templates for Immunefi and Code4rena (round 35, 2026-11-26)
 
 - `sentinel report --template immunefi|code4rena` renders one validated

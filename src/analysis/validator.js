@@ -23,14 +23,21 @@
 //      cannot be band-checked at all, and with an unbandable cvss_score
 //      it previously slipped through as 'valid' — while the report
 //      generator rejects it outright ('has invalid severity').
-//   5. severity/cvss mismatch, a present-but-invalid cvss_score, and
-//      missing reproducibility evidence are collected together: a
-//      finding can report e.g. 'severity/cvss mismatch' and
-//      'missing proof_of_concept'. The severity is never silently
-//      re-labelled. A present cvss_score that is not a finite number
-//      in [0, 10] is reported as 'invalid cvss_score' on its own;
-//      it is not a *mismatch*, and a missing cvss_score (undefined
-//      or null) stays unchecked entirely.
+//   5. severity/cvss mismatch, a present-but-invalid cvss_score, a
+//      malformed or disagreeing cvss_vector, and missing
+//      reproducibility evidence are collected together: a finding can
+//      report e.g. 'severity/cvss mismatch' and 'missing
+//      proof_of_concept'. The severity is never silently re-labelled.
+//      A present cvss_score that is not a finite number in [0, 10]
+//      is reported as 'invalid cvss_score' on its own; it is not a
+//      *mismatch*. A cvss_vector that is present but malformed is
+//      reported as 'invalid cvss_vector: ...' on its own; a vector
+//      whose computed score disagrees with a declared cvss_score is
+//      reported as 'cvss_vector/cvss_score mismatch: ...'. When the
+//      vector parses and no valid declared score exists, the
+//      vector-derived score is the effective score: the severity is
+//      checked against it instead of going unchecked. A missing
+//      cvss_score AND a missing vector stay unchecked entirely.
 //   6. confidence 'confirmed' with proof_of_concept + non-empty evidence +
 //      non-empty steps_to_reproduce (and no mismatch) -> 'valid'.
 //   7. confidence 'potential' with the same complete evidence (and no
@@ -46,17 +53,21 @@
 //     must be a non-empty string; evidence/steps must be non-empty
 //     arrays).
 //   - Severity/cvss agreement is checked only when severity is one of
-//     the five band names and cvss_score is a finite number. The score
-//     is rounded to one decimal place first (CVSS 3.1 scores carry one
-//     decimal; this also absorbs float noise such as 6.9000000001).
-//     A severity outside the five band names is not a mismatch — it is
-//     reported as unknown severity (precedence step 4). A cvss_score
-//     that is present but not a finite number in [0, 10] is reported
-//     as invalid cvss_score (precedence step 5); a missing cvss_score
-//     (undefined or null) is not checked at all.
+//     the five band names and an effective score exists: the declared
+//     cvss_score when it is a finite number in [0, 10], otherwise
+//     the score computed from cvss_vector when the vector parses
+//     (see resolveCvss in ./cvss.js). The score is rounded to one
+//     decimal place first (CVSS 3.1 scores carry one decimal; this
+//     also absorbs float noise such as 6.9000000001). A severity
+//     outside the five band names is not a mismatch — it is reported
+//     as unknown severity (precedence step 4). A cvss_score that is
+//     present but not a finite number in [0, 10] is reported as
+//     invalid cvss_score (precedence step 5); a missing cvss_score
+//     AND a missing vector leave the severity unchecked entirely.
 'use strict';
 
 const { severity_ratings: SEVERITY_RATINGS } = require('../../knowledge/cvss/cvss-calc.json');
+const { resolveCvss } = require('./cvss');
 
 // The five band names a severity must be one of (schema enum; also the
 // report generator's SEVERITY_ORDER). Derived from the ratings so the
@@ -156,7 +167,15 @@ function validateFinding(finding) {
   }
 
   const reasons = [];
-  if (!severityMatchesCvss(finding.severity, finding.cvss_score)) {
+  // Vector resolution (see ./cvss.js resolveCvss): a malformed vector
+  // or a vector that disagrees with the declared score is a reason of
+  // its own; the effective score is the declared score when valid,
+  // else the vector-derived score, else null (unchecked).
+  const cvss = resolveCvss(finding);
+  if (cvss.error) {
+    reasons.push(cvss.error);
+  }
+  if (!severityMatchesCvss(finding.severity, cvss.effectiveScore)) {
     reasons.push('severity/cvss mismatch');
   }
   if (hasInvalidCvssScore(finding)) {

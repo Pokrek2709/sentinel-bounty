@@ -7,11 +7,17 @@
 // the findings); when neither is available the report records that the
 // generation time was not specified instead of inventing one.
 //
-// Strict severity rule: severity is derived from `cvss_score` using the
-// bands in `knowledge/cvss/cvss-calc.json` (`severity_ratings`). When a
-// finding carries both `severity` and `cvss_score` and they disagree, the
-// report FAILS with an error. A report must never carry a wrong severity
-// label, so the generator refuses to guess which of the two is right.
+// Strict severity rule: severity is derived from the effective CVSS
+// score using the bands in `knowledge/cvss/cvss-calc.json`
+// (`severity_ratings`). The effective score is the declared
+// `cvss_score` when present, otherwise the score computed from
+// `cvss_vector` (see `src/analysis/cvss.js`). When a finding carries
+// both `severity` and a score and they disagree, the report FAILS with
+// an error; when a vector disagrees with a declared score, or the
+// vector itself is malformed, the report FAILS too. A report must
+// never carry a wrong severity label, so the generator refuses to
+// guess which of the two is right — and a vector-derived score is
+// written into the rendered finding instead of "Not scored".
 //
 // Completeness: a finding missing any field required by
 // `schemas/finding.schema.json` fails validation with an error naming the
@@ -26,6 +32,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTemplate, renderTemplateReport } = require('./templates');
+const { resolveCvss } = require('../analysis/cvss');
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'];
 
@@ -110,14 +117,35 @@ function validateFinding(finding, index) {
   if (!SEVERITY_ORDER.includes(finding.severity)) {
     throw new Error(`${label} has invalid severity: ${String(finding.severity)}.`);
   }
+  // Vector resolution (see ../analysis/cvss.js resolveCvss): a malformed
+  // vector or a vector that disagrees with the declared score fails the
+  // report — a report must never carry a score the vector contradicts.
+  // When only the vector is present, its computed score is derived and
+  // the finding is returned with cvss_score filled in, so the rendered
+  // report shows the derived score instead of "Not scored".
+  const cvss = resolveCvss(finding);
+  if (cvss.error) {
+    throw new Error(`${label} has ${cvss.error}.`);
+  }
+  let effectiveScore = null;
+  let scoreFromVector = false;
   if (finding.cvss_score !== undefined && finding.cvss_score !== null) {
     if (typeof finding.cvss_score !== 'number' || !Number.isFinite(finding.cvss_score) || finding.cvss_score < 0 || finding.cvss_score > 10) {
       throw new Error(`${label} has invalid cvss_score: ${String(finding.cvss_score)} (expected a number from 0 to 10).`);
     }
-    const derived = severityForScore(finding.cvss_score);
+    effectiveScore = finding.cvss_score;
+  } else if (cvss.vectorScore !== null) {
+    effectiveScore = cvss.vectorScore;
+    scoreFromVector = true;
+  }
+  if (effectiveScore !== null) {
+    const derived = severityForScore(effectiveScore);
     if (derived !== finding.severity) {
+      const source = scoreFromVector
+        ? `cvss_vector (computed score ${effectiveScore})`
+        : `cvss_score ${effectiveScore}`;
       throw new Error(
-        `${label} severity/score mismatch: severity is "${finding.severity}" but cvss_score ${finding.cvss_score} maps to "${derived}". ` +
+        `${label} severity/score mismatch: severity is "${finding.severity}" but ${source} maps to "${derived}". ` +
         'Refusing to report a finding whose severity label disagrees with its CVSS score.',
       );
     }
@@ -125,7 +153,7 @@ function validateFinding(finding, index) {
   if (!Array.isArray(finding.steps_to_reproduce) || finding.steps_to_reproduce.some((step) => typeof step !== 'string' || step.trim() === '')) {
     throw new Error(`${label} has invalid steps_to_reproduce: expected a non-empty array of strings.`);
   }
-  return finding;
+  return scoreFromVector ? { ...finding, cvss_score: effectiveScore } : finding;
 }
 
 function countBySeverity(findings) {

@@ -14,7 +14,7 @@ Implemented locally:
 - Per-domain token-bucket rate governor, request budgets, concurrency limits, and local server-pressure backoff state.
 - Bound single-use approval gate, fixed-command wrapper, persistent kill-switch state, and token-gated operator CLI for local lab execution.
 - GET-only `localhost` HTTP adapter with bounded audit logging for the local lab.
-- Lab-local finding pipeline over fixtures only: a fixture-based detector stub that emits normalized findings ([detection-stub-v1](docs/detection-stub-v1.md)), a rule-based finding validator with deduplication and an evidence checklist ([validation-v1](docs/validation-v1.md)), and a deterministic report generator (`sentinel report`, [reporting-v1](docs/reporting-v1.md)) with platform templates for Immunefi and Code4rena ([report-templates-v1](docs/report-templates-v1.md)). No scanner is invoked and nothing here performs detection against any target.
+- Lab-local finding pipeline over fixtures only: a fixture-based detector stub that emits normalized findings ([detection-stub-v1](docs/detection-stub-v1.md)), a rule-based finding validator with deduplication and an evidence checklist ([validation-v1](docs/validation-v1.md)), CVSS 3.1 base-vector parsing and scoring ([cvss-vector-v1](docs/cvss-vector-v1.md)), and a deterministic report generator (`sentinel report`, [reporting-v1](docs/reporting-v1.md)) with platform templates for Immunefi and Code4rena ([report-templates-v1](docs/report-templates-v1.md)). No scanner is invoked and nothing here performs detection against any target.
 
 Not implemented yet:
 

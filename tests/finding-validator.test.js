@@ -84,6 +84,10 @@ test('severity disagreeing with cvss_score needs evidence and is not re-labelled
 
 test('severity/cvss band edges agree (9.0 critical, 8.9 high, 0.0 informational)', () => {
   const base = clone(loadFixture('confirmed-full'));
+  // This test measures score banding only, so the vector is removed:
+  // the fixture's vector computes to 7.5 and would disagree with
+  // every overridden score below.
+  delete base.cvss_vector;
   assert.equal(validateFinding({ ...base, severity: 'critical', cvss_score: 9.0 }).verdict, 'valid');
   assert.equal(validateFinding({ ...base, severity: 'high', cvss_score: 8.9 }).verdict, 'valid');
   assert.equal(validateFinding({ ...base, severity: 'informational', cvss_score: 0.0 }).verdict, 'valid');

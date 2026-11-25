@@ -2,7 +2,7 @@
   "asset_id": "lab-asset-01",
   "confidence": "potential",
   "created_at": "2026-11-26T02:30:00Z",
-  "cvss_score": 5.3,
+  "cvss_score": 5.4,
   "description": "Second report of the same lab search reflected XSS, written by a different lab analyst with different wording and a differently cased first step.",
   "discovery_tool": "lab-manual",
   "evidence": [

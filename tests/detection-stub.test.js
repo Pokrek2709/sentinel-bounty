@@ -157,7 +157,11 @@ test('stub detector end-to-end: 2 good + 1 bad result', () => {
   assert.equal(result.errors.length, 1);
   assert.match(result.errors[0], /title/);
   assert.equal(result.findings[0].finding_id, 'STUB-001');
-  assert.equal(result.findings[0].severity, 'high');
+  // STUB-001's vector computes to 6.1 (medium); the fixture's old
+  // declared score of 8.2 contradicted its own vector and was
+  // corrected in round 36 — the normalizer derives severity from the
+  // declared score, so this now reads medium.
+  assert.equal(result.findings[0].severity, 'medium');
   assert.equal(result.findings[1].finding_id, 'STUB-002');
   assert.equal(result.findings[1].severity, 'medium');
   for (const finding of result.findings) {

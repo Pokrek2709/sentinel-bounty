@@ -2,7 +2,7 @@
   "asset_id": "lab-asset-01",
   "confidence": "confirmed",
   "created_at": "2026-11-26T02:00:00Z",
-  "cvss_score": 5.3,
+  "cvss_score": 5.4,
   "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
   "cwe_id": "CWE-79",
   "description": "First report of the lab search reflected XSS.",

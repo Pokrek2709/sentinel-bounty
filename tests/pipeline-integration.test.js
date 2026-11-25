@@ -51,16 +51,18 @@ test('pipeline round-31 driver cases: stub -> validate -> dedupe -> deterministi
   const options = { programName: PROGRAM, generatedAt: GENERATED_AT };
   const markdown = generateReport(result.findings, options);
   assert.match(markdown, /\| critical \| 0 \|/);
-  assert.match(markdown, /\| high \| 1 \|/);
-  assert.match(markdown, /\| medium \| 1 \|/);
+  // STUB-001's vector computes to 6.1 (medium) and STUB-002 is medium
+  // (5.0): the round-36 fixture correction moved STUB-001 out of high.
+  assert.match(markdown, /\| high \| 0 \|/);
+  assert.match(markdown, /\| medium \| 2 \|/);
   assert.match(markdown, /\| total \| 2 \|/);
 
   const json = generateReport(result.findings, { ...options, format: 'json' });
   const parsed = JSON.parse(json);
   assert.deepEqual(parsed.findings_summary, {
     critical: 0,
-    high: 1,
-    medium: 1,
+    high: 0,
+    medium: 2,
     low: 0,
     informational: 0,
     total: 2,
