@@ -1,5 +1,6 @@
 // Reporting engine (Phase 7): renders VALIDATED finding objects into a
-// deterministic bug-bounty report (Markdown, JSON, or standalone HTML).
+// deterministic bug-bounty report (Markdown, JSON, standalone HTML, or
+// flat CSV).
 //
 // Grouping: findings are grouped by `asset_id` before rendering.
 // Groups are ordered by asset_id ascending (plain string order, never
@@ -92,6 +93,21 @@
 // their own fixed sections and do not carry the AI verdict in
 // Markdown — the same precedent as the evidence checklist — but
 // their JSON form still does, via the spread.
+//
+// CSV output (round 55): one row per finding plus a header row
+// (see CSV_COLUMNS / renderCsv). The column order is fixed and
+// documented in docs/report-csv-v1.md; rows follow the same
+// grouped order as Markdown/JSON (target, then asset, then
+// severity, then finding_id), so the same finding set in any input
+// order produces byte-identical CSV. Every field is RFC 4180
+// escaped (see escapeCsvField). Finding content is untrusted, so
+// hostile values (`<script>`, `=cmd`, `+cmd`, `@cmd`) are rendered
+// verbatim as inert text — the file itself never executes anything
+// — and the doc warns that spreadsheet consumers must still treat
+// the file as untrusted (formula injection is a consumer risk:
+// open with data-import, not double-click, when findings carry
+// untrusted strings). An empty finding set renders the header row
+// only; a platform template with CSV output is refused, like HTML.
 //
 // HTML output: a single self-contained file (inline CSS only, no
 // JavaScript, no external resources). Finding content is UNTRUSTED —
@@ -410,6 +426,84 @@ function formatAiVerdict(finding) {
   const reasons = Array.isArray(result.reasons) && result.reasons.length > 0 ? result.reasons.join('; ') : 'no reasons given';
   const source = typeof finding.ai_verdict_source === 'string' && finding.ai_verdict_source !== '' ? finding.ai_verdict_source : 'unknown';
   return `${verdict} (confidence ${confidence}, source: ${source}) — ${reasons}`;
+}
+
+// CSV export (round 55): one row per finding, header row first. The
+// column order is fixed — see docs/report-csv-v1.md — and the
+// `verdict` column carries the finding's `validation_status` value.
+// The evidence checklist renders as a compact summary: present/total
+// plus the missing items joined with '; ' (or "(complete)" when
+// nothing is missing). `merged_from` joins with '; '; `ai_verdict`
+// uses the same advisory line as Markdown, or an empty cell when
+// the finding carries none. Scores render as plain numbers; a
+// missing score renders as an empty cell, never "Not scored" —
+// "Not scored" is display text, not data.
+const CSV_COLUMNS = [
+  'finding_id',
+  'target_id',
+  'asset_id',
+  'severity',
+  'cvss_base_score',
+  'cvss_temporal_score',
+  'cvss_environmental_score',
+  'verdict',
+  'evidence_checklist',
+  'merged_from',
+  'ai_verdict',
+];
+
+// RFC 4180 field escaping: a field containing a double quote, a
+// comma, or a line break is wrapped in double quotes with inner
+// quotes doubled. Every other field is written verbatim — including
+// a value that starts with `=`, `+`, or `@`. The file is inert
+// text and never executes anything on its own; a spreadsheet that
+// interprets a leading `=` as a formula is a consumer risk, and
+// the doc (docs/report-csv-v1.md) warns operators about it instead
+// of silently altering the finding's data.
+function escapeCsvField(value) {
+  const text = value === undefined || value === null ? '' : String(value);
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function evidenceChecklistSummary(finding) {
+  const checklist = evidenceChecklistForClass(finding);
+  const present = checklist.items.filter((entry) => entry.present).length;
+  const missing = checklist.items.filter((entry) => !entry.present).map((entry) => entry.item);
+  return missing.length === 0
+    ? `${present}/${checklist.items.length} (complete)`
+    : `${present}/${checklist.items.length} (missing: ${missing.join('; ')})`;
+}
+
+function csvScore(value) {
+  return value !== undefined && value !== null ? String(value) : '';
+}
+
+function csvFindingRow(finding) {
+  const aiVerdict = formatAiVerdict(finding);
+  const fields = [
+    finding.finding_id,
+    finding.target_id,
+    finding.asset_id,
+    finding.severity,
+    csvScore(finding.cvss_score),
+    csvScore(finding.cvss_temporal_score),
+    csvScore(finding.cvss_environmental_score),
+    finding.validation_status,
+    evidenceChecklistSummary(finding),
+    Array.isArray(finding.merged_from) ? finding.merged_from.join('; ') : '',
+    aiVerdict === null ? '' : aiVerdict,
+  ];
+  return fields.map(escapeCsvField).join(',');
+}
+
+// Render the findings (already in grouped order — see generateReport)
+// as flat CSV: header row, then one row per finding, LF line endings,
+// trailing newline. An empty array renders the header only.
+function renderCsv(orderedFindings) {
+  const lines = [CSV_COLUMNS.join(',')];
+  orderedFindings.forEach((finding) => lines.push(csvFindingRow(finding)));
+  return `${lines.join('\n')}\n`;
 }
 
 function markdownFinding(finding, number) {
@@ -766,11 +860,26 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
   return `${JSON.stringify(report, null, 2)}\n`;
 }
 
+// Platform templates are Markdown-only. A named template with HTML
+// or CSV output fails cleanly with the same message in both places
+// it is checked (the empty-set early return and the template branch
+// below), so the refusal never depends on how many findings there
+// are.
+function assertTemplateAllowsFormat(templateName, format) {
+  if (templateName === 'generic') return;
+  if (format === 'html') {
+    throw new Error(`Template "${templateName}" renders Markdown only; HTML output uses the generic template.`);
+  }
+  if (format === 'csv') {
+    throw new Error(`Template "${templateName}" renders Markdown only; CSV output uses the generic template.`);
+  }
+}
+
 // Generate a report from one or more validated findings.
 // options: { programName, generatedAt, format, template,
-// allowMixedTargets, verifier } — format is 'markdown' (default), 'json', or
-// 'html'; template is 'generic' (default) or the name of a platform
-// template (see src/report/templates.js). verifier is 'stub', a
+// allowMixedTargets, verifier } — format is 'markdown' (default), 'json',
+// 'html', or 'csv'; template is 'generic' (default) or the name of a
+// platform template (see src/report/templates.js). verifier is 'stub', a
 // verifier function, or a module path (CLI --verifier); when set,
 // each finding carries an advisory ai_verdict (see
 // src/analysis/ai-verdict.js) that never changes the rule-based
@@ -779,18 +888,38 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
 // submission — and its required sections fail cleanly when their
 // source field is missing, instead of inventing content. Platform
 // templates are Markdown-only: requesting one with `--format html`
-// fails cleanly. Findings are grouped by target first, then by
+// or `--format csv` fails cleanly. Findings are grouped by target first, then by
 // asset_id within each target (see groupFindingsByTarget); the flat
 // JSON `findings` array follows the same grouped order, and
 // `target_id` / `session_id` come from the first finding in grouped
 // order. By default a report covering more than one distinct
 // `target_id` is refused (`REPORT_MIXED_TARGETS_REFUSED`); pass
 // `allowMixedTargets: true` (CLI `--allow-mixed-targets`) to opt in
-// explicitly. Throws on any validation failure; nothing is written
+// explicitly. An empty finding set renders the CSV header row only
+// when the format is csv (and no template is requested); every other
+// format still requires at least one finding. Throws on any validation failure; nothing is written
 // by this function, so a failure can never leave a half-written
 // output file.
 function generateReport(findings, options = {}) {
-  if (!Array.isArray(findings) || findings.length === 0) {
+  if (!Array.isArray(findings)) {
+    throw new Error('generateReport expects an array of findings.');
+  }
+  const format = options.format || 'markdown';
+  if (format !== 'markdown' && format !== 'json' && format !== 'html' && format !== 'csv') {
+    throw new Error(`Invalid format: ${format} (expected "markdown", "json", "html", or "csv").`);
+  }
+  const templateName = typeof options.template === 'string' && options.template.trim()
+    ? options.template.trim()
+    : 'generic';
+  if (findings.length === 0) {
+    // CSV is a flat export: the header row is meaningful on its own
+    // (an empty export for a triage import), so an empty set renders
+    // just the header. Every other format is a report about
+    // findings and still requires at least one. The template check
+    // runs first, so an empty set with a template is refused as a
+    // template error, not as a missing-findings error.
+    assertTemplateAllowsFormat(templateName, format);
+    if (format === 'csv') return renderCsv([]);
     throw new Error('At least one finding is required to generate a report.');
   }
   const validated = findings.map((finding, index) => validateFinding(finding, index));
@@ -852,23 +981,14 @@ function generateReport(findings, options = {}) {
   }
   const counts = countBySeverity(reported);
   const summary = executiveSummary(counts, programName);
-  const format = options.format || 'markdown';
-  if (format !== 'markdown' && format !== 'json' && format !== 'html') {
-    throw new Error(`Invalid format: ${format} (expected "markdown", "json", or "html").`);
-  }
   if (format === 'json' && !generatedAt) {
     // schemas/report.schema.json requires generated_at as a date-time
     // string, so a JSON report cannot be produced without one: pass
     // --generated-at or give the findings created_at values.
     throw new Error('JSON output requires a generated_at timestamp: pass --generated-at or include created_at on the findings.');
   }
-  const templateName = typeof options.template === 'string' && options.template.trim()
-    ? options.template.trim()
-    : 'generic';
   if (templateName !== 'generic') {
-    if (format === 'html') {
-      throw new Error(`Template "${templateName}" renders Markdown only; HTML output uses the generic template.`);
-    }
+    assertTemplateAllowsFormat(templateName, format);
     const template = loadTemplate(templateName);
     if (reported.length !== 1) {
       throw new Error(
@@ -920,7 +1040,14 @@ function generateReport(findings, options = {}) {
       summary,
     });
   }
+  if (format === 'csv') {
+    // Flat export: the rows follow the same grouped order as the
+    // flat JSON `findings` array (target, then asset, then severity,
+    // then finding_id). No generated_at is needed — a CSV row set
+    // carries no report header beyond the column names.
+    return renderCsv(orderedFindings);
+  }
   return renderMarkdown({ programName, generatedAt, counts, groups, targetGroups, multiTarget, targetIds });
 }
 
-module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, SEVERITY_ORDER };
+module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, escapeCsvField, CSV_COLUMNS, SEVERITY_ORDER };

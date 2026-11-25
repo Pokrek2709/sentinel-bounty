@@ -7,6 +7,46 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Flat CSV report export (round 55, 2026-11-26)
+
+- `sentinel report --format csv` renders the same validated,
+  grouped findings as a flat export: one row per finding plus a
+  header row, in the same grouped order as the flat JSON
+  `findings` array (targets ascending, then asset groups
+  ascending, findings inside a group by severity then
+  `finding_id`). Columns, in fixed order: `finding_id`,
+  `target_id`, `asset_id`, `severity`, `cvss_base_score`,
+  `cvss_temporal_score`, `cvss_environmental_score`, `verdict`
+  (the finding's `validation_status`), `evidence_checklist`
+  (`present/total` plus missing items joined with `; `, or
+  `(complete)`), `merged_from` (joined with `; `, empty for a
+  singleton), `ai_verdict` (the advisory line, empty without a
+  verifier). Scores are plain numbers; a missing score is an empty
+  cell. No `generated_at` is needed, so CSV output never requires
+  `--generated-at`.
+- Every field is RFC 4180 escaped (`escapeCsvField` in
+  `src/report/generator.js`): a field containing a double quote, a
+  comma, or a line break is wrapped in double quotes with inner
+  quotes doubled. Hostile values (`<script>`, `=cmd`, `+cmd`,
+  `@cmd`) render verbatim as inert text — the file itself never
+  executes anything — and the generator deliberately does not
+  alter values to defuse them. Formula injection is a
+  spreadsheet-consumer risk, documented in
+  `docs/report-csv-v1.md`: open exports with data-import (cells
+  as text) or in a text editor, never double-click a CSV whose
+  findings may carry attacker-controlled strings.
+- An empty finding set renders the header row only (exit 0);
+  every other format still requires at least one finding. A
+  platform template with `--format csv` is refused with the same
+  named error as HTML (`Template "<name>" renders Markdown only;
+  CSV output uses the generic template.`), for empty and
+  non-empty sets alike. Mixed-target input without
+  `--allow-mixed-targets` is refused with
+  `REPORT_MIXED_TARGETS_REFUSED`; with the flag, rows render for
+  all targets in ascending target order. Markdown and JSON output
+  are unchanged: the round-43 golden hashes are re-pinned in
+  `tests/report-csv.test.js` (15 new tests, suite 444 → 459).
+
 ### Scope list and overridable default excluded paths (round 54, 2026-11-26)
 
 - `sentinel scope list [--state-dir <path>] [--store <file>] [--url
