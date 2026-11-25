@@ -33,6 +33,15 @@
 // missing field(s), before any output is produced, so a failed run can
 // never leave a half-written report file behind.
 //
+// Evidence checklist: every rendered finding carries its per-class
+// evidence checklist (see `src/analysis/validator.js`
+// `evidenceChecklistForClass`): the Markdown report renders it as an
+// "Evidence Checklist" section naming the class and marking each item
+// present/missing and required/recommended; the JSON report attaches
+// it as `evidence_checklist` on each finding. Platform templates
+// (Immunefi/Code4rena) render their own fixed sections and do not
+// carry the checklist in Markdown; their JSON form still does.
+//
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
 
@@ -42,6 +51,7 @@ const path = require('node:path');
 
 const { loadTemplate, renderTemplateReport } = require('./templates');
 const { resolveCvss } = require('../analysis/cvss');
+const { evidenceChecklistForClass } = require('../analysis/validator');
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'];
 
@@ -280,6 +290,16 @@ function markdownFinding(finding, number) {
     });
   }
   lines.push('');
+  lines.push('### Evidence Checklist');
+  lines.push('');
+  const checklist = evidenceChecklistForClass(finding);
+  lines.push(`- Class: ${checklist.label}${checklist.classId === 'generic' ? ' — the vulnerability type matched no class, so the generic checklist applies' : ''}`);
+  checklist.items.forEach((entry) => {
+    const box = entry.present ? '[x]' : '[ ]';
+    const suffix = entry.present ? '' : ' — missing';
+    lines.push(`- ${box} ${entry.item} (${entry.required ? 'required' : 'recommended'})${suffix}`);
+  });
+  lines.push('');
   lines.push('### Impact');
   lines.push('');
   lines.push(finding.impact);
@@ -323,6 +343,15 @@ function renderMarkdown({ programName, generatedAt, counts, findings }) {
 }
 
 function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template }) {
+  // Each finding carries its per-class evidence checklist (see
+  // src/analysis/validator.js evidenceChecklistForClass): the class
+  // that matched, and every checklist item with present/required.
+  // Platform templates render their own fixed sections and do not
+  // carry the checklist in Markdown; their JSON form still does.
+  const findingsWithChecklist = findings.map((finding) => ({
+    ...finding,
+    evidence_checklist: evidenceChecklistForClass(finding),
+  }));
   const report = {
     report_id: reportId,
     target_id: targetId,
@@ -330,7 +359,7 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
     generated_at: generatedAt,
     executive_summary: summary,
     findings_summary: counts,
-    findings,
+    findings: findingsWithChecklist,
   };
   if (sessionId) report.session_id = sessionId;
   if (template) report.template = template;

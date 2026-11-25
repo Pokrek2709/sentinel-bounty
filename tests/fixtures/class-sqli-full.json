@@ -1,0 +1,35 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "confirmed",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cwe_id": "CWE-89",
+  "cvss_score": 9.8,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+  "description": "A lab-local SQL injection: the search filter interpolates the query parameter into a SQL statement without parameterisation.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "request": "GET https://lab.local/search?filter=' OR '1'='1",
+      "response": "200 OK, all lab records returned",
+      "notes": "Lab-local fixture traffic only"
+    }
+  ],
+  "finding_id": "F-R40-SQLI-FULL",
+  "impact": "An attacker could read or modify every lab record through the search filter.",
+  "proof_of_concept": "GET /lab/search?filter=' OR '1'='1 returns every lab record; the response contains rows the filter should never match.",
+  "references": [
+    "https://example.test/lab/f-r40-sqli-full"
+  ],
+  "remediation": "Parameterise the query and reject unexpected filter syntax.",
+  "session_id": "lab-session-r40",
+  "severity": "critical",
+  "steps_to_reproduce": [
+    "Open https://lab.local/search",
+    "Enter ' OR '1'='1 in the filter field",
+    "Observe every lab record returned"
+  ],
+  "target_id": "local-lab",
+  "title": "SQL injection in lab search filter",
+  "validation_status": "validated",
+  "vulnerability_type": "SQL Injection"
+}

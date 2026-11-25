@@ -34,7 +34,7 @@ sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|
 sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]
 ```
 
-`sentinel report` renders validated findings into a deterministic bug-bounty report (Markdown by default, JSON with `--format json`); a finding whose severity disagrees with its CVSS score, or that is missing a required field, fails instead of producing a report. `--template immunefi|code4rena` renders one finding into a platform's section layout (one finding per report; a finding without a proof of concept fails for those templates); `--template generic` is the default multi-finding report.
+`sentinel report` renders validated findings into a deterministic bug-bounty report (Markdown by default, JSON with `--format json`); a finding whose severity disagrees with its CVSS score, or that is missing a required field, fails instead of producing a report. `--template immunefi|code4rena` renders one finding into a platform's section layout (one finding per report; a finding without a proof of concept fails for those templates); `--template generic` is the default multi-finding report. Every rendered finding carries its per-class evidence checklist (`knowledge/evidence-checklists.json`, 8 classes, generic fallback): the Markdown report adds an `### Evidence Checklist` section naming the class and marking each item present/missing and required/recommended, and the JSON report attaches it as `evidence_checklist` on each finding; platform templates render their fixed sections only in Markdown. See `docs/evidence-checklists-v1.md`.
 
 These commands make no network request and execute no security scanner.
 

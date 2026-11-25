@@ -134,24 +134,33 @@ test('dedupe uses the (no-steps) key part when steps are missing', () => {
 });
 
 test('checklist reports every item present for a full finding', () => {
+  // confirmed-full is Stored Cross-Site Scripting, so it gets the XSS
+  // per-class list (round 40): the generic three plus response_log as
+  // required, then the generic recommended items plus request_log.
   const checklist = evidenceChecklist(loadFixture('confirmed-full'));
   assert.deepEqual(
     checklist.map((entry) => entry.item),
-    ['proof_of_concept', 'evidence', 'steps_to_reproduce', 'impact', 'remediation', 'cwe_id', 'cvss_vector'],
+    ['proof_of_concept', 'evidence', 'steps_to_reproduce', 'response_log', 'impact', 'remediation', 'cwe_id', 'cvss_vector', 'request_log'],
   );
   assert.ok(checklist.every((entry) => entry.present === true));
 });
 
 test('checklist reports present/false correctly for a minimal finding', () => {
+  // confirmed-missing-poc is Reflected Cross-Site Scripting: the XSS
+  // per-class list. Its evidence carries a request and a response, so
+  // request_log and response_log are present; proof_of_concept,
+  // cwe_id, and cvss_vector are absent.
   const checklist = evidenceChecklist(loadFixture('confirmed-missing-poc'));
   assert.deepEqual(checklist, [
     { item: 'proof_of_concept', present: false },
     { item: 'evidence', present: true },
     { item: 'steps_to_reproduce', present: true },
+    { item: 'response_log', present: true },
     { item: 'impact', present: true },
     { item: 'remediation', present: true },
     { item: 'cwe_id', present: false },
     { item: 'cvss_vector', present: false },
+    { item: 'request_log', present: true },
   ]);
 });
 

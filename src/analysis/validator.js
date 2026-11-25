@@ -78,13 +78,34 @@
 //     AND a missing vector leave the severity unchecked entirely.
 'use strict';
 
-const { severity_ratings: SEVERITY_RATINGS } = require('../../knowledge/cvss/cvss-calc.json');
+const fs = require('node:fs');
+const path = require('node:path');
+
 const { resolveCvss } = require('./cvss');
 
 // The five band names a severity must be one of (schema enum; also the
-// report generator's SEVERITY_ORDER). Derived from the ratings so the
-// band names have a single source of truth.
-const SEVERITY_NAMES = new Set(SEVERITY_RATINGS.map((entry) => entry.name));
+// report generator's SEVERITY_ORDER). The ratings are loaded LAZILY
+// from knowledge/cvss/cvss-calc.json on first use, never at module
+// load: the CLI requires this module eagerly (via the report
+// generator), and the operator-CLI tests run a bin/+src/-only copy of
+// the skill as nobody — a top-level require of the knowledge file
+// would crash that copy with MODULE_NOT_FOUND before any command
+// runs. The bands still have a single source of truth; they are just
+// read when first needed. A missing ratings file now fails at
+// validation time (the first call that needs the bands), not at
+// require time — validateFinding's never-throws contract covers
+// malformed FINDINGS, not a broken installation.
+let cachedSeverityRatings = null;
+function getSeverityRatings() {
+  if (!cachedSeverityRatings) {
+    cachedSeverityRatings = require('../../knowledge/cvss/cvss-calc.json').severity_ratings;
+  }
+  return cachedSeverityRatings;
+}
+
+function getSeverityNames() {
+  return new Set(getSeverityRatings().map((entry) => entry.name));
+}
 
 // Required fields of schemas/finding.schema.json, in schema order.
 const REQUIRED_FIELDS = [
@@ -117,7 +138,7 @@ function isNonEmptyArray(value) {
 function bandForScore(score) {
   if (typeof score !== 'number' || !Number.isFinite(score)) return null;
   const rounded = Math.round(score * 10) / 10;
-  const band = SEVERITY_RATINGS.find((entry) => rounded >= entry.min && rounded <= entry.max);
+  const band = getSeverityRatings().find((entry) => rounded >= entry.min && rounded <= entry.max);
   return band ? band.name : null;
 }
 
@@ -153,11 +174,31 @@ function hasInvalidCvssEnvironmentalScore(finding) {
 }
 
 // Missing reproducibility evidence, one reason per missing piece.
+// The required set comes from the finding's evidence class
+// (knowledge/evidence-checklists.json): the generic three
+// (proof_of_concept, evidence, steps_to_reproduce) plus any
+// class-specific extras (e.g. response_log for XSS). The generic
+// reasons keep their exact round-31 strings so existing callers are
+// unaffected; a class extra is named with the class that required it.
+// One redundancy rule: an item derived from the evidence array
+// (request_log, response_log, evidence_notes) is only checked when
+// the evidence array itself is present — when evidence is missing,
+// 'missing evidence' already covers it, and reporting the derived
+// item too would be noise, not information.
 function missingEvidenceReasons(finding) {
   const reasons = [];
   if (!isNonEmptyString(finding.proof_of_concept)) reasons.push('missing proof_of_concept');
-  if (!isNonEmptyArray(finding.evidence)) reasons.push('missing evidence');
+  const evidencePresent = isNonEmptyArray(finding.evidence);
+  if (!evidencePresent) reasons.push('missing evidence');
   if (!isNonEmptyArray(finding.steps_to_reproduce)) reasons.push('missing steps_to_reproduce');
+  if (evidencePresent) {
+    const spec = evidenceChecklistForClass(finding);
+    for (const entry of spec.items) {
+      if (!entry.required || entry.present) continue;
+      if (entry.item === 'proof_of_concept' || entry.item === 'evidence' || entry.item === 'steps_to_reproduce') continue;
+      reasons.push(`missing ${entry.item} (required for ${spec.classId})`);
+    }
+  }
   return reasons;
 }
 
@@ -188,7 +229,7 @@ function validateFinding(finding) {
   // short-circuits, before the mismatch/evidence collection) so a
   // false_positive still wins and the reason names the severity
   // instead of misreporting it as a severity/cvss mismatch.
-  if (!SEVERITY_NAMES.has(finding.severity)) {
+  if (!getSeverityNames().has(finding.severity)) {
     return { verdict: 'needs_evidence', reasons: [`unknown severity: ${finding.severity}`] };
   }
 
@@ -292,26 +333,158 @@ function dedupeFindings(findings) {
   return { groups, duplicates };
 }
 
-// Evidence checklist. Every item is always listed with present true/false;
-// items are never omitted. Presence definitions:
+// Evidence checklist. Per-class, loaded at runtime from
+// knowledge/evidence-checklists.json (see docs/evidence-checklists-v1.md).
+// Every item is always listed with present true/false and a required
+// flag; items are never omitted. Presence definitions:
 //   proof_of_concept / impact / remediation / cwe_id / cvss_vector:
 //     a non-empty string.
 //   evidence / steps_to_reproduce: a non-empty array.
-// The item set does not vary by confidence: the same seven items are what
-// a reviewer checks whatever the finding claims.
-const CHECKLIST = [
-  { item: 'proof_of_concept', present: (finding) => isNonEmptyString(finding.proof_of_concept) },
-  { item: 'evidence', present: (finding) => isNonEmptyArray(finding.evidence) },
-  { item: 'steps_to_reproduce', present: (finding) => isNonEmptyArray(finding.steps_to_reproduce) },
-  { item: 'impact', present: (finding) => isNonEmptyString(finding.impact) },
-  { item: 'remediation', present: (finding) => isNonEmptyString(finding.remediation) },
-  { item: 'cwe_id', present: (finding) => isNonEmptyString(finding.cwe_id) },
-  { item: 'cvss_vector', present: (finding) => isNonEmptyString(finding.cvss_vector) },
-];
+//   request_log / response_log / evidence_notes: at least one evidence
+//     entry carrying a non-empty request / response / notes string.
+// The item set varies by class: the class's required items first (in
+// file order), then its recommended items. A finding whose
+// vulnerability_type matches no class — including a missing or
+// non-string type — gets the generic checklist, which is exactly the
+// round-31/32 seven-item list in the same order, so existing callers
+// are unaffected. Class matching normalizes the type the same way
+// rootCauseKey does (trim + lowercase) and matches when the normalized
+// type equals, or contains, one of the class's match strings — so
+// 'Stored Cross-Site Scripting' and 'xss' both resolve to the XSS
+// class. The first class whose match strings hit wins; the file order
+// is the precedence order.
+//
+// Loading contract: loadEvidenceChecklists() THROWS on a missing,
+// unparseable, or malformed spec (fail loud, so a bad edit to the
+// knowledge file is caught by the tests, not silently shipped).
+// evidenceChecklistForClass() catches load failures and falls back to
+// the generic checklist, so validateFinding() keeps its never-throws
+// contract: a broken knowledge file degrades validation to the generic
+// checklist instead of crashing it. The fallback is documented, not
+// silent — see docs/evidence-checklists-v1.md.
+const ITEM_CHECKS = {
+  proof_of_concept: (finding) => isNonEmptyString(finding.proof_of_concept),
+  evidence: (finding) => isNonEmptyArray(finding.evidence),
+  steps_to_reproduce: (finding) => isNonEmptyArray(finding.steps_to_reproduce),
+  impact: (finding) => isNonEmptyString(finding.impact),
+  remediation: (finding) => isNonEmptyString(finding.remediation),
+  cwe_id: (finding) => isNonEmptyString(finding.cwe_id),
+  cvss_vector: (finding) => isNonEmptyString(finding.cvss_vector),
+  request_log: (finding) => hasEvidenceSubfield(finding, 'request'),
+  response_log: (finding) => hasEvidenceSubfield(finding, 'response'),
+  evidence_notes: (finding) => hasEvidenceSubfield(finding, 'notes'),
+};
 
-function evidenceChecklist(finding) {
-  const record = finding && typeof finding === 'object' && !Array.isArray(finding) ? finding : {};
-  return CHECKLIST.map(({ item, present }) => ({ item, present: present(record) }));
+function hasEvidenceSubfield(finding, field) {
+  if (!Array.isArray(finding.evidence)) return false;
+  return finding.evidence.some(
+    (entry) => entry && typeof entry === 'object' && isNonEmptyString(entry[field]),
+  );
 }
 
-module.exports = { validateFinding, dedupeFindings, evidenceChecklist, rootCauseKey };
+function loadEvidenceChecklists(filePath) {
+  const specPath = filePath || path.resolve(__dirname, '..', '..', 'knowledge', 'evidence-checklists.json');
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Unable to load evidence checklists: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Unable to load evidence checklists: spec must be an object.');
+  }
+  if (!parsed.generic || !Array.isArray(parsed.generic.required) || !Array.isArray(parsed.generic.recommended)) {
+    throw new Error('Unable to load evidence checklists: generic required/recommended missing or not arrays.');
+  }
+  if (!Array.isArray(parsed.classes)) {
+    throw new Error('Unable to load evidence checklists: classes missing or not an array.');
+  }
+  const knownItems = new Set(Object.keys(ITEM_CHECKS));
+  const checkItems = (items, where) => {
+    for (const item of items) {
+      if (typeof item !== 'string' || !knownItems.has(item)) {
+        throw new Error(`Unable to load evidence checklists: unknown checklist item ${JSON.stringify(item)} in ${where}.`);
+      }
+    }
+  };
+  checkItems(parsed.generic.required, 'generic.required');
+  checkItems(parsed.generic.recommended, 'generic.recommended');
+  for (const entry of parsed.classes) {
+    if (!entry || typeof entry.id !== 'string' || entry.id.trim() === '') {
+      throw new Error('Unable to load evidence checklists: every class needs a non-empty id.');
+    }
+    if (!Array.isArray(entry.match) || entry.match.length === 0
+      || entry.match.some((alias) => typeof alias !== 'string' || alias.trim() === '')) {
+      throw new Error(`Unable to load evidence checklists: class ${entry.id} needs a non-empty match list.`);
+    }
+    if (!Array.isArray(entry.required) || !Array.isArray(entry.recommended)) {
+      throw new Error(`Unable to load evidence checklists: class ${entry.id} required/recommended missing or not arrays.`);
+    }
+    checkItems(entry.required, `${entry.id}.required`);
+    checkItems(entry.recommended, `${entry.id}.recommended`);
+    const seen = new Set([...entry.required, ...entry.recommended]);
+    if (seen.size !== entry.required.length + entry.recommended.length) {
+      throw new Error(`Unable to load evidence checklists: class ${entry.id} lists an item twice.`);
+    }
+  }
+  return parsed;
+}
+
+let cachedChecklists = null;
+
+function getChecklists() {
+  if (cachedChecklists) return cachedChecklists;
+  try {
+    cachedChecklists = loadEvidenceChecklists();
+  } catch {
+    cachedChecklists = null;
+  }
+  return cachedChecklists;
+}
+
+// Resolve the evidence class for a vulnerability_type string, or null
+// for the generic fallback. Matching is trim + lowercase, then
+// equals-or-contains against the class's match strings; first match
+// in file order wins.
+function resolveEvidenceClass(vulnerabilityType) {
+  const normalized = typeof vulnerabilityType === 'string' ? vulnerabilityType.trim().toLowerCase() : '';
+  if (normalized === '') return null;
+  const spec = getChecklists();
+  if (!spec) return null;
+  for (const entry of spec.classes) {
+    for (const alias of entry.match) {
+      const match = alias.trim().toLowerCase();
+      if (normalized === match || normalized.includes(match)) return entry;
+    }
+  }
+  return null;
+}
+
+function buildChecklistItems(entry, finding) {
+  const required = new Set(entry.required);
+  const items = [];
+  for (const item of [...entry.required, ...entry.recommended]) {
+    items.push({ item, present: ITEM_CHECKS[item](finding), required: required.has(item) });
+  }
+  return items;
+}
+
+// The per-class evidence checklist for a finding: { classId, label,
+// items: [{ item, present, required }] }. classId is 'generic' and the
+// label says so when no class matches (or the spec failed to load).
+function evidenceChecklistForClass(finding) {
+  const record = finding && typeof finding === 'object' && !Array.isArray(finding) ? finding : {};
+  const spec = getChecklists();
+  const entry = resolveEvidenceClass(record.vulnerability_type);
+  if (!entry || !spec) {
+    const generic = spec ? spec.generic : { id: 'generic', label: 'Generic (no class match)', required: ['proof_of_concept', 'evidence', 'steps_to_reproduce'], recommended: ['impact', 'remediation', 'cwe_id', 'cvss_vector'] };
+    return { classId: generic.id, label: generic.label, items: buildChecklistItems(generic, record) };
+  }
+  return { classId: entry.id, label: entry.label || entry.id, items: buildChecklistItems(entry, record) };
+}
+
+function evidenceChecklist(finding) {
+  return evidenceChecklistForClass(finding).items.map(({ item, present }) => ({ item, present }));
+}
+
+module.exports = { validateFinding, dedupeFindings, evidenceChecklist, evidenceChecklistForClass, loadEvidenceChecklists, resolveEvidenceClass, rootCauseKey };

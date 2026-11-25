@@ -63,9 +63,19 @@ Precedence, in order:
    entirely.
 6. **Reproducibility evidence** — a finding is fully evidenced when
    `proof_of_concept` is a non-empty string, `evidence` is a non-empty
-   array, and `steps_to_reproduce` is a non-empty array. Each missing
-   piece adds its own reason: `missing proof_of_concept`, `missing
-   evidence`, `missing steps_to_reproduce`.
+   array, and `steps_to_reproduce` is a non-empty array, PLUS the
+   required items of its evidence class (round 40,
+   `docs/evidence-checklists-v1.md`): e.g. a cross-site scripting
+   finding additionally needs a `response_log` (an evidence entry with
+   a `response`), an SSRF finding needs `request_log` AND
+   `response_log`, a CSRF finding needs `request_log`, a reentrancy
+   finding needs `evidence_notes`. Each missing piece adds its own
+   reason: `missing proof_of_concept`, `missing evidence`, `missing
+   steps_to_reproduce`, or `missing <item> (required for <class id>)`
+   for a class extra. One redundancy rule: an evidence-derived item is
+   only checked when the evidence array itself is present — when
+   evidence is missing, `missing evidence` already covers it. A finding
+   whose type matches no class uses the generic required three.
 7. **confidence `confirmed`** with complete evidence and no mismatch →
    `valid`. Otherwise → `needs_evidence` with the reasons from rules
    5–6.
@@ -113,8 +123,12 @@ expressed in different words, different steps, or a different asset.
 
 ## Evidence checklist (`evidenceChecklist`)
 
-Returns an array of `{ item, present }` for the seven checklist items,
-always in this order, never omitting an item:
+Returns an array of `{ item, present }` for the finding's evidence
+class (round 40, `docs/evidence-checklists-v1.md`): the class's
+required items first (in file order), then its recommended items,
+never omitting an item. A finding whose `vulnerability_type`
+matches no class gets the generic seven items, always in this
+order:
 
 | item | present when |
 | --- | --- |
@@ -126,9 +140,14 @@ always in this order, never omitting an item:
 | `cwe_id` | a non-empty string |
 | `cvss_vector` | a non-empty string |
 
-The item set does not vary by confidence: the same seven items are what
-a reviewer checks whatever the finding claims. A malformed finding
-reports all seven items as `present: false`.
+Class checklists add evidence-subfield items (`request_log`,
+`response_log`, `evidence_notes`: at least one evidence entry
+carrying a non-empty `request` / `response` / `notes` string).
+`evidenceChecklistForClass` returns the same list with a `required`
+flag per item plus the resolved `{ classId, label }`. The item set
+does not vary by confidence: the same class list is what a reviewer
+checks whatever the finding claims. A malformed finding reports the
+generic seven items as `present: false`.
 
 ## Fixtures
 
@@ -163,6 +182,10 @@ reports all seven items as `present: false`.
   `severity` is flagged as `unknown severity`, and a present-but-invalid
   `cvss_score` is flagged as `invalid cvss_score` (both fail closed to
   `needs_evidence` instead of slipping through as `valid`).
+- Checklists verify PRESENCE, not truth: a `response_log` containing a
+  404 still counts as present. Judging whether evidence actually
+  proves the finding is an AI-model verdict (Phase 6, needs a
+  decision), not a checklist.
 - No persistence: verdicts are returned in memory. Storing a verdict
   back onto a finding record (e.g. `validation_status`) is a later
   phase's job.

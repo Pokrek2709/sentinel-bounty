@@ -1,0 +1,35 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "confirmed",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cwe_id": "CWE-862",
+  "cvss_score": 5.4,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+  "description": "A lab-local broken access control: deleting another lab user's document requires no ownership check.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "request": "DELETE https://lab.local/docs/owned-by-A (as lab user B)",
+      "response": "200 OK, document deleted",
+      "notes": "Lab-local fixture traffic only; document restored after the test"
+    }
+  ],
+  "finding_id": "F-R40-BAC-FULL",
+  "impact": "Any lab user could delete any other lab user's document.",
+  "proof_of_concept": "As lab user B, DELETE /lab/docs/owned-by-A returns 200 and the document is gone; the response confirms the deletion.",
+  "references": [
+    "https://example.test/lab/f-r40-bac-full"
+  ],
+  "remediation": "Check document ownership before deleting, and return 403 otherwise.",
+  "session_id": "lab-session-r40",
+  "severity": "medium",
+  "steps_to_reproduce": [
+    "Log in as lab user B",
+    "Send DELETE /lab/docs/owned-by-A",
+    "Observe the 200 response and the missing document"
+  ],
+  "target_id": "local-lab",
+  "title": "Broken access control on lab document delete",
+  "validation_status": "validated",
+  "vulnerability_type": "Broken Access Control"
+}

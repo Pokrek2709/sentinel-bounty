@@ -7,6 +7,35 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Per-class evidence checklists (round 40, 2026-11-26)
+
+- `knowledge/evidence-checklists.json` defines eight vulnerability
+  classes (XSS, SQLi, SSRF, broken access control, authentication
+  bypass, CSRF, reentrancy, information disclosure), each with
+  required and recommended evidence items; the validator resolves a
+  finding's free-form `vulnerability_type` to a class by
+  trim+lowercase equals-or-contains matching (so `Stored
+  Cross-Site Scripting` and `xss` both resolve to XSS) and enforces
+  the class's required items — e.g. XSS/SQLi/broken access control/
+  authentication bypass/information disclosure additionally require
+  a `response_log`, SSRF requires `request_log` AND `response_log`,
+  CSRF requires `request_log`, reentrancy requires `evidence_notes`.
+  Unknown types fall back to the generic seven-item checklist. A
+  missing class-required item is a `needs_evidence` reason named
+  `missing <item> (required for <class id>)`; an evidence-derived
+  item is only checked when the evidence array itself is present, so
+  a missing array reports only `missing evidence`. The generator
+  renders the checklist per finding (Markdown `### Evidence
+  Checklist` section; JSON `evidence_checklist` object); platform
+  templates keep their fixed sections in Markdown. The checklist
+  spec loader throws on a malformed spec and the validator falls
+  back to generic on load failure, keeping its never-throws
+  contract. Regression fixed in this round: the validator's CVSS
+  ratings were a top-level require, which crashed the operator-CLI
+  `bin/`+`src/`-only copy run as `nobody` once the generator
+  required the validator — the ratings are now loaded lazily on
+  first use. Checklists verify PRESENCE, not truth.
+
 ### CVSS 3.1 temporal + environmental metrics (round 38, 2026-11-26)
 
 - `src/analysis/cvss.js` parses and scores the full CVSS 3.1 vector:

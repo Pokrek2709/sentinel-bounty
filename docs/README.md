@@ -25,6 +25,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 
 - [detection-stub-v1](detection-stub-v1.md) — Fixture-only detector stub that reshapes local JSON fixtures into normalized findings (no real scanner); for implementers of the finding pipeline.
 - [validation-v1](validation-v1.md) — Rule-based finding validator with deduplication and an evidence checklist; for implementers and reviewers of finding validation.
+- [evidence-checklists-v1](evidence-checklists-v1.md) — Per-class evidence checklists (8 classes in `knowledge/evidence-checklists.json`, runtime-loaded, generic fallback): which evidence each class must carry, how classes are matched, and the generator rendering; for implementers and reviewers of finding validation.
 - [cvss-vector-v1](cvss-vector-v1.md) — CVSS 3.1 base-vector parsing and scoring (parser, formulas, vector-vs-score precedence, known limitations); for implementers and reviewers of scoring.
 - [cvss-temporal-environmental-v1](cvss-temporal-environmental-v1.md) — CVSS 3.1 temporal (E, RL, RC) and environmental (CR, IR, AR, MAV, MAC, MPR, MUI, MS, MC, MI, MA) metrics: parser extensions, formulas, precedence rules, and the no-offline-oracle limitation; for implementers and reviewers of scoring.
 - [pipeline-v1](pipeline-v1.md) — End-to-end lab-local pipeline (stub detector → validator → dedup → report generator) over fixtures; for implementers and reviewers of the full chain.
