@@ -45,22 +45,34 @@ Precedence, in order:
    dead finding's label is moot.
 3. **confidence `needs_manual_review`** → `needs_evidence` (reason:
    `manual review required`).
-4. **Severity/cvss mismatch and missing reproducibility evidence are
-   collected together.** A finding can report both `severity/cvss
-   mismatch` and e.g. `missing proof_of_concept`. The severity is never
-   silently re-labelled.
-5. **Reproducibility evidence** — a finding is fully evidenced when
+4. **Unknown severity** (not one of the five band names: critical,
+   high, medium, low, informational) → `needs_evidence` (reason:
+   `unknown severity: <value>`). Checked after the confidence
+   short-circuits above, so a `false_positive` still wins, and before
+   the mismatch/evidence collection below: a non-band severity cannot
+   be band-checked at all, and with an unbandable `cvss_score` it
+   previously slipped through as `valid` — while the report generator
+   rejects it outright.
+5. **Severity/cvss mismatch, a present-but-invalid `cvss_score`, and
+   missing reproducibility evidence are collected together.** A finding
+   can report e.g. `severity/cvss mismatch` and `missing
+   proof_of_concept`. The severity is never silently re-labelled. A
+   present `cvss_score` that is not a finite number in [0, 10] is
+   reported as `invalid cvss_score` on its own; it is not a *mismatch*,
+   and a missing `cvss_score` (`undefined` or `null`) stays unchecked
+   entirely.
+6. **Reproducibility evidence** — a finding is fully evidenced when
    `proof_of_concept` is a non-empty string, `evidence` is a non-empty
    array, and `steps_to_reproduce` is a non-empty array. Each missing
    piece adds its own reason: `missing proof_of_concept`, `missing
    evidence`, `missing steps_to_reproduce`.
-6. **confidence `confirmed`** with complete evidence and no mismatch →
+7. **confidence `confirmed`** with complete evidence and no mismatch →
    `valid`. Otherwise → `needs_evidence` with the reasons from rules
-   4–5.
-7. **confidence `potential`** with complete evidence and no mismatch →
+   5–6.
+8. **confidence `potential`** with complete evidence and no mismatch →
    `valid`, with a reason noting it was potential but fully evidenced.
-   Otherwise → `needs_evidence` with the reasons from rules 4–5.
-8. **Any other confidence value** → `needs_evidence` (reason: `unknown
+   Otherwise → `needs_evidence` with the reasons from rules 5–6.
+9. **Any other confidence value** → `needs_evidence` (reason: `unknown
    confidence: <value>`).
 
 Severity/cvss agreement is checked only when `severity` is one of the
@@ -69,7 +81,9 @@ rounded to one decimal place first (CVSS 3.1 scores carry one decimal;
 this also absorbs float noise such as `6.9000000001`). After rounding,
 every score in [0, 10] falls in exactly one band. A missing or
 non-numeric `cvss_score` is not a mismatch — `cvss_score` is optional
-in the schema.
+in the schema — but a present score that is not a finite number in
+[0, 10] is reported as `invalid cvss_score` (rule 5 above), so it can
+no longer slip through as `valid`.
 
 ## Deduplication (`dedupeFindings`)
 
@@ -81,7 +95,11 @@ vulnerability_type + '|' + asset_id + '|' + normalized first steps_to_reproduce 
 
 Normalization of the first step trims, collapses runs of whitespace to
 one space, and lowercases, so the same step written with different
-spacing or casing still dedupes. An empty or missing steps array uses
+spacing or casing still dedupes. The vulnerability type is a free-form
+string in the schema (not an enum), so it is normalized the same way
+(trim + lowercase). The `asset_id` is an identifier and stays exact
+(case-sensitive): the same flaw on `lab-asset-01` vs `Lab-Asset-01`
+does not dedupe. An empty or missing steps array uses
 the literal key part `(no-steps)`. Missing `vulnerability_type` or
 `asset_id` contributes an empty key part.
 
@@ -126,8 +144,8 @@ reports all seven items as `present: false`.
 - `severity-mismatch.json` — severity high with CVSS score 9.8
   (critical band).
 - `duplicate-a.json` / `duplicate-b.json` — same root cause (same
-  vulnerability type, asset, and first step modulo casing/spacing),
-  different `finding_id`.
+  vulnerability type, asset, and first step modulo casing/spacing,
+  including the type's own casing), different `finding_id`.
 
 ## What is NOT implemented yet
 
@@ -141,8 +159,10 @@ reports all seven items as `present: false`.
   flaw on a different asset will not group together.
 - No schema validation: the validator classifies records against the
   required-field list; it does not validate types, enums, or formats
-  (e.g. an out-of-enum `severity` is not flagged unless it disagrees
-  with a numeric `cvss_score`).
+  generally. Two exceptions are pinned by tests: an out-of-enum
+  `severity` is flagged as `unknown severity`, and a present-but-invalid
+  `cvss_score` is flagged as `invalid cvss_score` (both fail closed to
+  `needs_evidence` instead of slipping through as `valid`).
 - No persistence: verdicts are returned in memory. Storing a verdict
   back onto a finding record (e.g. `validation_status`) is a later
   phase's job.

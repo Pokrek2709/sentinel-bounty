@@ -15,16 +15,28 @@
 //      mismatch (a dead finding's label is moot).
 //   3. confidence 'needs_manual_review' -> 'needs_evidence'
 //      ('manual review required').
-//   4. severity/cvss mismatch and missing reproducibility evidence are
-//      collected together: a finding can report both
-//      'severity/cvss mismatch' and e.g. 'missing proof_of_concept'.
-//      The severity is never silently re-labelled.
-//   5. confidence 'confirmed' with proof_of_concept + non-empty evidence +
+//   4. Unknown severity (not one of the five band names: critical, high,
+//      medium, low, informational) -> 'needs_evidence'
+//      ('unknown severity: <value>'). Checked after the confidence
+//      short-circuits above, so a false_positive still wins, and before
+//      the mismatch/evidence collection below: a non-band severity
+//      cannot be band-checked at all, and with an unbandable cvss_score
+//      it previously slipped through as 'valid' — while the report
+//      generator rejects it outright ('has invalid severity').
+//   5. severity/cvss mismatch, a present-but-invalid cvss_score, and
+//      missing reproducibility evidence are collected together: a
+//      finding can report e.g. 'severity/cvss mismatch' and
+//      'missing proof_of_concept'. The severity is never silently
+//      re-labelled. A present cvss_score that is not a finite number
+//      in [0, 10] is reported as 'invalid cvss_score' on its own;
+//      it is not a *mismatch*, and a missing cvss_score (undefined
+//      or null) stays unchecked entirely.
+//   6. confidence 'confirmed' with proof_of_concept + non-empty evidence +
 //      non-empty steps_to_reproduce (and no mismatch) -> 'valid'.
-//   6. confidence 'potential' with the same complete evidence (and no
+//   7. confidence 'potential' with the same complete evidence (and no
 //      mismatch) -> 'valid', with a reason noting it was potential but
 //      fully evidenced.
-//   7. Any other confidence value -> 'needs_evidence'
+//   8. Any other confidence value -> 'needs_evidence'
 //      ('unknown confidence: <value>').
 //
 // Definitions:
@@ -37,9 +49,19 @@
 //     the five band names and cvss_score is a finite number. The score
 //     is rounded to one decimal place first (CVSS 3.1 scores carry one
 //     decimal; this also absorbs float noise such as 6.9000000001).
+//     A severity outside the five band names is not a mismatch — it is
+//     reported as unknown severity (precedence step 4). A cvss_score
+//     that is present but not a finite number in [0, 10] is reported
+//     as invalid cvss_score (precedence step 5); a missing cvss_score
+//     (undefined or null) is not checked at all.
 'use strict';
 
 const { severity_ratings: SEVERITY_RATINGS } = require('../../knowledge/cvss/cvss-calc.json');
+
+// The five band names a severity must be one of (schema enum; also the
+// report generator's SEVERITY_ORDER). Derived from the ratings so the
+// band names have a single source of truth.
+const SEVERITY_NAMES = new Set(SEVERITY_RATINGS.map((entry) => entry.name));
 
 // Required fields of schemas/finding.schema.json, in schema order.
 const REQUIRED_FIELDS = [
@@ -82,6 +104,17 @@ function severityMatchesCvss(severity, cvssScore) {
   return severity === expected;
 }
 
+// A cvss_score that is present but unusable: not a finite number in
+// [0, 10] (a string, NaN, Infinity, or out of range). This mirrors the
+// schema (type number, minimum 0, maximum 10) and the report
+// generator, which rejects such a score. A missing score (undefined
+// or null) is not invalid — it stays unchecked, as documented.
+function hasInvalidCvssScore(finding) {
+  const score = finding.cvss_score;
+  if (score === undefined || score === null) return false;
+  return typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 10;
+}
+
 // Missing reproducibility evidence, one reason per missing piece.
 function missingEvidenceReasons(finding) {
   const reasons = [];
@@ -112,9 +145,22 @@ function validateFinding(finding) {
     return { verdict: 'needs_evidence', reasons: ['manual review required'] };
   }
 
+  // Unknown severity: not a band name, so it cannot be band-checked and
+  // must not reach 'valid' — the report generator rejects it outright.
+  // Placed here (after the missing-field check and the confidence
+  // short-circuits, before the mismatch/evidence collection) so a
+  // false_positive still wins and the reason names the severity
+  // instead of misreporting it as a severity/cvss mismatch.
+  if (!SEVERITY_NAMES.has(finding.severity)) {
+    return { verdict: 'needs_evidence', reasons: [`unknown severity: ${finding.severity}`] };
+  }
+
   const reasons = [];
   if (!severityMatchesCvss(finding.severity, finding.cvss_score)) {
     reasons.push('severity/cvss mismatch');
+  }
+  if (hasInvalidCvssScore(finding)) {
+    reasons.push('invalid cvss_score');
   }
   reasons.push(...missingEvidenceReasons(finding));
 
@@ -144,8 +190,13 @@ function validateFinding(finding) {
 // Root-cause key: vulnerability type + asset + normalized first
 // reproduction step. Normalization trims, collapses runs of whitespace to
 // one space, and lowercases, so the same step written with different
-// spacing or casing still dedupes. An empty or missing steps array uses
-// the literal key part '(no-steps)'.
+// spacing or casing still dedupes. The vulnerability type is a
+// free-form string in the schema (not an enum), so it is normalized
+// the same way (trim + lowercase) — 'Cross-Site Scripting' and
+// 'cross-site scripting' are the same root cause. The asset_id is an
+// identifier and stays EXACT (case-sensitive): 'lab-asset-01' and
+// 'Lab-Asset-01' are different assets and must not dedupe. An empty
+// or missing steps array uses the literal key part '(no-steps)'.
 function normalizeStep(step) {
   const normalized = String(step).trim().replace(/\s+/g, ' ').toLowerCase();
   return normalized === '' ? '(no-steps)' : normalized;
@@ -153,7 +204,7 @@ function normalizeStep(step) {
 
 function rootCauseKey(finding) {
   const record = finding && typeof finding === 'object' ? finding : {};
-  const vulnerabilityType = record.vulnerability_type == null ? '' : String(record.vulnerability_type);
+  const vulnerabilityType = record.vulnerability_type == null ? '' : String(record.vulnerability_type).trim().toLowerCase();
   const assetId = record.asset_id == null ? '' : String(record.asset_id);
   let firstStep = '(no-steps)';
   if (Array.isArray(record.steps_to_reproduce) && record.steps_to_reproduce.length > 0 && record.steps_to_reproduce[0] != null) {

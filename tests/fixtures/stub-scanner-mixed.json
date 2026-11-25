@@ -1,0 +1,92 @@
+{
+    "results": [
+        {
+            "cvss_score": 8.2,
+            "cwe_id": "CWE-79",
+            "description": "The lab search page reflects the query parameter without encoding, so a crafted link executes script in a victim browser.",
+            "finding_id": "MIX-001",
+            "impact": "An attacker could execute script in a victim's browser session and act on their behalf.",
+            "remediation": "Encode all reflected output and apply context-appropriate output encoding.",
+            "steps_to_reproduce": "  Open   the LAB search page.\n2. Enter <script>alert(1)</script> in the search box.\n3. Observe execution.",
+            "title": "Reflected XSS in search box",
+            "vulnerability_type": "Cross-Site Scripting"
+        },
+        {
+            "cvss_score": 8.2,
+            "cwe_id": "CWE-79",
+            "description": "The same unencoded reflection is reachable through the URL query string, so a victim only has to open a crafted link.",
+            "finding_id": "MIX-002",
+            "impact": "A crafted link executes script in the victim's browser, stealing session context without any form interaction.",
+            "remediation": "Apply the same output encoding to the query-string reflection path as to the search box.",
+            "steps_to_reproduce": [
+                "Open the lab search page.",
+                "Submit the payload via the URL query string.",
+                "Observe execution."
+            ],
+            "title": "Reflected XSS via URL query string",
+            "vulnerability_type": "Cross-Site Scripting"
+        },
+        {
+            "confidence": "false_positive",
+            "cvss_score": 2,
+            "description": "The login status endpoint answers without credentials, but it returns only a boolean and no session material.",
+            "finding_id": "MIX-003",
+            "impact": "No user data or session material is disclosed; the endpoint reveals only whether a session exists.",
+            "remediation": "No change required; the endpoint is intentionally public and discloses nothing sensitive.",
+            "steps_to_reproduce": [
+                "Request the login status endpoint without credentials.",
+                "Observe the boolean response."
+            ],
+            "title": "Login status endpoint reachable without credentials",
+            "vulnerability_type": "Missing Authentication"
+        },
+        {
+            "cvss_score": 6.5,
+            "description": "This result is deliberately invalid: it omits impact, so normalization must reject it.",
+            "finding_id": "MIX-004",
+            "remediation": "None; this record must be skipped.",
+            "steps_to_reproduce": [
+                "Try to use this finding."
+            ],
+            "title": "Finding with no impact field",
+            "vulnerability_type": "Broken Access Control"
+        },
+        {
+            "cvss_score": 9.8,
+            "description": "This result is deliberately invalid: severity low disagrees with cvss_score 9.8, so normalization must reject it.",
+            "finding_id": "MIX-005",
+            "impact": "None; this record must be skipped.",
+            "remediation": "None; this record must be skipped.",
+            "severity": "low",
+            "steps_to_reproduce": [
+                "Try to use this finding."
+            ],
+            "title": "Finding with a severity/cvss mismatch",
+            "vulnerability_type": "Missing Authentication"
+        },
+        {
+            "confidence": "confirmed",
+            "cvss_score": 7.5,
+            "cwe_id": "CWE-209",
+            "description": "Unhandled errors return a full stack trace to the client, disclosing internal paths and library versions.",
+            "evidence": [
+                {
+                    "request": "GET /lab/login?trigger-error=1",
+                    "response": "500 Internal Server Error with a full stack trace in the body"
+                }
+            ],
+            "finding_id": "MIX-006",
+            "impact": "Internal paths and library versions are disclosed to an attacker, aiding targeted exploitation.",
+            "proof_of_concept": "GET /lab/login?trigger-error=1 returns a 500 response containing the server stack trace.",
+            "remediation": "Return a generic error page and log the stack trace server-side only.",
+            "severity": "high",
+            "steps_to_reproduce": [
+                "Trigger an error on the lab login page.",
+                "Read the stack trace in the response body."
+            ],
+            "title": "Verbose error discloses stack trace",
+            "vulnerability_type": "Information Disclosure"
+        }
+    ],
+    "tool": "stub-scanner-mixed"
+}

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { validateFinding, dedupeFindings, evidenceChecklist } = require('../src/analysis/validator');
+const { validateFinding, dedupeFindings, evidenceChecklist, rootCauseKey } = require('../src/analysis/validator');
 
 function loadFixture(name) {
   return JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.json`), 'utf8'));
@@ -155,4 +155,135 @@ test('checklist never omits an item, even for a malformed finding', () => {
   const checklist = evidenceChecklist(null);
   assert.equal(checklist.length, 7);
   assert.ok(checklist.every((entry) => entry.present === false));
+});
+
+// --- Round 32 hardening: edge cases the original 17 tests did not cover. ---
+
+test('validator never throws on empty-string and exotic non-object inputs', () => {
+  for (const malformed of ['', () => {}, Symbol('finding'), 10n]) {
+    const result = validateFinding(malformed);
+    assert.equal(result.verdict, 'needs_evidence');
+    assert.ok(result.reasons.some((reason) => reason.startsWith('missing required field:')));
+  }
+});
+
+test('unknown severity needs evidence naming the severity, not a mismatch', () => {
+  const base = clone(loadFixture('confirmed-full'));
+  for (const severity of ['CRITICAL', 'unknown', '']) {
+    const result = validateFinding({ ...base, severity });
+    assert.equal(result.verdict, 'needs_evidence');
+    assert.deepEqual(result.reasons, [`unknown severity: ${severity}`]);
+  }
+});
+
+test('unknown severity with an unbandable cvss_score does not slip through as valid', () => {
+  // Before round 32 this was 'valid': bandForScore(11) is null, so the
+  // mismatch check passed and nothing else objected — while the report
+  // generator rejects the severity outright.
+  const base = clone(loadFixture('confirmed-full'));
+  const result = validateFinding({ ...base, severity: 'unknown', cvss_score: 11 });
+  assert.equal(result.verdict, 'needs_evidence');
+  assert.deepEqual(result.reasons, ['unknown severity: unknown']);
+});
+
+test('false_positive still beats an unknown severity', () => {
+  const base = clone(loadFixture('confirmed-full'));
+  assert.equal(
+    validateFinding({ ...base, severity: 'unknown', confidence: 'false_positive' }).verdict,
+    'false_positive',
+  );
+  assert.deepEqual(
+    validateFinding({ ...base, severity: 'unknown', confidence: 'needs_manual_review' }).reasons,
+    ['manual review required'],
+  );
+});
+
+test('present-but-invalid cvss_score needs evidence naming it', () => {
+  const base = clone(loadFixture('confirmed-full'));
+  for (const cvssScore of ['8.2', NaN, Infinity, 11, -1]) {
+    const result = validateFinding({ ...base, cvss_score: cvssScore });
+    assert.equal(result.verdict, 'needs_evidence');
+    assert.ok(result.reasons.includes('invalid cvss_score'), `cvss_score=${String(cvssScore)}`);
+  }
+});
+
+test('missing cvss_score stays unchecked', () => {
+  const withoutScore = clone(loadFixture('confirmed-full'));
+  delete withoutScore.cvss_score;
+  assert.equal(validateFinding(withoutScore).verdict, 'valid');
+  const nullScore = clone(loadFixture('confirmed-full'));
+  nullScore.cvss_score = null;
+  assert.equal(validateFinding(nullScore).verdict, 'valid');
+});
+
+test('steps_to_reproduce as a non-array does not throw and needs evidence naming it', () => {
+  const base = clone(loadFixture('confirmed-full'));
+  for (const steps of ['do the thing', '', 42]) {
+    const result = validateFinding({ ...base, steps_to_reproduce: steps });
+    assert.equal(result.verdict, 'needs_evidence');
+    assert.ok(result.reasons.includes('missing steps_to_reproduce'));
+  }
+});
+
+test('dedupe does not throw on null, undefined and non-object items', () => {
+  const dupA = loadFixture('duplicate-a');
+  const result = dedupeFindings([dupA, null, 'x', undefined]);
+  assert.equal(result.groups.length, 2);
+  assert.equal(result.duplicates, 2);
+  const junkGroup = result.groups.find((group) => group.key === '||(no-steps)');
+  assert.deepEqual(junkGroup.findings, [null, 'x', undefined]);
+});
+
+test('dedupe collapses tabs and newlines inside the first step', () => {
+  const tabbed = clone(loadFixture('duplicate-a'));
+  const newlined = clone(loadFixture('duplicate-a'));
+  tabbed.steps_to_reproduce = ['Navigate\tto https://lab.local/search?q=<script>alert(1)</script>'];
+  newlined.steps_to_reproduce = ['Navigate\nto  https://lab.local/search?q=<script>alert(1)</script>'];
+  assert.equal(rootCauseKey(tabbed), rootCauseKey(newlined));
+  const result = dedupeFindings([tabbed, newlined]);
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.duplicates, 1);
+});
+
+test('dedupe groups findings whose vulnerability_type differs only by case or spacing', () => {
+  const first = clone(loadFixture('duplicate-a'));
+  const second = clone(loadFixture('duplicate-a'));
+  first.vulnerability_type = 'Cross-Site Scripting';
+  second.vulnerability_type = '  cross-site scripting  ';
+  assert.equal(rootCauseKey(first), rootCauseKey(second));
+  const result = dedupeFindings([first, second]);
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.duplicates, 1);
+});
+
+test('dedupe keeps findings apart when asset_id differs only by case', () => {
+  const first = clone(loadFixture('duplicate-a'));
+  const second = clone(loadFixture('duplicate-a'));
+  first.asset_id = 'lab-asset-01';
+  second.asset_id = 'Lab-Asset-01';
+  const result = dedupeFindings([first, second]);
+  assert.equal(result.groups.length, 2);
+  assert.equal(result.duplicates, 0);
+});
+
+test('checklist returns all 7 items as not present for an array input', () => {
+  const checklist = evidenceChecklist([]);
+  assert.equal(checklist.length, 7);
+  assert.deepEqual(
+    checklist.map((entry) => entry.item),
+    ['proof_of_concept', 'evidence', 'steps_to_reproduce', 'impact', 'remediation', 'cwe_id', 'cvss_vector'],
+  );
+  assert.ok(checklist.every((entry) => entry.present === false));
+});
+
+test('non-string confidence needs evidence as unknown confidence', () => {
+  const base = clone(loadFixture('confirmed-full'));
+  assert.deepEqual(
+    validateFinding({ ...base, confidence: 42 }),
+    { verdict: 'needs_evidence', reasons: ['unknown confidence: 42'] },
+  );
+  assert.deepEqual(
+    validateFinding({ ...base, confidence: true }),
+    { verdict: 'needs_evidence', reasons: ['unknown confidence: true'] },
+  );
 });
