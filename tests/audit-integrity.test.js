@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const { AuditLog, computeAuditRecordHash, GENESIS_PREV_HASH } = require('../src/audit/audit-log');
 
 const execFileAsync = promisify(execFile);
@@ -24,8 +24,8 @@ async function runCli(args, stateDir) {
   }
 }
 
-test('audit chain: appended records link prevHash to hash, genesis anchors a fresh chain', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-link-'));
+test('audit chain: appended records link prevHash to hash, genesis anchors a fresh chain', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-link-');
   try {
     const audit = await makeAudit(directory);
     const first = await audit.append('EVENT_A', { n: 1 });
@@ -67,8 +67,8 @@ test('audit chain: appended records link prevHash to hash, genesis anchors a fre
   }
 });
 
-test('audit chain: a modified record is detected at its own line', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-modify-'));
+test('audit chain: a modified record is detected at its own line', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-modify-');
   try {
     const audit = await makeAudit(directory);
     await audit.append('EVENT_A', { n: 1 });
@@ -91,8 +91,8 @@ test('audit chain: a modified record is detected at its own line', async () => {
   }
 });
 
-test('audit chain: a reordered pair is detected at the first swapped line', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-reorder-'));
+test('audit chain: a reordered pair is detected at the first swapped line', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-reorder-');
   try {
     const audit = await makeAudit(directory);
     for (const event of ['EVENT_A', 'EVENT_B', 'EVENT_C', 'EVENT_D']) await audit.append(event, {});
@@ -109,8 +109,8 @@ test('audit chain: a reordered pair is detected at the first swapped line', asyn
   }
 });
 
-test('audit chain: deleting a middle record is detected at its successor', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-delete-'));
+test('audit chain: deleting a middle record is detected at its successor', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-delete-');
   try {
     const audit = await makeAudit(directory);
     for (const event of ['EVENT_A', 'EVENT_B', 'EVENT_C']) await audit.append(event, {});
@@ -130,8 +130,8 @@ test('audit chain: deleting a middle record is detected at its successor', async
   }
 });
 
-test('audit chain: a clean log verifies across a rotation (archives are part of the chain)', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-rotate-'));
+test('audit chain: a clean log verifies across a rotation (archives are part of the chain)', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-rotate-');
   try {
     const audit = await makeAudit(directory, { rotationBytes: 1000, retentionCount: 3 });
     for (let index = 0; index < 8; index += 1) await audit.append(`EVENT_${index}`, { n: index });
@@ -164,8 +164,8 @@ test('audit chain: a clean log verifies across a rotation (archives are part of 
   }
 });
 
-test('audit chain: pre-chain legacy records verify as a prefix; a legacy record after a chained one breaks', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-legacy-'));
+test('audit chain: pre-chain legacy records verify as a prefix; a legacy record after a chained one breaks', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-legacy-');
   try {
     const audit = await makeAudit(directory);
     const logFile = path.join(directory, 'state', 'audit.jsonl');
@@ -192,8 +192,8 @@ test('audit chain: pre-chain legacy records verify as a prefix; a legacy record 
   }
 });
 
-test('audit chain: appending after a garbage line chains from the last good record; verify reports the garbage line', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-garbage-'));
+test('audit chain: appending after a garbage line chains from the last good record; verify reports the garbage line', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-garbage-');
   try {
     const audit = await makeAudit(directory);
     const first = await audit.append('EVENT_A', {});
@@ -220,8 +220,8 @@ test('audit chain: appending after a garbage line chains from the last good reco
 // silently claim stronger guarantees: deleting a leading prefix — or
 // the last record, which has no successor — is indistinguishable from
 // legitimate retention / a log that simply ends there.
-test('audit chain: deleting a leading prefix is undetectable (documented limitation)', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-prefix-'));
+test('audit chain: deleting a leading prefix is undetectable (documented limitation)', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-prefix-');
   try {
     const audit = await makeAudit(directory);
     for (const event of ['EVENT_A', 'EVENT_B', 'EVENT_C']) await audit.append(event, {});
@@ -238,8 +238,8 @@ test('audit chain: deleting a leading prefix is undetectable (documented limitat
   }
 });
 
-test('audit chain: deleting the last record is undetectable (documented limitation)', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-tail-'));
+test('audit chain: deleting the last record is undetectable (documented limitation)', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-tail-');
   try {
     const audit = await makeAudit(directory);
     for (const event of ['EVENT_A', 'EVENT_B', 'EVENT_C']) await audit.append(event, {});
@@ -255,8 +255,8 @@ test('audit chain: deleting the last record is undetectable (documented limitati
   }
 });
 
-test('cli audit verify: clean log exits 0, tampered log exits 4 with brokenAt, missing log verifies empty', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-chain-cli-'));
+test('cli audit verify: clean log exits 0, tampered log exits 4 with brokenAt, missing log verifies empty', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-chain-cli-');
   try {
     const stateDir = path.join(directory, 'state');
     const empty = await runCli(['audit', 'verify'], stateDir);

@@ -7,6 +7,36 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Test hygiene and Python-not-required (round 46, 2026-11-26)
+
+- Test temp dirs are now owned by a shared helper,
+  `tests/helpers/temp-dir.js` (`makeTempDir(t, prefix)` registers
+  removal with `t.after()`, which runs even when the test fails):
+  90 async `fs.mkdtemp` sites across 12 test files migrated, plus
+  the `tempDir`/`tempStateDir` helpers in the CLI-security and
+  drill tests and the round-45 local helper (now the shared one).
+  The 8 sync `mkdtempSync` sites were left alone — they already
+  clean up in `try...finally`. The migration exposed one real
+  bug: the drill test called the async `unregister()` without
+  awaiting it, so its state write raced the new removal
+  (`ENOTEMPTY`); the test now awaits it. A new
+  `tests/temp-dir-helper.test.js` proves cleanup after a passing
+  test and after a failing test (the child `node --test` run
+  needs `NODE_TEST_CONTEXT`/`NODE_TEST_WORKER_ID` scrubbed from
+  its env, or the runner refuses the recursive run). Before this
+  round `/tmp` held 1,698 leaked test dirs (123M); a full green
+  suite now leaves zero new ones, and the accumulated debris was
+  removed (`/tmp` 39M after). Suite 327 → 330 tests.
+- Python is not a requirement: no component invokes a Python
+  interpreter (no `.py` files, nothing spawns `python`, README
+  lists only Node.js 18+). The `check-env` Python probe and the
+  `python_based_tools` disabled-feature entry are removed;
+  `checkFirstAvailableCommand` stays as a tested utility for
+  future first-available probes. `docs/check-env-audit-v1.md`
+  and README.md record the decision, closing the last
+  round-41 gap that was fixable without Meta. See the round-46
+  capability report.
+
 ### State-file permissions audit and repair (round 45, 2026-11-26)
 
 - New permission standard for the state directory (files `0600`,

@@ -22,9 +22,9 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { execFile } = require('node:child_process');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const { promisify } = require('node:util');
 
 const execFileAsync = promisify(execFile);
@@ -46,8 +46,8 @@ const { RequestGovernor } = require('../src/policy/request-governor');
 const { TargetRegistry } = require('../src/scope/target-registry');
 const { checkStorage } = require('../src/environment/checker');
 
-async function tempDir(prefix) {
-  return fs.mkdtemp(path.join(os.tmpdir(), prefix));
+async function tempDir(t, prefix) {
+  return makeTempDir(t, prefix);
 }
 
 async function runCli(args) {
@@ -67,8 +67,8 @@ function nestedJson(depth) {
 
 // --- safe-write unit ---
 
-test('safe-write: writes a new file with mode 0600 and overwrites a regular file', async () => {
-  const dir = await tempDir('r34-safe-');
+test('safe-write: writes a new file with mode 0600 and overwrites a regular file', async (t) => {
+  const dir = await tempDir(t, 'r34-safe-');
   const target = path.join(dir, 'out.md');
   await writeFileRefusingSymlink(target, 'one');
   assert.equal(await fs.readFile(target, 'utf8'), 'one');
@@ -77,8 +77,8 @@ test('safe-write: writes a new file with mode 0600 and overwrites a regular file
   assert.equal(await fs.readFile(target, 'utf8'), 'two');
 });
 
-test('safe-write: refuses a symlink and leaves the link target untouched', async () => {
-  const dir = await tempDir('r34-safe-');
+test('safe-write: refuses a symlink and leaves the link target untouched', async (t) => {
+  const dir = await tempDir(t, 'r34-safe-');
   const target = path.join(dir, 'target.md');
   const link = path.join(dir, 'link.md');
   await fs.writeFile(target, 'ORIGINAL');
@@ -88,8 +88,8 @@ test('safe-write: refuses a symlink and leaves the link target untouched', async
   assert.equal((await fs.lstat(link)).isSymbolicLink(), true);
 });
 
-test('safe-write: refuses a directory target', async () => {
-  const dir = await tempDir('r34-safe-');
+test('safe-write: refuses a directory target', async (t) => {
+  const dir = await tempDir(t, 'r34-safe-');
   await assert.rejects(writeFileRefusingSymlink(dir, 'x'), /Refusing to write to a directory/);
 });
 
@@ -102,8 +102,8 @@ test('input-limits: depth check accepts 100 levels and rejects 101, iteratively'
   assert.doesNotThrow(() => checkJsonDepth({ items: Array.from({ length: 20_000 }, (_, i) => i) }, MAX_JSON_DEPTH));
 });
 
-test('input-limits: bounded read rejects an oversized file and invalid JSON', async () => {
-  const dir = await tempDir('r34-limits-');
+test('input-limits: bounded read rejects an oversized file and invalid JSON', async (t) => {
+  const dir = await tempDir(t, 'r34-limits-');
   const big = path.join(dir, 'big.json');
   await fs.writeFile(big, 'x'.repeat(101));
   await assert.rejects(readJsonFileBounded(big, { maxBytes: 100 }), /exceeds the 100 byte limit/);
@@ -126,7 +126,7 @@ test('report: countBySeverity ignores an unvalidated hostile severity without po
 
 // --- prototype-pollution regression (probe P2, tested negative) ---
 
-test('security: __proto__ keys in parsed findings do not pollute Object.prototype', async () => {
+test('security: __proto__ keys in parsed findings do not pollute Object.prototype', async (t) => {
   const finding = JSON.parse(await fs.readFile(FIXTURE, 'utf8'));
   finding['__proto__'] = { polluted: 'yes' };
   finding.evidence = [{ request: 'GET /', '__proto__': { polluted: 'yes' } }];
@@ -136,7 +136,7 @@ test('security: __proto__ keys in parsed findings do not pollute Object.prototyp
   generateReport([finding], { format: 'markdown', generatedAt: GEN });
   dedupeFindings([finding, { ...finding, finding_id: 'OTHER' }]);
   normalizeRawFinding(JSON.parse('{"__proto__":{"polluted":"yes"},"finding_id":"N-1","title":"t","vulnerability_type":"x","description":"d","impact":"i","remediation":"r","session_id":"s","target_id":"t","asset_id":"a","severity":"high","steps_to_reproduce":["s1"],"evidence":[{"__proto__":{"polluted":"yes"},"request":"GET /"}]}'), {});
-  const dir = await tempDir('r34-pollution-');
+  const dir = await tempDir(t, 'r34-pollution-');
   const fixturePath = path.join(dir, 'fixture.json');
   await fs.writeFile(fixturePath, JSON.stringify({ tool: 't', results: [finding] }));
   runStubDetector(fixturePath, {});
@@ -188,8 +188,8 @@ test('security: hostile tool args reach spawn literally, with shell:false, never
 
 // --- malicious-state regression (probe P5, tested negative) ---
 
-test('security: snapshot drops hostile worker entries from a hand-edited state file', async () => {
-  const dir = await tempDir('r34-state-');
+test('security: snapshot drops hostile worker entries from a hand-edited state file', async (t) => {
+  const dir = await tempDir(t, 'r34-state-');
   const stateFile = path.join(dir, 'kill-switch.json');
   await fs.writeFile(stateFile, JSON.stringify({
     version: 2, active: false, trigger: null,
@@ -207,8 +207,8 @@ test('security: snapshot drops hostile worker entries from a hand-edited state f
 
 // --- CLI integration: symlink refusal (probe P1, fixed) ---
 
-test('security: CLI report --out refuses a planted symlink, target untouched', async () => {
-  const dir = await tempDir('r34-cli-');
+test('security: CLI report --out refuses a planted symlink, target untouched', async (t) => {
+  const dir = await tempDir(t, 'r34-cli-');
   const target = path.join(dir, 'target.md');
   const link = path.join(dir, 'link.md');
   await fs.writeFile(target, 'ORIGINAL');
@@ -219,8 +219,8 @@ test('security: CLI report --out refuses a planted symlink, target untouched', a
   assert.equal(await fs.readFile(target, 'utf8'), 'ORIGINAL');
 });
 
-test('security: CLI check-env --output refuses a planted symlink, target untouched', async () => {
-  const dir = await tempDir('r34-cli-');
+test('security: CLI check-env --output refuses a planted symlink, target untouched', async (t) => {
+  const dir = await tempDir(t, 'r34-cli-');
   const target = path.join(dir, 'target.json');
   const link = path.join(dir, 'link.json');
   await fs.writeFile(target, 'ORIGINAL');
@@ -231,8 +231,8 @@ test('security: CLI check-env --output refuses a planted symlink, target untouch
   assert.equal(await fs.readFile(target, 'utf8'), 'ORIGINAL');
 });
 
-test('security: checkStorage refuses a symlinked marker and leaves the target untouched', async () => {
-  const dir = await tempDir('r34-cli-');
+test('security: checkStorage refuses a symlinked marker and leaves the target untouched', async (t) => {
+  const dir = await tempDir(t, 'r34-cli-');
   const target = path.join(dir, 'marker-target.json');
   await fs.writeFile(target, JSON.stringify({ createdAt: '2026-01-01T00:00:00.000Z', nonce: 'old-nonce' }));
   await fs.symlink(target, path.join(dir, '.sentinel-environment-probe.json'));
@@ -244,8 +244,8 @@ test('security: checkStorage refuses a symlinked marker and leaves the target un
 
 // --- CLI integration: bounded input (probe P4, fixed) ---
 
-test('security: CLI report refuses a finding file over the size limit', async () => {
-  const dir = await tempDir('r34-cli-');
+test('security: CLI report refuses a finding file over the size limit', async (t) => {
+  const dir = await tempDir(t, 'r34-cli-');
   const finding = JSON.parse(await fs.readFile(FIXTURE, 'utf8'));
   finding.description = 'A'.repeat(11 * 1024 * 1024);
   const big = path.join(dir, 'big.json');
@@ -255,8 +255,8 @@ test('security: CLI report refuses a finding file over the size limit', async ()
   assert.match(res.stderr, /exceeds the 10485760 byte limit/);
 });
 
-test('security: CLI report refuses a findings array over the count limit', async () => {
-  const dir = await tempDir('r34-cli-');
+test('security: CLI report refuses a findings array over the count limit', async (t) => {
+  const dir = await tempDir(t, 'r34-cli-');
   // A minimal valid finding (~350 bytes each) so 10,001 of them stay
   // under the 10 MiB file limit and the COUNT limit is what fires.
   const minimal = {
@@ -274,8 +274,8 @@ test('security: CLI report refuses a findings array over the count limit', async
   assert.match(res.stderr, /Too many findings: 10001 \(maximum 10000\)/);
 });
 
-test('security: CLI report refuses JSON nested deeper than the depth limit', async () => {
-  const dir = await tempDir('r34-cli-');
+test('security: CLI report refuses JSON nested deeper than the depth limit', async (t) => {
+  const dir = await tempDir(t, 'r34-cli-');
   const baseText = (await fs.readFile(FIXTURE, 'utf8')).trim();
   const deep = path.join(dir, 'deep.json');
   await fs.writeFile(deep, `${baseText.slice(0, -1)},"extra":${nestedJson(150)}}`);

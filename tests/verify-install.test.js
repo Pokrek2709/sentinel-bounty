@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -66,8 +66,8 @@ async function snapshotTree(directory) {
   return entries;
 }
 
-test('verify-install passes on a well-formed install with inactive kill-switch', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install passes on a well-formed install with inactive kill-switch', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -83,8 +83,8 @@ test('verify-install passes on a well-formed install with inactive kill-switch',
   assert.ok(result.checks.every((check) => check.status === 'PASS' && typeof check.reason === 'string' && check.reason.length > 0));
 });
 
-test('verify-install passes with no state files yet', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install passes with no state files yet', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -96,8 +96,8 @@ test('verify-install passes with no state files yet', async () => {
   assert.equal(result.checks.find((check) => check.id === 'audit-log').reason, 'No audit log exists yet; nothing to verify.');
 });
 
-test('verify-install fails the node check below version 18', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install fails the node check below version 18', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -108,8 +108,8 @@ test('verify-install fails the node check below version 18', async () => {
   assert.match(result.checks.find((check) => check.id === 'node-version').reason, /below the >= 18 requirement/);
 });
 
-test('verify-install fails an armed kill-switch and explains it must be reviewed', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install fails an armed kill-switch and explains it must be reviewed', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -125,8 +125,8 @@ test('verify-install fails an armed kill-switch and explains it must be reviewed
   assert.match(check.reason, /must be reviewed/);
 });
 
-test('verify-install fails a corrupt kill-switch state instead of passing it as inactive', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install fails a corrupt kill-switch state instead of passing it as inactive', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -137,8 +137,8 @@ test('verify-install fails a corrupt kill-switch state instead of passing it as 
   assert.match(check.reason, /KILL_SWITCH_STATE_CORRUPT/);
 });
 
-test('verify-install fails a corrupt audit log', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install fails a corrupt audit log', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -149,8 +149,8 @@ test('verify-install fails a corrupt audit log', async () => {
   assert.match(check.reason, /AUDIT_LOG_CORRUPT/);
 });
 
-test('verify-install fails a missing entrypoint, scope config, and skill file', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install fails a missing entrypoint, scope config, and skill file', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -166,8 +166,8 @@ test('verify-install fails a missing entrypoint, scope config, and skill file', 
   assert.match(result.checks.find((check) => check.id === 'skill-files').reason, /missing/);
 });
 
-test('verify-install accepts SKILL.md at the installed-copy root', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install accepts SKILL.md at the installed-copy root', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -179,8 +179,8 @@ test('verify-install accepts SKILL.md at the installed-copy root', async () => {
   assert.match(result.checks.find((check) => check.id === 'skill-files').reason, /SKILL\.md is present/);
 });
 
-test('verify-install fails invalid scope-config JSON', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install fails invalid scope-config JSON', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -191,8 +191,8 @@ test('verify-install fails invalid scope-config JSON', async () => {
   assert.match(result.checks.find((check) => check.id === 'scope-config').reason, /not valid JSON/);
 });
 
-test('verify-install writes nothing to the skill or state directories', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('verify-install writes nothing to the skill or state directories', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -208,8 +208,8 @@ test('verify-install writes nothing to the skill or state directories', async ()
   assert.deepEqual(await snapshotTree(stateDirectory), beforeState);
 });
 
-test('CLI verify-install exits 0 with one PASS line per check on a good install', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('CLI verify-install exits 0 with one PASS line per check on a good install', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);
@@ -230,8 +230,8 @@ test('CLI verify-install exits 0 with one PASS line per check on a good install'
   assert.deepEqual(await snapshotTree(stateDirectory), beforeState);
 });
 
-test('CLI verify-install exits non-zero with FAIL lines on a broken install', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-verify-'));
+test('CLI verify-install exits non-zero with FAIL lines on a broken install', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
   const stateDirectory = path.join(base, 'state');
   await makeSkillRoot(skillDirectory);

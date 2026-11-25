@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const { ApprovalGate } = require('../src/policy/approval-gate');
 const { ControlledExecution } = require('../src/execution/controlled-wrapper');
 const { KillSwitch } = require('../src/policy/kill-switch');
@@ -103,8 +103,8 @@ test('requires exact approval and executes one fixed command without a shell', a
   assert.deepEqual(received.args, ['--version']);
 });
 
-test('polls persistent kill state so a fresh controller can cancel this process', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-wrapper-'));
+test('polls persistent kill state so a fresh controller can cancel this process', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-wrapper-');
   try {
     const stateFile = path.join(directory, 'kill-switch.json');
     const skillDirectory = path.join(directory, 'skill');

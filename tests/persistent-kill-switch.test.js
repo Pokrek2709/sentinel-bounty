@@ -5,6 +5,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
 
 const execFileAsync = promisify(execFile);
@@ -14,8 +15,8 @@ const execFileAsync = promisify(execFile);
 // anywhere that cannot do that (non-root, Windows).
 const canRunAsNobody = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
 
-test('persists activation across fresh instances with private atomic state', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+test('persists activation across fresh instances with private atomic state', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
     const skillDirectory = path.join(directory, 'skill');
@@ -33,8 +34,8 @@ test('persists activation across fresh instances with private atomic state', asy
   }
 });
 
-test('cancels local workers and refuses registration after activation', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+test('cancels local workers and refuses registration after activation', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-');
   try {
     const killSwitch = new PersistentKillSwitch({ stateFile: path.join(directory, 'state', 'kill.json'), skillDirectory: path.join(directory, 'skill'), resetToken: 'local-reset-token-1234' });
     let cancelled = false;
@@ -48,8 +49,8 @@ test('cancels local workers and refuses registration after activation', async ()
   }
 });
 
-test('protects reset against workers registered by another process and requires the operator token', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+test('protects reset against workers registered by another process and requires the operator token', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-');
   const stateFile = path.join(directory, 'state', 'kill.json');
   const skillDirectory = path.join(directory, 'skill');
   const token = 'local-reset-token-1234';
@@ -72,8 +73,8 @@ test('protects reset against workers registered by another process and requires 
   }
 });
 
-test('status remains fail-closed when a live state lock is held', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-status-lock-'));
+test('status remains fail-closed when a live state lock is held', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-status-lock-');
   const stateFile = path.join(directory, 'state', 'kill.json');
   const skillDirectory = path.join(directory, 'skill');
   try {
@@ -86,8 +87,8 @@ test('status remains fail-closed when a live state lock is held', async () => {
   }
 });
 
-test('matches a presented token against an independently provisioned digest', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+test('matches a presented token against an independently provisioned digest', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-');
   const token = 'independent-reset-token-1234';
   try {
     const digest = require('node:crypto').createHash('sha256').update(token).digest('hex');
@@ -108,8 +109,8 @@ test('rejects state inside the reinstall-replaced skill directory', () => {
   }), /outside the skill directory/);
 });
 
-test('snapshotLockless reads stored state without pruning and marks expired leases', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-lockless-'));
+test('snapshotLockless reads stored state without pruning and marks expired leases', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-lockless-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -142,8 +143,8 @@ test('snapshotLockless reads stored state without pruning and marks expired leas
   }
 });
 
-test('snapshotLockless returns the inactive default when the state file is missing', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-lockless-missing-'));
+test('snapshotLockless returns the inactive default when the state file is missing', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-lockless-missing-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -154,8 +155,8 @@ test('snapshotLockless returns the inactive default when the state file is missi
   }
 });
 
-test('snapshotLockless migrates a v1 state in memory without writing', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-lockless-v1-'));
+test('snapshotLockless migrates a v1 state in memory without writing', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-lockless-v1-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -175,8 +176,8 @@ test('snapshotLockless migrates a v1 state in memory without writing', async () 
   }
 });
 
-test('snapshotLockless rejects corrupt state with the same error as the locked read', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-lockless-corrupt-'));
+test('snapshotLockless rejects corrupt state with the same error as the locked read', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-lockless-corrupt-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -193,8 +194,8 @@ test('snapshotLockless rejects corrupt state with the same error as the locked r
   }
 });
 
-test('snapshotLockless marks without pruning while the locked snapshot prunes', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-lockless-vs-locked-'));
+test('snapshotLockless marks without pruning while the locked snapshot prunes', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-lockless-vs-locked-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -227,8 +228,8 @@ test('snapshotLockless marks without pruning while the locked snapshot prunes', 
   }
 });
 
-test('lockless and locked snapshots drop non-object workers instead of spreading them', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-nonobject-'));
+test('lockless and locked snapshots drop non-object workers instead of spreading them', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-nonobject-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -266,14 +267,14 @@ test('lockless and locked snapshots drop non-object workers instead of spreading
   }
 });
 
-test('locked and lockless migration agree on v1 and legacy shapes', async () => {
+test('locked and lockless migration agree on v1 and legacy shapes', async (t) => {
   const cases = [
     { name: 'v1', state: { version: 1, active: true, trigger: { triggerId: 't1', triggeredBy: 'op', reason: 'v1 reason', triggeredAt: Date.now() - 1000 } } },
     { name: 'legacy-enabled', state: { enabled: true, reason: 'old stop', updatedAt: new Date(Date.now() - 5000).toISOString() } },
     { name: 'legacy-disabled', state: { enabled: false } },
   ];
   for (const { name, state } of cases) {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-migrate-parity-'));
+    const directory = await makeTempDir(t, 'sentinel-kill-migrate-parity-');
     const skillDirectory = path.join(directory, 'skill');
     const stateFile = path.join(directory, 'state', 'kill-switch.json');
     try {
@@ -296,8 +297,8 @@ test('locked and lockless migration agree on v1 and legacy shapes', async () => 
   }
 });
 
-test('migrates the legacy enabled schema atomically without reviving approvals', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-'));
+test('migrates the legacy enabled schema atomically without reviving approvals', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-');
   const skillDirectory = path.join(directory, 'skill');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   try {
@@ -317,8 +318,8 @@ test('migrates the legacy enabled schema atomically without reviving approvals',
   }
 });
 
-test('classifies ENOTDIR as KILL_SWITCH_STATE_PATH_INVALID on every locked operation', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-enotdir-'));
+test('classifies ENOTDIR as KILL_SWITCH_STATE_PATH_INVALID on every locked operation', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-enotdir-');
   const token = 'local-reset-token-1234';
   try {
     const notADir = path.join(directory, 'notadir');
@@ -335,8 +336,8 @@ test('classifies ENOTDIR as KILL_SWITCH_STATE_PATH_INVALID on every locked opera
   }
 });
 
-test('recovers a stale state lock and succeeds without leaving a lock file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-stale-'));
+test('recovers a stale state lock and succeeds without leaving a lock file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-stale-');
   const stateFile = path.join(directory, 'state', 'kill-switch.json');
   const skillDirectory = path.join(directory, 'skill');
   try {
@@ -358,8 +359,8 @@ test('recovers a stale state lock and succeeds without leaving a lock file', asy
   }
 });
 
-test('classifies EACCES as KILL_SWITCH_STATE_PERMISSION_DENIED, not STATE_LOCKED', { skip: !canRunAsNobody }, async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-kill-eacces-'));
+test('classifies EACCES as KILL_SWITCH_STATE_PERMISSION_DENIED, not STATE_LOCKED', { skip: !canRunAsNobody }, async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-kill-eacces-');
   try {
     await fs.chmod(directory, 0o755);
     const stateDir = path.join(directory, 'state-ro');

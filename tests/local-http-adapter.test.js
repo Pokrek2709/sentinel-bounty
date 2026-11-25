@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { EventEmitter } = require('node:events');
-const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const { AuditLog } = require('../src/audit/audit-log');
 const { ApprovalGate } = require('../src/policy/approval-gate');
 const { LocalHttpAdapter } = require('../src/http/local-http-adapter');
@@ -56,8 +56,8 @@ async function harness(directory, transport = fakeTransport()) {
   };
 }
 
-test('performs a GET to localhost through scope, approval, governor, kill switch, and audit', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('performs a GET to localhost through scope, approval, governor, kill switch, and audit', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   try {
     const context = await harness(directory);
     const response = await context.adapter.get({ targetId: 'local-lab', url: 'http://localhost/health', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
@@ -73,8 +73,8 @@ test('performs a GET to localhost through scope, approval, governor, kill switch
   }
 });
 
-test('rejects external hosts and does not follow redirects', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('rejects external hosts and does not follow redirects', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   try {
     const context = await harness(directory);
     const external = await context.adapter.get({ targetId: 'local-lab', url: 'http://example.com/', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
@@ -90,8 +90,8 @@ test('rejects external hosts and does not follow redirects', async () => {
   }
 });
 
-test('passes 429/503 response status to the request governor', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('passes 429/503 response status to the request governor', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   try {
     const first = await harness(directory, fakeTransport({ statusCode: 429, body: 'busy' }));
     const response = await first.adapter.get({ targetId: 'local-lab', url: 'http://localhost/busy', approvalId: first.approvalId, estimatedRequests: 1, scopeFingerprint: first.fingerprint });
@@ -103,8 +103,8 @@ test('passes 429/503 response status to the request governor', async () => {
   }
 });
 
-test('requires audit state outside the skill directory', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('requires audit state outside the skill directory', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   try {
     assert.throws(() => new AuditLog({ logFile: path.join(directory, 'skill', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill') }), /outside the skill directory/);
   } finally {
@@ -112,8 +112,8 @@ test('requires audit state outside the skill directory', async () => {
   }
 });
 
-test('recovers a stale audit lock and rotates before the hard limit', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('recovers a stale audit lock and rotates before the hard limit', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   const skillDirectory = path.join(directory, 'skill');
   const logFile = path.join(directory, 'state', 'audit.jsonl');
   try {
@@ -133,8 +133,8 @@ test('recovers a stale audit lock and rotates before the hard limit', async () =
   }
 });
 
-test('reports audit health and removes its probe file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('reports audit health and removes its probe file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   const logFile = path.join(directory, 'state', 'audit.jsonl');
   try {
     const audit = new AuditLog({ logFile, skillDirectory: path.join(directory, 'skill') });
@@ -145,8 +145,8 @@ test('reports audit health and removes its probe file', async () => {
   }
 });
 
-test('cleans orphaned audit temporary files before the next locked operation', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('cleans orphaned audit temporary files before the next locked operation', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   const logFile = path.join(directory, 'state', 'audit.jsonl');
   try {
     await fs.mkdir(path.dirname(logFile), { recursive: true });
@@ -163,8 +163,8 @@ test('cleans orphaned audit temporary files before the next locked operation', a
   }
 });
 
-test('audit health rejects a directory or malformed JSONL log', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-http-'));
+test('audit health rejects a directory or malformed JSONL log', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-');
   const logFile = path.join(directory, 'state', 'audit.jsonl');
   const skillDirectory = path.join(directory, 'skill');
   try {

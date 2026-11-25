@@ -251,7 +251,6 @@ function detectMuseEnvironment(environment) {
 
 function disabledFeatures(capabilities) {
   const disabled = ['network_tools'];
-  if (capabilities.python.status !== 'verified') disabled.push('python_based_tools');
   if (capabilities.binaryExecution.status !== 'verified') disabled.push('external_tool_wrappers');
   for (const [tool, result] of Object.entries(capabilities.tools)) {
     if (result.status !== 'verified') disabled.push(`tool:${tool}`);
@@ -269,10 +268,13 @@ async function runEnvironmentCheck({
   skillDirectory = DEFAULT_SKILL_DIRECTORY,
 } = {}) {
   const binaryExecution = await checkCommand('Node.js runtime', process.execPath, ['--version'], commandRunner);
-  const python = await checkFirstAvailableCommand('Python', [
-    ['python3', ['--version']],
-    ['python', ['--version']],
-  ], commandRunner);
+  // No Python probe (round 46): no component of this skill invokes a
+  // Python interpreter — there are no .py files, no spawn of `python`,
+  // and README.md lists only Node.js 18+ as a requirement. The earlier
+  // probe reported a capability nothing used and listed a
+  // `python_based_tools` feature that does not exist. See
+  // docs/check-env-audit-v1.md. checkFirstAvailableCommand is retained
+  // as a tested utility for future first-available probes.
   const toolList = await loadToolNames(configPath);
   const tools = Object.fromEntries(await Promise.all(toolList.names.map(async (name) => [
     name,
@@ -291,7 +293,6 @@ async function runEnvironmentCheck({
       },
     },
     binaryExecution,
-    python,
     filesystem: await checkStorage(probeDirectory, now),
     network: status('not_tested', 'No outbound request is made by this checker; outbound network capability remains unverified.'),
     tools,

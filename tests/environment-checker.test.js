@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const {
   checkCommand,
   checkFirstAvailableCommand,
@@ -37,8 +38,8 @@ test('Node.js below the documented minimum is not_verified with the floor named'
   assert.equal(checkNodeVersion('not-a-version').status, 'not_verified');
 });
 
-test('runEnvironmentCheck enforces the Node minimum through the runtime capability', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-env-'));
+test('runEnvironmentCheck enforces the Node minimum through the runtime capability', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-env-');
   try {
     const report = await runEnvironmentCheck({
       probeDirectory: directory,
@@ -73,8 +74,8 @@ test('a tool listed in the config without a checker definition is not_verified, 
   assert.match(result.detail.reason, /No version command is defined/);
 });
 
-test('tool list is loaded from the config file; a missing config falls back to built-ins', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-env-'));
+test('tool list is loaded from the config file; a missing config falls back to built-ins', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-env-');
   try {
     const configPath = path.join(directory, 'environment-tools.json');
     await fs.writeFile(configPath, JSON.stringify({ version: '1.0.0', tools: ['docker'] }));
@@ -101,8 +102,8 @@ test('tool list is loaded from the config file; a missing config falls back to b
   }
 });
 
-test('runEnvironmentCheck reports the tool-config source and checks only the configured tools', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-env-'));
+test('runEnvironmentCheck reports the tool-config source and checks only the configured tools', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-env-');
   try {
     const configPath = path.join(directory, 'environment-tools.json');
     await fs.writeFile(configPath, JSON.stringify({ version: '1.0.0', tools: ['docker', 'katana'] }));
@@ -162,8 +163,8 @@ test('uses python3 when python is unavailable', async () => {
   ]);
 });
 
-test('verifies local storage and verifies persistence on a subsequent invocation', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-env-'));
+test('verifies local storage and verifies persistence on a subsequent invocation', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-env-');
   try {
     const first = await checkStorage(directory, new Date('2026-01-01T00:00:00.000Z'));
     const second = await checkStorage(directory, new Date('2026-01-02T00:00:00.000Z'));
@@ -175,8 +176,8 @@ test('verifies local storage and verifies persistence on a subsequent invocation
   }
 });
 
-test('environment report is explicitly non-networked and does not assert Muse verification', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-env-'));
+test('environment report is explicitly non-networked and does not assert Muse verification', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-env-');
   try {
     const report = await runEnvironmentCheck({
       probeDirectory: directory,

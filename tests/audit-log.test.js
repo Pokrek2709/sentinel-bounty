@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 const { AuditLog } = require('../src/audit/audit-log');
 
 const execFileAsync = promisify(execFile);
@@ -14,8 +14,8 @@ const execFileAsync = promisify(execFile);
 // run as an unprivileged user (non-root, Windows).
 const canRunAsNobody = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
 
-test('audit health reports healthy for a writable log', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-healthy-'));
+test('audit health reports healthy for a writable log', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-audit-healthy-');
   try {
     const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill') });
     await audit.append('LAB_EVENT', { actor: 'lab' });
@@ -25,7 +25,7 @@ test('audit health reports healthy for a writable log', async () => {
   }
 });
 
-test('audit health classifies ENOTDIR as AUDIT_LOG_PATH_INVALID', async () => {  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-enotdir-'));
+test('audit health classifies ENOTDIR as AUDIT_LOG_PATH_INVALID', async (t) => {  const directory = await makeTempDir(t, 'sentinel-audit-enotdir-');
   try {
     const notADir = path.join(directory, 'notadir');
     await fs.writeFile(notADir, 'I am a regular file, not a directory');
@@ -36,8 +36,8 @@ test('audit health classifies ENOTDIR as AUDIT_LOG_PATH_INVALID', async () => { 
   }
 });
 
-test('audit health classifies EACCES as AUDIT_LOG_PERMISSION_DENIED, not AUDIT_LOG_LOCKED', { skip: !canRunAsNobody }, async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-eacces-'));
+test('audit health classifies EACCES as AUDIT_LOG_PERMISSION_DENIED, not AUDIT_LOG_LOCKED', { skip: !canRunAsNobody }, async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-audit-eacces-');
   try {
     await fs.chmod(directory, 0o755);
     const stateDir = path.join(directory, 'state-ro');
@@ -97,8 +97,8 @@ test('audit health classifies EACCES as AUDIT_LOG_PERMISSION_DENIED, not AUDIT_L
 // tests PROVE it. rotationBytes is injected small so the limit is hit
 // with a handful of records instead of 8 MiB of lab data.
 
-test('audit rotation triggers at the configured limit and keeps the active log small', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-rotate-'));
+test('audit rotation triggers at the configured limit and keeps the active log small', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-audit-rotate-');
   try {
     const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 700, retentionCount: 3 });
     // A chained record is ~310 bytes (round 43: prevHash + hash are 64
@@ -119,8 +119,8 @@ test('audit rotation triggers at the configured limit and keeps the active log s
   }
 });
 
-test('audit rotation loses no records: active log plus archives hold every event in order', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-noloss-'));
+test('audit rotation loses no records: active log plus archives hold every event in order', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-audit-noloss-');
   try {
     const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 1000, retentionCount: 3 });
     // A chained record is ~310 bytes (round 43), so a 1,000-byte limit
@@ -146,8 +146,8 @@ test('audit rotation loses no records: active log plus archives hold every event
   }
 });
 
-test('audit archives stay bounded at the retention count', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-bounded-'));
+test('audit archives stay bounded at the retention count', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-audit-bounded-');
   try {
     const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 300, retentionCount: 2 });
     for (let index = 0; index < 30; index += 1) {
@@ -168,8 +168,8 @@ test('audit archives stay bounded at the retention count', async () => {
   }
 });
 
-test('audit health reports a corrupt archive instead of silently dropping it', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-corrupt-archive-'));
+test('audit health reports a corrupt archive instead of silently dropping it', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-audit-corrupt-archive-');
   try {
     const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 700, retentionCount: 3 });
     await audit.append('EVENT_A', { n: 1 });
@@ -184,7 +184,7 @@ test('audit health reports a corrupt archive instead of silently dropping it', a
     assert.match(await fs.readFile(path.join(directory, 'state', 'audit.jsonl.1'), 'utf8'), /EVENT_A/);
     // A corrupt ACTIVE log still reports the pre-existing code, not the
     // new archive code.
-    const directory2 = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-corrupt-active-'));
+    const directory2 = await makeTempDir(t, 'sentinel-audit-corrupt-active-');
     try {
       const audit2 = new AuditLog({ logFile: path.join(directory2, 'state', 'audit.jsonl'), skillDirectory: path.join(directory2, 'skill'), rotationBytes: 300, retentionCount: 3 });
       await audit2.append('EVENT_A', { n: 1 });

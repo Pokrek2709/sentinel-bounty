@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -31,8 +31,8 @@ function parse(stdout) {
   return JSON.parse(stdout);
 }
 
-test('operator CLI exposes status, trigger, and token-gated reset without printing the token', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-'));
+test('operator CLI exposes status, trigger, and token-gated reset without printing the token', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
@@ -99,7 +99,7 @@ test('operator CLI rejects a state directory inside the installed skill', async 
 });
 
 test('operator CLI rejects a symlinked reset-token digest file', async (t) => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-link-'));
+  const directory = await makeTempDir(t, 'sentinel-cli-link-');
   const token = 'operator-token-for-local-lab-1234';
   const target = path.join(directory, 'real-token.sha256');
   const link = path.join(directory, 'linked-token.sha256');
@@ -120,8 +120,8 @@ test('operator CLI rejects a symlinked reset-token digest file', async (t) => {
   }
 });
 
-test('operator CLI rejects an expired token metadata file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-expired-'));
+test('operator CLI rejects an expired token metadata file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-expired-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
@@ -135,8 +135,8 @@ test('operator CLI rejects an expired token metadata file', async () => {
   }
 });
 
-test('reset, rotate-token, and revoke-token report RESET_TOKEN_FILE_CORRUPT for a damaged digest file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-corrupt-'));
+test('reset, rotate-token, and revoke-token report RESET_TOKEN_FILE_CORRUPT for a damaged digest file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-corrupt-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   const corruptContents = {
@@ -178,8 +178,8 @@ test('reset, rotate-token, and revoke-token report RESET_TOKEN_FILE_CORRUPT for 
   }
 });
 
-test('serializes concurrent token rotations so exactly one writer wins', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rotate-race-'));
+test('serializes concurrent token rotations so exactly one writer wins', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rotate-race-');
   const token = 'operator-token-for-local-lab-1234';
   const nextA = 'operator-token-rotation-a-5678';
   const nextB = 'operator-token-rotation-b-9012';
@@ -202,8 +202,8 @@ test('serializes concurrent token rotations so exactly one writer wins', async (
   }
 });
 
-test('revokes a token only after recording an audit event', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-'));
+test('revokes a token only after recording an audit event', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-revoke-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
@@ -227,8 +227,8 @@ test('revokes a token only after recording an audit event', async () => {
   }
 });
 
-test('revoke-token recovers an interrupted pending revocation idempotently', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-recovery-'));
+test('revoke-token recovers an interrupted pending revocation idempotently', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-revoke-recovery-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
@@ -246,8 +246,8 @@ test('revoke-token recovers an interrupted pending revocation idempotently', asy
   }
 });
 
-test('revoke-token allows a newly provisioned key after an older key was revoked', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-sequential-'));
+test('revoke-token allows a newly provisioned key after an older key was revoked', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-revoke-sequential-');
   const tokenA = 'operator-token-first-generation-1234';
   const tokenB = 'operator-token-second-generation-5678';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
@@ -283,8 +283,8 @@ test('revoke-token allows a newly provisioned key after an older key was revoked
   }
 });
 
-test('revoke-token recovers an older pending marker hidden by a newer completed marker', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-revoke-shadowed-'));
+test('revoke-token recovers an older pending marker hidden by a newer completed marker', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-revoke-shadowed-');
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   const recordedAt = new Date().toISOString();
   const event = (eventId, name, keyId) => JSON.stringify({ version: 1, event: name, eventId, recordedAt, details: { actor: 'operator', keyId, requestedAt: recordedAt } });
@@ -311,7 +311,7 @@ test('revoke-token recovers an older pending marker hidden by a newer completed 
 // round-28 Windows run failure). The mount-failure catch stays as a
 // second line of defence for non-root Linux runs.
 test('status falls back to a lockless read on a full disk', { skip: process.platform === 'win32' }, async (t) => {
-  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-full-disk-'));
+  const mountPoint = await makeTempDir(t, 'sentinel-cli-full-disk-');
   const mount = async () => execFileAsync('mount', ['-t', 'tmpfs', '-o', 'size=64k', 'tmpfs', mountPoint]);
   const unmount = async () => execFileAsync('umount', [mountPoint]).catch(() => {});
   try {
@@ -388,8 +388,8 @@ async function writeDigestFile(hashFile, token, keyId = 'key-r28') {
   }) + '\n', { mode: 0o600 });
 }
 
-test('rotate-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-lock-'));
+test('rotate-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rot-lock-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
@@ -404,8 +404,8 @@ test('rotate-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock'
   }
 });
 
-test('revoke-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rev-lock-'));
+test('revoke-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rev-lock-');
   const token = 'operator-token-for-local-lab-1234';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
   try {
@@ -419,8 +419,8 @@ test('revoke-token reports RESET_TOKEN_ROTATION_LOCKED for a live rotation lock'
   }
 });
 
-test('rotate-token recovers a stale rotation lock and succeeds', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-stale-'));
+test('rotate-token recovers a stale rotation lock and succeeds', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rot-stale-');
   const token = 'operator-token-for-local-lab-1234';
   const nextToken = 'operator-token-rotated-local-5678';
   const hashFile = path.join(directory, 'operator-reset-token.sha256');
@@ -438,8 +438,8 @@ test('rotate-token recovers a stale rotation lock and succeeds', async () => {
   }
 });
 
-test('rotate-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent is a file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-enotdir-'));
+test('rotate-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent is a file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rot-enotdir-');
   const token = 'operator-token-for-local-lab-1234';
   try {
     const notADir = path.join(directory, 'notadir');
@@ -454,8 +454,8 @@ test('rotate-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent 
   }
 });
 
-test('revoke-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent is a file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rev-enotdir-'));
+test('revoke-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent is a file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rev-enotdir-');
   const token = 'operator-token-for-local-lab-1234';
   try {
     const notADir = path.join(directory, 'notadir');
@@ -473,7 +473,7 @@ test('revoke-token reports RESET_TOKEN_FILE_PATH_INVALID when the digest parent 
 });
 
 test('rotate-token reports RESET_TOKEN_ROTATION_UNAVAILABLE on a full digest disk', { skip: process.platform === 'win32' }, async (t) => {
-  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-full-'));
+  const mountPoint = await makeTempDir(t, 'sentinel-cli-rot-full-');
   const mount = async () => execFileAsync('mount', ['-t', 'tmpfs', '-o', 'size=64k', 'tmpfs', mountPoint]);
   const unmount = async () => execFileAsync('umount', [mountPoint]).catch(() => {});
   try {
@@ -483,7 +483,7 @@ test('rotate-token reports RESET_TOKEN_ROTATION_UNAVAILABLE on a full digest dis
       t.skip(`tmpfs mount unavailable: ${error.code || error.message}`);
       return;
     }
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-full-state-'));
+    const directory = await makeTempDir(t, 'sentinel-cli-rot-full-state-');
     const token = 'operator-token-for-local-lab-1234';
     const hashFile = path.join(mountPoint, 'operator-reset-token.sha256');
     await writeDigestFile(hashFile, token);
@@ -507,8 +507,8 @@ test('rotate-token reports RESET_TOKEN_ROTATION_UNAVAILABLE on a full digest dis
   }
 });
 
-test('rotate-token reports RESET_TOKEN_ROTATION_PERMISSION_DENIED as nobody, not ROTATION_LOCKED', { skip: !canRunAsNobody }, async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-rot-eacces-'));
+test('rotate-token reports RESET_TOKEN_ROTATION_PERMISSION_DENIED as nobody, not ROTATION_LOCKED', { skip: !canRunAsNobody }, async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-rot-eacces-');
   try {
     await fs.chmod(directory, 0o755);
     // The probe runs as nobody, so it cannot read the repo checkout itself.
@@ -558,8 +558,8 @@ test('rotate-token reports RESET_TOKEN_ROTATION_PERMISSION_DENIED as nobody, not
   }
 });
 
-test('status reports KILL_SWITCH_STATE_CORRUPT for an unparseable state file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-corrupt-'));
+test('status reports KILL_SWITCH_STATE_CORRUPT for an unparseable state file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-corrupt-');
   try {
     await fs.writeFile(path.join(directory, 'kill-switch.json'), '{"version":2,"active":false,"trig', { mode: 0o600 });
     const result = await invoke(['status'], directory);
@@ -571,8 +571,8 @@ test('status reports KILL_SWITCH_STATE_CORRUPT for an unparseable state file', a
   }
 });
 
-test('status reports KILL_SWITCH_STATE_CORRUPT for a wrong-shape state file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-cli-wrongshape-'));
+test('status reports KILL_SWITCH_STATE_CORRUPT for a wrong-shape state file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-cli-wrongshape-');
   try {
     await fs.writeFile(path.join(directory, 'kill-switch.json'), '{"version":99,"active":"yes"}', { mode: 0o600 });
     const result = await invoke(['status'], directory);

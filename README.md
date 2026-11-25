@@ -28,6 +28,9 @@ An in-scope decision does not authorize execution. No real target may be tested 
 
 - Node.js 18 or later.
 - No npm dependencies are currently required.
+- Python is not required: no component of this skill invokes a Python
+  interpreter (round 46 removed the `check-env` Python probe, which
+  reported a capability nothing used).
 
 `sentinel check-env` enforces the Node.js 18 floor and reports, for each
 unavailable documented tool, why it matters and how to install it; see

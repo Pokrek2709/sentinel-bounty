@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -32,8 +32,8 @@ function sha256Hex(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
-test('backup round-trips an armed state: wipe then restore leaves identical state', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-roundtrip-'));
+test('backup round-trips an armed state: wipe then restore leaves identical state', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-backup-roundtrip-');
   const stateDir = path.join(directory, 'state');
   const backupFile = path.join(directory, 'backup.json');
   try {
@@ -66,8 +66,8 @@ test('backup round-trips an armed state: wipe then restore leaves identical stat
   }
 });
 
-test('restore refuses a tampered backup (hash mismatch) and writes nothing', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-tamper-'));
+test('restore refuses a tampered backup (hash mismatch) and writes nothing', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-backup-tamper-');
   const stateDir = path.join(directory, 'state');
   const backupFile = path.join(directory, 'backup.json');
   try {
@@ -87,8 +87,8 @@ test('restore refuses a tampered backup (hash mismatch) and writes nothing', asy
   }
 });
 
-test('restore refuses corrupt JSON, an unsupported schema, and a wrong-shape state', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-refusals-'));
+test('restore refuses corrupt JSON, an unsupported schema, and a wrong-shape state', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-backup-refusals-');
   const stateDir = path.join(directory, 'state');
   try {
     await fs.mkdir(stateDir, { recursive: true });
@@ -128,8 +128,8 @@ test('restore refuses corrupt JSON, an unsupported schema, and a wrong-shape sta
   }
 });
 
-test('restore refuses an armed state with live leased workers, but accepts one with only expired leases', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-leased-'));
+test('restore refuses an armed state with live leased workers, but accepts one with only expired leases', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-backup-leased-');
   const stateDir = path.join(directory, 'state');
   const backupFile = path.join(directory, 'backup.json');
   try {
@@ -167,7 +167,7 @@ test('restore refuses an armed state with live leased workers, but accepts one w
 });
 
 test('backup and restore never follow symlinks for output or input', async (t) => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-symlink-'));
+  const directory = await makeTempDir(t, 'sentinel-backup-symlink-');
   const stateDir = path.join(directory, 'state');
   try {
     await triggerState(stateDir);
@@ -214,8 +214,8 @@ test('backup and restore never follow symlinks for output or input', async (t) =
   }
 });
 
-test('backup refuses a missing state file and restore refuses a missing backup file', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-missing-'));
+test('backup refuses a missing state file and restore refuses a missing backup file', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-backup-missing-');
   const stateDir = path.join(directory, 'state');
   try {
     await fs.mkdir(stateDir, { recursive: true });
@@ -231,8 +231,8 @@ test('backup refuses a missing state file and restore refuses a missing backup f
   }
 });
 
-test('restore refuses while a fresh state lock is held and writes nothing', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-backup-locked-'));
+test('restore refuses while a fresh state lock is held and writes nothing', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-backup-locked-');
   const stateDir = path.join(directory, 'state');
   const backupFile = path.join(directory, 'backup.json');
   try {

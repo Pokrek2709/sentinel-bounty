@@ -7,10 +7,10 @@
 const assert = require('node:assert/strict');
 const { execFile } = require('node:child_process');
 const fs = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const { promisify } = require('node:util');
 const test = require('node:test');
+const { makeTempDir } = require('./helpers/temp-dir');
 
 const execFileAsync = promisify(execFile);
 const REPO = path.resolve(__dirname, '..');
@@ -23,12 +23,6 @@ const {
   REQUIRED_DIR_MODE,
 } = require('../src/policy/state-permissions');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
-
-async function makeTempDir(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'r45-perms-'));
-  t.after(async () => { await fs.rm(dir, { recursive: true, force: true }); });
-  return dir;
-}
 
 async function modeOf(target) {
   return (await fs.lstat(target)).mode & 0o7777;
@@ -53,7 +47,7 @@ async function makeSkillRoot(directory) {
 }
 
 test('audit reports a loose file with its actual mode', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   const loose = path.join(dir, 'kill-switch.json');
   await fs.writeFile(loose, '{}');
   // writeFile's mode option is masked by the umask (0007 here turns
@@ -71,7 +65,7 @@ test('audit reports a loose file with its actual mode', async (t) => {
 });
 
 test('audit reports a loose directory, including a nested one', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o755);
   const sub = path.join(dir, 'drill');
   await fs.mkdir(sub);
@@ -87,7 +81,7 @@ test('audit reports a loose directory, including a nested one', async (t) => {
 });
 
 test('audit passes clean modes and reports a missing directory', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o700);
   await fs.writeFile(path.join(dir, 'kill-switch.json'), '{}', { mode: 0o600 });
   const clean = await auditStatePermissions(dir);
@@ -100,8 +94,8 @@ test('audit passes clean modes and reports a missing directory', async (t) => {
 });
 
 test('audit flags a symlink and never follows it', async (t) => {
-  const dir = await makeTempDir(t);
-  const outside = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
+  const outside = await makeTempDir(t, 'r45-perms-');
   const target = path.join(outside, 'secret.txt');
   await fs.writeFile(target, 'x');
   await fs.chmod(target, 0o644);
@@ -116,7 +110,7 @@ test('audit flags a symlink and never follows it', async (t) => {
 });
 
 test('repair tightens files and directories and reports from/to modes', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o755);
   const loose = path.join(dir, 'budget.json');
   await fs.writeFile(loose, '{}');
@@ -135,8 +129,8 @@ test('repair tightens files and directories and reports from/to modes', async (t
 });
 
 test('repair refuses a symlink and leaves its target alone', async (t) => {
-  const dir = await makeTempDir(t);
-  const outside = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
+  const outside = await makeTempDir(t, 'r45-perms-');
   const target = path.join(outside, 'secret.txt');
   await fs.writeFile(target, 'x');
   await fs.chmod(target, 0o644);
@@ -152,7 +146,7 @@ test('repair refuses a symlink and leaves its target alone', async (t) => {
 });
 
 test('ensurePrivateDir chmods a directory that already exists', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o755);
   const sub = path.join(dir, 'state');
   await fs.mkdir(sub);
@@ -164,7 +158,7 @@ test('ensurePrivateDir chmods a directory that already exists', async (t) => {
 });
 
 test('fresh writes are 0600/0700 even under umask 022', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   const stateDir = path.join(dir, 'state');
   const script = `
     const fs = require('node:fs/promises');
@@ -195,7 +189,7 @@ test('fresh writes are 0600/0700 even under umask 022', async (t) => {
 });
 
 test('verify-install state-permissions check fails loose, passes after repair', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   const skill = path.join(dir, 'skill');
   const state = path.join(dir, 'state');
   await makeSkillRoot(skill);
@@ -216,7 +210,7 @@ test('verify-install state-permissions check fails loose, passes after repair', 
 });
 
 test('CLI verify-install --fix tightens loose state and exits 0; without --fix it exits 1', async (t) => {
-  const dir = await makeTempDir(t);
+  const dir = await makeTempDir(t, 'r45-perms-');
   const skill = path.join(dir, 'skill');
   const state = path.join(dir, 'state');
   await makeSkillRoot(skill);
