@@ -51,8 +51,8 @@ function usage() {
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel drill [--state-dir <path>] [--recover]',
-    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets]',
-    '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets]',
+    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
+    '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -474,7 +474,7 @@ async function runReport(args) {
   // --recover): strip it before parseOptions, which only accepts
   // valued options.
   const allowMixedTargets = args.includes('--allow-mixed-targets');
-  const options = parseOptions(args.filter((argument) => argument !== '--allow-mixed-targets'), ['--finding', '--findings', '--out', '--format', '--template', '--generated-at', '--program']);
+  const options = parseOptions(args.filter((argument) => argument !== '--allow-mixed-targets'), ['--finding', '--findings', '--out', '--format', '--template', '--generated-at', '--program', '--verifier']);
   if ((options.finding && options.findings) || (!options.finding && !options.findings)) {
     throw new Error('report requires exactly one of --finding and --findings.');
   }
@@ -499,6 +499,7 @@ async function runReport(args) {
     format: options.format,
     template: options.template,
     allowMixedTargets,
+    verifier: options.verifier,
   });
   if (options.out) {
     const outputPath = path.resolve(options.out);

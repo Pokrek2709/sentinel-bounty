@@ -79,6 +79,20 @@
 // (Immunefi/Code4rena) render their own fixed sections and do not
 // carry the checklist in Markdown; their JSON form still does.
 //
+// AI verdict (round 50): when a verifier is configured
+// (`sentinel report --verifier ...`, generator option `verifier`),
+// each finding carries an advisory `ai_verdict` + `ai_verdict_source`
+// (see `src/analysis/ai-verdict.js`). The AI verdict NEVER changes
+// the rule-based verdict or any rendered score — it is recorded
+// alongside them and labelled advisory in all three formats
+// (Markdown line, HTML row, JSON field carried by the spread).
+// When no verifier is configured, no `ai_verdict` is attached and
+// the report is byte-identical to the pre-round-50 output (the
+// round-44 golden hashes still pass). Platform templates render
+// their own fixed sections and do not carry the AI verdict in
+// Markdown — the same precedent as the evidence checklist — but
+// their JSON form still does, via the spread.
+//
 // HTML output: a single self-contained file (inline CSS only, no
 // JavaScript, no external resources). Finding content is UNTRUSTED —
 // it can contain attacker-controlled strings — so every interpolated
@@ -96,6 +110,7 @@ const path = require('node:path');
 const { loadTemplate, renderTemplateReport } = require('./templates');
 const { resolveCvss } = require('../analysis/cvss');
 const { evidenceChecklistForClass } = require('../analysis/validator');
+const { getVerifier, attachAiVerdict } = require('../analysis/ai-verdict');
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'];
 
@@ -380,6 +395,23 @@ function htmlText(value, fallback = 'Not provided') {
   return escapeHtml(formatValue(value, fallback));
 }
 
+// The advisory AI verdict line for a finding, or null when the
+// finding carries none. Defensive: a finding read from a file can
+// carry a malformed ai_verdict, and rendering must never crash on
+// it — unknown parts render as 'unknown' instead. The reasons are
+// joined with '; '; an empty reasons list renders as 'no reasons
+// given'. The verifier-error case needs no special handling here:
+// a failed verifier records its failure in the reasons already.
+function formatAiVerdict(finding) {
+  const result = finding.ai_verdict;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const verdict = typeof result.verdict === 'string' && result.verdict !== '' ? result.verdict : 'unknown';
+  const confidence = typeof result.confidence === 'number' && Number.isFinite(result.confidence) ? String(result.confidence) : 'unknown';
+  const reasons = Array.isArray(result.reasons) && result.reasons.length > 0 ? result.reasons.join('; ') : 'no reasons given';
+  const source = typeof finding.ai_verdict_source === 'string' && finding.ai_verdict_source !== '' ? finding.ai_verdict_source : 'unknown';
+  return `${verdict} (confidence ${confidence}, source: ${source}) — ${reasons}`;
+}
+
 function markdownFinding(finding, number) {
   const lines = [];
   lines.push(`## ${number}. ${finding.title} [${finding.severity.toUpperCase()}]`);
@@ -401,6 +433,10 @@ function markdownFinding(finding, number) {
   lines.push(`- **Affected component:** ${finding.asset_id}${finding.asset_url ? ` (${finding.asset_url})` : ''}`);
   lines.push(`- **Confidence:** ${finding.confidence}`);
   lines.push(`- **Validation status:** ${finding.validation_status}`);
+  const aiVerdict = formatAiVerdict(finding);
+  if (aiVerdict !== null) {
+    lines.push(`- **AI verdict (advisory):** ${aiVerdict}`);
+  }
   lines.push('');
   lines.push('### Description');
   lines.push('');
@@ -552,6 +588,10 @@ function htmlFinding(finding, number) {
   lines.push(`<dt>Affected component</dt><dd>${component}</dd>`);
   lines.push(`<dt>Confidence</dt><dd>${escapeHtml(finding.confidence)}</dd>`);
   lines.push(`<dt>Validation status</dt><dd>${escapeHtml(finding.validation_status)}</dd>`);
+  const aiVerdict = formatAiVerdict(finding);
+  if (aiVerdict !== null) {
+    lines.push(`<dt>AI verdict (advisory)</dt><dd>${escapeHtml(aiVerdict)}</dd>`);
+  }
   lines.push('</dl>');
   lines.push('<h4>Description</h4>');
   lines.push(`<p>${escapeHtml(finding.description)}</p>`);
@@ -728,9 +768,13 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
 
 // Generate a report from one or more validated findings.
 // options: { programName, generatedAt, format, template,
-// allowMixedTargets } — format is 'markdown' (default), 'json', or
+// allowMixedTargets, verifier } — format is 'markdown' (default), 'json', or
 // 'html'; template is 'generic' (default) or the name of a platform
-// template (see src/report/templates.js). A named template renders
+// template (see src/report/templates.js). verifier is 'stub', a
+// verifier function, or a module path (CLI --verifier); when set,
+// each finding carries an advisory ai_verdict (see
+// src/analysis/ai-verdict.js) that never changes the rule-based
+// verdict or any rendered score. A named template renders
 // exactly one finding per report — the platforms accept one bug per
 // submission — and its required sections fail cleanly when their
 // source field is missing, instead of inventing content. Platform
@@ -750,12 +794,29 @@ function generateReport(findings, options = {}) {
     throw new Error('At least one finding is required to generate a report.');
   }
   const validated = findings.map((finding, index) => validateFinding(finding, index));
+  // AI verdict (round 50): when a verifier is configured
+  // (options.verifier: 'stub', a function, or a module path), each
+  // validated finding gets its advisory ai_verdict attached (see
+  // src/analysis/ai-verdict.js getVerifier/attachAiVerdict). No
+  // verifier configured means no ai_verdict at all — the report is
+  // byte-identical to the pre-round-50 output. The attachment
+  // happens after validation, so a verifier can never change a
+  // verdict, a score, or the mixed-target check below; it only adds
+  // the advisory fields the renderers show. A verifier that fails
+  // to load throws a named error here, before any output is
+  // produced, so a bad --verifier can never leave a half-written
+  // report behind.
+  let reported = validated;
+  if (options.verifier !== undefined && options.verifier !== null) {
+    const resolved = getVerifier(options.verifier, path.resolve(__dirname, '..', '..'));
+    reported = validated.map((finding) => attachAiVerdict(finding, resolved));
+  }
   // Mixed-target refusal (round 49): the distinct targets are the
   // trimmed target_ids in sorted order. The check runs after
   // validation, so a missing target_id still fails as a missing
   // required field first. A template report can never trip this
   // check: templates render one finding, which carries one target.
-  const targetIds = [...new Set(validated.map((finding) => String(finding.target_id).trim()))].sort(compareStrings);
+  const targetIds = [...new Set(reported.map((finding) => String(finding.target_id).trim()))].sort(compareStrings);
   const allowMixedTargets = options.allowMixedTargets === true;
   if (targetIds.length > 1 && !allowMixedTargets) {
     throw new Error(
@@ -765,11 +826,11 @@ function generateReport(findings, options = {}) {
     );
   }
   const multiTarget = targetIds.length > 1;
-  // Grouping is a pure reorder of the validated set: verdicts were
+  // Grouping is a pure reorder of the reported set: verdicts were
   // already computed by the validator (and deduplication, when the
   // caller runs it, happens before this call), so grouping cannot
   // change what a finding says — only where it renders.
-  const targetGroups = groupFindingsByTarget(validated);
+  const targetGroups = groupFindingsByTarget(reported);
   const groups = targetGroups.flatMap((targetGroup) => targetGroup.groups);
   const orderedFindings = groups.flatMap((group) => group.findings);
   const programName = typeof options.programName === 'string' && options.programName.trim()
@@ -784,12 +845,12 @@ function generateReport(findings, options = {}) {
     throw new Error(`Invalid generated_at: ${generatedAt} (expected an ISO 8601 timestamp).`);
   }
   if (!generatedAt) {
-    const created = validated
+    const created = reported
       .map((finding) => finding.created_at)
       .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
     if (created.length > 0) generatedAt = created.sort().at(-1);
   }
-  const counts = countBySeverity(validated);
+  const counts = countBySeverity(reported);
   const summary = executiveSummary(counts, programName);
   const format = options.format || 'markdown';
   if (format !== 'markdown' && format !== 'json' && format !== 'html') {
@@ -809,15 +870,15 @@ function generateReport(findings, options = {}) {
       throw new Error(`Template "${templateName}" renders Markdown only; HTML output uses the generic template.`);
     }
     const template = loadTemplate(templateName);
-    if (validated.length !== 1) {
+    if (reported.length !== 1) {
       throw new Error(
-        `Template "${templateName}" renders one finding per report; got ${validated.length} findings. ` +
+        `Template "${templateName}" renders one finding per report; got ${reported.length} findings. ` +
         'Generate one report per finding, or use the generic template.',
       );
     }
     if (format === 'json') {
       return renderJson({
-        reportId: deriveReportId(programName, validated),
+        reportId: deriveReportId(programName, reported),
         targetId: orderedFindings[0].target_id,
         sessionId: orderedFindings[0].session_id,
         programName,
@@ -832,7 +893,7 @@ function generateReport(findings, options = {}) {
   }
   if (format === 'json') {
     return renderJson({
-      reportId: deriveReportId(programName, validated),
+      reportId: deriveReportId(programName, reported),
       targetId: orderedFindings[0].target_id,
       sessionId: orderedFindings[0].session_id,
       programName,
@@ -848,7 +909,7 @@ function generateReport(findings, options = {}) {
   }
   if (format === 'html') {
     return renderHtml({
-      reportId: deriveReportId(programName, validated),
+      reportId: deriveReportId(programName, reported),
       programName,
       generatedAt,
       counts,

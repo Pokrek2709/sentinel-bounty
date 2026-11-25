@@ -7,6 +7,44 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Pluggable AI-verdict interface, advisory only (round 50, 2026-11-26)
+
+- The verifier contract is defined (`src/analysis/ai-verdict.js`):
+  a SYNCHRONOUS function `verifier(finding) -> { verdict,
+  confidence, reasons }` with verdict one of `valid` /
+  `false_positive` / `needs_evidence`, confidence a finite number
+  in `[0, 1]`, and reasons an array of strings; the verifier
+  receives a defensive copy of the finding and cannot mutate it. A
+  verifier that returns a Promise is refused as an invalid result
+  (the validator and generator are synchronous and deterministic).
+  The built-in stub verifier is the default: it always returns
+  `needs_evidence` with confidence 0 and the reason "no AI model
+  configured", and never claims a finding valid or false_positive.
+  `loadVerifier` loads a custom module only from inside the skill
+  directory (absolute paths must resolve inside the skill root;
+  relative paths resolve under it; the file must not be a symlink
+  and its realpath must stay inside the real skill root; the export
+  must be a function or an object with a `verify` function), with
+  named refusals (`AI_VERDICT_NOT_FOUND`,
+  `AI_VERDICT_SYMLINK_REFUSED`, `AI_VERDICT_PATH_OUTSIDE_SKILL`,
+  `AI_VERDICT_INVALID_MODULE`, `AI_VERDICT_LOAD_FAILED`).
+  `validateFinding(finding, { verifier })` computes the rule
+  verdict first, unchanged, then records `aiVerdict` +
+  `aiVerdictSource` — the rule verdict NEVER changes because of
+  the AI verdict (tested both directions). `sentinel report
+  --verifier stub|<path>` attaches `ai_verdict` +
+  `ai_verdict_source` to every finding and renders it distinctly,
+  labelled advisory, in Markdown, HTML, and JSON; platform
+  templates do not render it in Markdown (fixed sections) but
+  their JSON form still carries it. A verifier that throws or
+  returns an invalid result is recorded as a `needs_evidence`
+  error, never a crash. When no verifier is configured, no
+  `ai_verdict` is attached and the report is byte-identical to the
+  pre-round-50 output (the round-44 golden hashes still pass). NO
+  model is plugged in; choosing the model, and whether the AI
+  verdict should ever override the rule verdict, remain open user
+  decisions.
+
 ### Mixed-target reports with explicit opt-in (round 49, 2026-11-26)
 
 - A report covering more than one distinct `target_id` is now

@@ -54,9 +54,11 @@ than one distinct `target_id` is refused by default
 then by asset, stating the full target list in its header. The HTML export renders
 the same grouped findings as a single self-contained file (inline CSS
 only, no JavaScript, no external resources, every value HTML-escaped;
-references render as inert text, never as links). See
+references render as inert text, never as links). An AI verdict can be
+attached per finding with `--verifier stub|<path>` (`sentinel report --verifier stub` runs the built-in stub, which always answers `needs_evidence` with confidence 0; a path loads a custom verifier module from inside the skill directory, refused when it is a symlink or outside the skill root): the AI verdict is ADVISORY ONLY — the rule-based verdict never changes because of it — and renders distinctly, labelled advisory, in all three formats (Markdown line, HTML row, JSON `ai_verdict` field). No model is plugged in; the verifier interface is synchronous (a verifier that returns a Promise is refused), and a verifier that throws or returns an invalid result is recorded as a `needs_evidence` error, never a crash. See
 `docs/report-grouping-v1.md`, `docs/report-mixed-targets-v1.md`,
-`docs/evidence-checklists-v1.md`, and `docs/report-html-v1.md`.
+`docs/evidence-checklists-v1.md`, `docs/report-html-v1.md`, and
+`docs/ai-verdict-v1.md`.
 
 These commands make no network request and execute no security scanner.
 

@@ -47,6 +47,21 @@
       "items": { "type": "string" },
       "description": "Finding ids this finding was merged from by the semantic dedup pass (src/analysis/validator.js semanticDedupeFindings). Present only on merged findings; singletons omit it. Includes the representative's own id, so the list is the complete member set."
     },
+    "ai_verdict": {
+      "type": "object",
+      "description": "Advisory AI-model verdict attached by the pluggable verifier interface (src/analysis/ai-verdict.js). It NEVER overrides the rule-based verdict from the validator; the rule verdict stands and this field is recorded alongside it, labelled advisory in reports. Present only when a verifier was configured for the run.",
+      "properties": {
+        "verdict": { "type": "string", "enum": ["valid", "false_positive", "needs_evidence"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "error": { "type": "string", "description": "Set when the verifier threw or returned an invalid result; the verdict is then needs_evidence with confidence 0." }
+      },
+      "required": ["verdict", "confidence", "reasons"]
+    },
+    "ai_verdict_source": {
+      "type": "string",
+      "description": "Where the ai_verdict came from: 'stub' for the built-in stub verifier, 'inline' for a function passed programmatically, or the file basename of a loaded verifier module."
+    },
     "description": { "type": "string" },
     "steps_to_reproduce": {
       "type": "array",

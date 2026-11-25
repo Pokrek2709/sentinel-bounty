@@ -82,6 +82,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { parseCvssVector, resolveCvss, BASE_METRIC_KEYS } = require('./cvss');
+const { stubVerifier, runVerifier } = require('./ai-verdict');
 
 // The five band names a severity must be one of (schema enum; also the
 // report generator's SEVERITY_ORDER). The ratings are loaded LAZILY
@@ -202,7 +203,10 @@ function missingEvidenceReasons(finding) {
   return reasons;
 }
 
-function validateFinding(finding) {
+// The rule-based verdict only. This is the whole precedence chain
+// above, unchanged: the AI verdict (see validateFinding below) is
+// computed AFTER this returns and can never change its outcome.
+function validateFindingRule(finding) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) {
     return { verdict: 'needs_evidence', reasons: ['missing required field: finding_id'] };
   }
@@ -287,6 +291,51 @@ function validateFinding(finding) {
   }
 
   return { verdict: 'needs_evidence', reasons: [`unknown confidence: ${finding.confidence}`] };
+}
+
+// Validate a finding and, when a verifier is configured, record its
+// advisory AI verdict alongside the rule verdict.
+//
+//   validateFinding(finding) — no verifier: returns exactly the
+//     rule result { verdict, reasons }, as before.
+//   validateFinding(finding, { verifier }) — verifier is a function
+//     or the string 'stub' (see src/analysis/ai-verdict.js): the
+//     rule verdict is computed first, unchanged, and the verifier
+//     then runs against the finding; the result adds `aiVerdict`
+//     (the verifier's normalized result, or the needs_evidence
+//     error record when the verifier threw or returned an invalid
+//     result) and `aiVerdictSource` ('stub', 'inline', or the
+//     module basename). The rule verdict NEVER changes because of
+//     the AI verdict — a verifier that disagrees with the rule
+//     verdict is recorded, not obeyed. A verifier option that is
+//     neither a function nor 'stub' is recorded as a verifier
+//     failure (aiVerdict needs_evidence, aiVerdictSource 'invalid'),
+//     so this function keeps its never-throws contract: it throws
+//     for nothing a finding or a verifier option can do. Path
+//     strings are NOT accepted here — loading a module from a path
+//     is I/O and belongs to the caller (getVerifier/loadVerifier);
+//     pass the loaded function instead.
+function validateFinding(finding, options = {}) {
+  const rule = validateFindingRule(finding);
+  const spec = options && typeof options === 'object' ? options.verifier : undefined;
+  if (spec === undefined || spec === null) return rule;
+  if (spec === 'stub') {
+    return { ...rule, aiVerdict: runVerifier(stubVerifier, finding), aiVerdictSource: 'stub' };
+  }
+  if (typeof spec === 'function') {
+    return { ...rule, aiVerdict: runVerifier(spec, finding), aiVerdictSource: 'inline' };
+  }
+  const message = 'AI_VERDICT_INVALID_VERIFIER: verifier must be "stub" or a function.';
+  return {
+    ...rule,
+    aiVerdict: {
+      verdict: 'needs_evidence',
+      confidence: 0,
+      reasons: [`ai verifier error: ${message}`],
+      error: message,
+    },
+    aiVerdictSource: 'invalid',
+  };
 }
 
 // Root-cause key: vulnerability type + asset + normalized first
