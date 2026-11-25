@@ -1,0 +1,21 @@
+{
+  "asset_id": "lab-asset-02",
+  "confidence": "potential",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 5.4,
+  "description": "A lab-local potential SQL injection: an error message hints at a query failure, but no PoC or captured evidence exists.",
+  "discovery_tool": "lab-manual",
+  "finding_id": "F-R31-POTENTIAL",
+  "impact": "If confirmed, an attacker could read lab database rows.",
+  "remediation": "Use parameterized queries for the login lookup.",
+  "session_id": "lab-session-r31",
+  "severity": "medium",
+  "steps_to_reproduce": [
+    "Submit a single quote in the lab login username field",
+    "Observe a database error message in the lab response"
+  ],
+  "target_id": "local-lab",
+  "title": "Possible SQL injection in lab login form",
+  "validation_status": "needs_review",
+  "vulnerability_type": "SQL Injection"
+}

@@ -1,0 +1,28 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "confirmed",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 8.2,
+  "description": "A lab-local reflected XSS fixture: the search parameter is reflected unescaped, but no PoC was recorded.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Lab-local fixture traffic only",
+      "request": "GET https://lab.local/search?q=<script>alert(1)</script>",
+      "response": "200 OK, query reflected raw in the page"
+    }
+  ],
+  "finding_id": "F-R31-CONFIRMED-NO-POC",
+  "impact": "An attacker could craft a lab link that executes script in a victim browser.",
+  "remediation": "Encode the search parameter on render.",
+  "session_id": "lab-session-r31",
+  "severity": "high",
+  "steps_to_reproduce": [
+    "Open https://lab.local/search?q=<script>alert(1)</script>",
+    "Observe the script reflected in the lab page"
+  ],
+  "target_id": "local-lab",
+  "title": "Reflected XSS in lab search parameter",
+  "validation_status": "needs_review",
+  "vulnerability_type": "Reflected Cross-Site Scripting"
+}

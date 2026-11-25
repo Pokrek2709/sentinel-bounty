@@ -1,0 +1,45 @@
+{
+    "results": [
+        {
+            "cvss_score": 8.2,
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+            "cwe_id": "CWE-79",
+            "description": "The search parameter reflects input without encoding, allowing script execution in a victim browser.",
+            "finding_id": "STUB-001",
+            "impact": "An attacker could execute script in a victim's browser session.",
+            "remediation": "Encode all reflected output and apply context-appropriate output encoding.",
+            "steps_to_reproduce": "1. Open the lab search page.\n2. Enter <script>alert(1)</script> in the search box.\n\n3. Observe the script executing.",
+            "title": "Reflected cross-site scripting in search parameter",
+            "vulnerability_type": "Cross-Site Scripting"
+        },
+        {
+            "confidence": "confirmed",
+            "cvss_score": 5.0,
+            "description": "Unhandled errors return a full stack trace to the client.",
+            "finding_id": "STUB-002",
+            "impact": "Internal paths and library versions are disclosed to an attacker.",
+            "references": [
+                "https://example.invalid/lab/owasp-error-handling"
+            ],
+            "remediation": "Return a generic error page and log the stack trace server-side only.",
+            "severity": "medium",
+            "steps_to_reproduce": [
+                "Trigger an error on the lab login page.",
+                "Read the stack trace in the response body."
+            ],
+            "title": "Verbose error message discloses stack trace",
+            "validation_status": "needs_review",
+            "vulnerability_type": "Information Disclosure"
+        },
+        {
+            "description": "This result is deliberately invalid: it has no title, so normalization must reject it.",
+            "finding_id": "STUB-003",
+            "impact": "None; this record must be skipped.",
+            "remediation": "None; this record must be skipped.",
+            "severity": "high",
+            "steps_to_reproduce": "Try to use this finding.",
+            "vulnerability_type": "Broken Access Control"
+        }
+    ],
+    "tool": "stub-scanner-fixture"
+}

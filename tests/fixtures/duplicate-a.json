@@ -1,0 +1,31 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "confirmed",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 5.3,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+  "cwe_id": "CWE-79",
+  "description": "First report of the lab search reflected XSS.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Lab-local fixture traffic only",
+      "request": "GET https://lab.local/search?q=<script>alert(1)</script>",
+      "response": "200 OK, payload reflected raw"
+    }
+  ],
+  "finding_id": "F-R31-DUP-A",
+  "impact": "An attacker could craft a lab link that executes script in a victim browser.",
+  "proof_of_concept": "GET /search?q=<script>alert(1)</script> reflects the payload unescaped.",
+  "remediation": "Encode the search parameter on render.",
+  "session_id": "lab-session-r31",
+  "severity": "medium",
+  "steps_to_reproduce": [
+    "Navigate to https://lab.local/search?q=<script>alert(1)</script>",
+    "Observe the script executing in the lab browser"
+  ],
+  "target_id": "local-lab",
+  "title": "Reflected XSS in lab search (first report)",
+  "validation_status": "validated",
+  "vulnerability_type": "Reflected Cross-Site Scripting"
+}

@@ -1,0 +1,29 @@
+{
+  "asset_id": "lab-asset-03",
+  "confidence": "false_positive",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 2,
+  "description": "A lab-local false positive: the status page looked unauthenticated, but it is a public health endpoint by design.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Public health endpoint by design; no sensitive data",
+      "request": "GET https://lab.local/status",
+      "response": "200 OK, {\"status\": \"ok\"}"
+    }
+  ],
+  "finding_id": "F-R31-FALSE-POSITIVE",
+  "impact": "None: the endpoint is intentionally public and returns no sensitive data.",
+  "proof_of_concept": "GET /status returns 200 without credentials.",
+  "remediation": "No action required.",
+  "session_id": "lab-session-r31",
+  "severity": "low",
+  "steps_to_reproduce": [
+    "Request https://lab.local/status without credentials",
+    "Observe a 200 response with uptime data"
+  ],
+  "target_id": "local-lab",
+  "title": "Suspected missing auth header on lab status page",
+  "validation_status": "false_positive",
+  "vulnerability_type": "Missing Authentication"
+}

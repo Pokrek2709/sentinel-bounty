@@ -1,0 +1,31 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "confirmed",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 9.8,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+  "cwe_id": "CWE-306",
+  "description": "A lab-local severity/cvss mismatch fixture: severity says high but the CVSS score 9.8 is in the critical band (9.0-10.0).",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Lab-local fixture traffic only",
+      "request": "GET https://lab.local/admin",
+      "response": "200 OK, admin panel rendered"
+    }
+  ],
+  "finding_id": "F-R31-SEVERITY-MISMATCH",
+  "impact": "An unauthenticated attacker could administer the lab instance.",
+  "proof_of_concept": "GET /admin returns 200 without credentials; admin actions succeed.",
+  "remediation": "Require authentication on all /admin routes.",
+  "session_id": "lab-session-r31",
+  "severity": "high",
+  "steps_to_reproduce": [
+    "Request https://lab.local/admin without credentials",
+    "Observe the admin panel loading in the lab browser"
+  ],
+  "target_id": "local-lab",
+  "title": "Lab admin panel exposed without authentication",
+  "validation_status": "needs_review",
+  "vulnerability_type": "Missing Authentication"
+}

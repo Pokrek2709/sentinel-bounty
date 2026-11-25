@@ -1,0 +1,35 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "confirmed",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 7.5,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+  "cwe_id": "CWE-79",
+  "description": "A lab-local stored XSS fixture: a comment containing a script tag is rendered unescaped.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Lab-local fixture traffic only",
+      "request": "POST https://lab.local/comments",
+      "response": "200 OK, comment stored with raw <script> tag"
+    }
+  ],
+  "finding_id": "F-R31-CONFIRMED-FULL",
+  "impact": "An attacker could execute script in another lab user's browser session.",
+  "proof_of_concept": "POST /comments {\"body\": \"<script>alert(1)</script>\"} returns 200; response page contains the raw script tag.",
+  "references": [
+    "https://example.test/lab/stored-xss"
+  ],
+  "remediation": "Encode comment output on render and enforce a content security policy.",
+  "session_id": "lab-session-r31",
+  "severity": "high",
+  "steps_to_reproduce": [
+    "Submit a comment containing <script>alert(1)</script> on https://lab.local/comments",
+    "Reload the comments page as another lab user",
+    "Observe the script executing in the lab browser"
+  ],
+  "target_id": "local-lab",
+  "title": "Stored XSS in lab comment field",
+  "validation_status": "validated",
+  "vulnerability_type": "Stored Cross-Site Scripting"
+}

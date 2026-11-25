@@ -1,0 +1,32 @@
+{
+  "asset_id": "lab-asset-02",
+  "confidence": "potential",
+  "created_at": "2026-11-26T02:00:00Z",
+  "cvss_score": 6.5,
+  "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+  "cwe_id": "CWE-601",
+  "description": "A lab-local potential open redirect: fully evidenced, but the analyst has not confirmed exploitability, so confidence stays potential.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Lab-local fixture traffic only",
+      "request": "GET https://lab.local/login?next=https://lab.evil.test/",
+      "response": "302 Found, Location: https://lab.evil.test/"
+    }
+  ],
+  "finding_id": "F-R31-POTENTIAL-FULL",
+  "impact": "An attacker could redirect lab users to a phishing page.",
+  "proof_of_concept": "GET /login?next=https://lab.evil.test/ returns 302 Location: https://lab.evil.test/ after lab login.",
+  "remediation": "Allowlist redirect targets to lab-local hosts only.",
+  "session_id": "lab-session-r31",
+  "severity": "medium",
+  "steps_to_reproduce": [
+    "Open https://lab.local/login?next=https://lab.evil.test/",
+    "Log in with lab credentials",
+    "Observe the redirect to the external lab host"
+  ],
+  "target_id": "local-lab",
+  "title": "Potential open redirect in lab login flow",
+  "validation_status": "needs_review",
+  "vulnerability_type": "Open Redirect"
+}

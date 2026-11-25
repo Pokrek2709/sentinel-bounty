@@ -1,0 +1,29 @@
+{
+  "asset_id": "lab-asset-01",
+  "confidence": "potential",
+  "created_at": "2026-11-26T02:30:00Z",
+  "cvss_score": 5.3,
+  "description": "Second report of the same lab search reflected XSS, written by a different lab analyst with different wording and a differently cased first step.",
+  "discovery_tool": "lab-manual",
+  "evidence": [
+    {
+      "notes": "Lab-local fixture traffic only",
+      "request": "GET https://lab.local/search?q=<script>alert(1)</script>",
+      "response": "200 OK, payload reflected raw"
+    }
+  ],
+  "finding_id": "F-R31-DUP-B",
+  "impact": "An attacker could craft a lab link that executes script in a victim browser.",
+  "proof_of_concept": "Same payload reflected unescaped in the lab search page.",
+  "remediation": "Encode the search parameter on render.",
+  "session_id": "lab-session-r31",
+  "severity": "medium",
+  "steps_to_reproduce": [
+    "  Navigate   TO https://lab.local/search?q=<script>alert(1)</script> ",
+    "Confirm the alert dialog appears in the lab browser"
+  ],
+  "target_id": "local-lab",
+  "title": "Search page runs injected script (second report)",
+  "validation_status": "needs_review",
+  "vulnerability_type": "Reflected Cross-Site Scripting"
+}

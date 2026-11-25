@@ -9,6 +9,7 @@ const { TargetRegistry } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
 const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
+const { generateReport } = require('../src/report/generator');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -39,6 +40,8 @@ function usage() {
     '  sentinel kill-switch audit-health [--state-dir <path>]',
     '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
+    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
+    '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
   ].join('\n');
@@ -430,8 +433,41 @@ async function appendOperatorAudit(stateDirectory, event, details) {
   }
 }
 
+async function runReport(args) {
+  const options = parseOptions(args, ['--finding', '--findings', '--out', '--format', '--generated-at', '--program']);
+  if ((options.finding && options.findings) || (!options.finding && !options.findings)) {
+    throw new Error('report requires exactly one of --finding and --findings.');
+  }
+  // The report is generated fully in memory first; the output file is
+  // only written after generation succeeds, so a validation failure can
+  // never leave a half-written report behind.
+  let findings;
+  if (options.finding) {
+    findings = [JSON.parse(await fs.readFile(path.resolve(options.finding), 'utf8'))];
+  } else {
+    findings = JSON.parse(await fs.readFile(path.resolve(options.findings), 'utf8'));
+  }
+  const report = generateReport(findings, {
+    programName: options.program,
+    generatedAt: options.generatedAt,
+    format: options.format,
+  });
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, report, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Report written to ${outputPath}\n`);
+    return;
+  }
+  process.stdout.write(report);
+}
+
 async function main(argv) {
   const [command, ...args] = argv;
+  if (command === 'report') {
+    await runReport(args);
+    return;
+  }
   if (command === 'kill-switch') {
     const [action, ...actionArgs] = args;
     await runKillSwitch(action, actionArgs);

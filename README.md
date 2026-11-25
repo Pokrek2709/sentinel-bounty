@@ -14,11 +14,12 @@ Implemented locally:
 - Per-domain token-bucket rate governor, request budgets, concurrency limits, and local server-pressure backoff state.
 - Bound single-use approval gate, fixed-command wrapper, persistent kill-switch state, and token-gated operator CLI for local lab execution.
 - GET-only `localhost` HTTP adapter with bounded audit logging for the local lab.
+- Lab-local finding pipeline over fixtures only: a fixture-based detector stub that emits normalized findings ([detection-stub-v1](docs/detection-stub-v1.md)), a rule-based finding validator with deduplication and an evidence checklist ([validation-v1](docs/validation-v1.md)), and a deterministic report generator (`sentinel report`, [reporting-v1](docs/reporting-v1.md)). No scanner is invoked and nothing here performs detection against any target.
 
 Not implemented yet:
 
 - Meta Muse manifest, installation, activation, or tool-permission integration.
-- DNS resolution guard, scanner integration, crawling, or any public-target network adapter.
+- DNS resolution guard, real scanner integration (only a fixture-based detector stub exists), crawling, or any public-target network adapter.
 - Persistent approval/session state and a Muse-native operator API.
 
 An in-scope decision does not authorize execution. No real target may be tested unless authorization, scope enforcement, approval, kill switch, audit, and a reviewed network adapter are all in place.
@@ -66,6 +67,9 @@ The default state directory is `~/workspace/sentinel-bounty/state/`, outside the
 - `src/environment/` — local environment checker.
 - `src/scope/` — target registration and default-deny scope matching.
 - `src/policy/` — local request governor.
+- `src/detection/` — normalized finding record + fixture-based detector stub (no real scanner).
+- `src/analysis/` — rule-based finding validation, deduplication, evidence checklist.
+- `src/report/` — deterministic bug-bounty report generator (`sentinel report`).
 - `skills/sentinel-bounty/SKILL.md` — source custom-skill contract, not an official Muse manifest.
 - `policies/` and `schemas/` — design policies and data contracts.
 - `docs/` — PoC, implementation, and sharing status. Adapting the skill to an agent platform: [adapt-to-agent](docs/adapt-to-agent.md). Removing it again: [uninstall-restore](docs/uninstall-restore.md).
