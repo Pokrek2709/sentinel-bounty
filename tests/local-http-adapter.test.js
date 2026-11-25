@@ -30,7 +30,7 @@ function fakeTransport({ statusCode = 200, body = JSON.stringify({ status: 'lab-
   return { requestGet, get requests() { return requests; } };
 }
 
-async function harness(directory, transport = fakeTransport()) {
+async function harness(directory, transport = fakeTransport(), killSwitch = new KillSwitch()) {
   const registry = new TargetRegistry();
   registry.register({ target_id: 'local-lab', program_name: 'Local HTTP lab', authorization_reference: 'LOCAL-LAB', allowed_domains: ['localhost'], request_budget: 10 });
   const fingerprint = registry.getScopeFingerprint('local-lab');
@@ -52,9 +52,85 @@ async function harness(directory, transport = fakeTransport()) {
     governor,
     recordedStatuses,
     transport,
-    adapter: new LocalHttpAdapter({ registry, approvalGate: approvals, governor, killSwitch: new KillSwitch(), auditLog: audit, requestGet: transport.requestGet }),
+    adapter: new LocalHttpAdapter({ registry, approvalGate: approvals, governor, killSwitch, auditLog: audit, requestGet: transport.requestGet }),
   };
 }
+
+// A kill switch whose unregister() is controllable: it is the async
+// PersistentKillSwitch.unregisterWorker in production (a state-file
+// write under a lock), so a test that gates or rejects it proves
+// whether get() waits for it (round 47) instead of resolving early.
+function controllableKillSwitch(unregisterBehavior = 'ok') {
+  let unregisterCalls = 0;
+  let releaseUnregister;
+  const unregisterGate = new Promise((resolve) => { releaseUnregister = resolve; });
+  return {
+    get unregisterCalls() { return unregisterCalls; },
+    releaseUnregister,
+    assertNotTriggered: async () => ({ allowed: true, reason: 'KILL_SWITCH_INACTIVE' }),
+    registerWorker: async () => ({
+      registered: true,
+      unregister: () => {
+        unregisterCalls += 1;
+        if (unregisterBehavior === 'reject') return Promise.reject(new Error('ENOSPC'));
+        if (unregisterBehavior === 'gate') return unregisterGate;
+        return Promise.resolve(true);
+      },
+    }),
+  };
+}
+
+test('get() does not resolve before the async unregister() completes', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-unregister-gate-');
+  try {
+    const killSwitch = controllableKillSwitch('gate');
+    const context = await harness(directory, fakeTransport(), killSwitch);
+    let settled = false;
+    const pending = context.adapter.get({ targetId: 'local-lab', url: 'http://localhost/health', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
+    pending.then(() => { settled = true; });
+    // Wait until the response flow has actually reached cleanup()
+    // (unregister called) — a fixed sleep would be load-dependent
+    // under the parallel full suite and flaked once (round 47).
+    const deadline = Date.now() + 5_000;
+    while (killSwitch.unregisterCalls === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(killSwitch.unregisterCalls, 1);
+    // Now give the event loop a chance to settle the promise if it
+    // were going to (it must not: unregister() is still gated).
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(settled, false, 'get() must not resolve while unregister() is still pending');
+    killSwitch.releaseUnregister();
+    const response = await pending;
+    assert.equal(response.reason, 'HTTP_COMPLETED');
+    assert.equal(response.unregisterFailed, undefined);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a failing unregister() surfaces as unregisterFailed, never as an unhandled rejection', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-http-unregister-fail-');
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const killSwitch = controllableKillSwitch('reject');
+    const context = await harness(directory, fakeTransport(), killSwitch);
+    const response = await context.adapter.get({ targetId: 'local-lab', url: 'http://localhost/health', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
+    // The HTTP request completed; only the bookkeeping failed, so the
+    // real result stands and the failure is reported honestly.
+    assert.equal(response.reason, 'HTTP_COMPLETED');
+    assert.equal(response.unregisterFailed, true);
+    assert.equal(killSwitch.unregisterCalls, 1);
+    // Let any escaping rejection surface before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('performs a GET to localhost through scope, approval, governor, kill switch, and audit', async (t) => {
   const directory = await makeTempDir(t, 'sentinel-http-');

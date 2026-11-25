@@ -7,6 +7,38 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Pending-promise audit (round 47, 2026-11-26)
+
+- Audited every unawaited async call in `src/` and `bin/` (all
+  `async` functions enumerated, every call site checked for
+  `await` / `return` / `.catch()` / both-handled `.then()`; also
+  `fs` promises, `new Promise(async ...)` executors, async timer
+  callbacks, and async event handlers). Four real risks fixed:
+  (1) the HTTP adapter's `cleanup()` called the async
+  `unregister()` fire-and-forget — `get()` could resolve before
+  the worker record was removed, and a write rejection became an
+  unhandled rejection; `finishRun` now awaits cleanup and never
+  rejects (a cleanup failure resolves with the real result plus
+  `unregisterFailed: true`); (2) the controlled wrapper's
+  timeout callback let a throwing `terminate()` hang the run
+  forever and escape unhandled — the run now always settles by
+  `timeoutMs`, reporting `terminationFailed: true`, and the kill
+  poller's catch-path `terminate()` is guarded the same way;
+  (3) the adapter poller's `catch { await cancel(); }` is
+  guarded with a nested `try/catch`; (4) lock close/unlink
+  ordering: a throwing `close()` used to skip the lock removal
+  (stale lock for up to 60 s) — new shared helper
+  `src/policy/lock-file.js` `closeAndRemoveLock` removes the
+  lock file even when `close()` throws, used by the audit log
+  and the CLI token-rotation lock. A regression guard runs on
+  every `npm test` (`tests/pending-promise-guard.test.js` +
+  `tests/pending-promise-allowlist.json`): it flags bare
+  `unregister()`, unallowlisted `.then(` and async timers, bare
+  `finishRun(`, and `new Promise(async`. The guard caught two
+  adapter `finishRun` sites the manual audit had missed before
+  the commit. Full audit, benign-site list, and guard limits in
+  `docs/pending-promise-audit-v1.md`.
+
 ### Test hygiene and Python-not-required (round 46, 2026-11-26)
 
 - Test temp dirs are now owned by a shared helper,

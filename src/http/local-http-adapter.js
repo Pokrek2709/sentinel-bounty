@@ -78,30 +78,51 @@ class LocalHttpAdapter {
     let settled = false;
     let finishRun;
     const workerId = `http-${reservation.reservationId}`;
-    const cleanup = () => {
+    // cleanup() is async: unregister() writes the kill-switch state
+    // under a lock, and the first version called it fire-and-forget
+    // here. A process that exited right after get() resolved could
+    // strand the worker record until lease expiry (blocking reset()
+    // with WORKERS_STILL_REGISTERED), and a write rejection became an
+    // unhandled rejection — there is no unhandledRejection handler
+    // anywhere in src/ or bin/, so Node would crash the process.
+    // finishRun therefore awaits cleanup and never rejects: a cleanup
+    // failure resolves with the real HTTP result plus
+    // unregisterFailed: true, so the outcome stays honest.
+    const cleanup = async () => {
       if (timer) clearTimeout(timer);
       if (poller) clearInterval(poller);
       this.#governor.release(reservation.reservationId);
-      unregister();
+      await unregister();
     };
     let unregister = () => {};
     const run = new Promise((resolve) => {
       const body = [];
       let bytes = 0;
+      // Never rejects by construction: cleanup() failures are
+      // converted to a resolved value (see cleanup above), so the two
+      // synchronous call sites (the 'error' handler and the timeout)
+      // may call it with `void` — the guard test enforces that every
+      // other call site awaits it.
       finishRun = (value) => {
-        if (settled) return;
+        if (settled) return Promise.resolve();
         settled = true;
-        cleanup();
-        resolve(value);
+        return Promise.resolve(cleanup()).then(
+          () => resolve(value),
+          () => resolve({ ...value, unregisterFailed: true }),
+        );
       };
       const cancel = async () => {
-        request?.destroy();
-        finishRun(result(false, 'PROCESS_FAILED', { cancellation: 'KILL_SWITCH_ACTIVE' }));
+        try {
+          request?.destroy();
+        } catch {
+          // Already destroyed; the finish below still runs.
+        }
+        await finishRun(result(false, 'PROCESS_FAILED', { cancellation: 'KILL_SWITCH_ACTIVE' }));
       };
       Promise.resolve(this.#killSwitch.registerWorker({ workerId, cancel })).then((registration) => {
         if (!registration.registered) {
           this.#governor.release(reservation.reservationId);
-          finishRun(result(false, registration.reason));
+          void finishRun(result(false, registration.reason));
           return;
         }
         unregister = registration.unregister || (() => {});
@@ -118,24 +139,41 @@ class LocalHttpAdapter {
                 : { action: 'UNSUPPORTED' };
               await this.#audit.append('HTTP_RESPONSE', { targetId, url, statusCode: response.statusCode, contentLength: bytes, redirected: [301, 302, 303, 307, 308].includes(response.statusCode), pressureAction: pressure.action });
               const headers = Object.fromEntries(Object.entries(response.headers).map(([key, value]) => [key, redact(value, key)]));
-              finishRun(result(true, 'HTTP_COMPLETED', { statusCode: response.statusCode, headers, body: body.join(''), truncated: bytes > this.#maxBodyBytes }));
+              await finishRun(result(true, 'HTTP_COMPLETED', { statusCode: response.statusCode, headers, body: body.join(''), truncated: bytes > this.#maxBodyBytes }));
             } catch {
-              finishRun(result(false, 'AUDIT_UNAVAILABLE'));
+              await finishRun(result(false, 'AUDIT_UNAVAILABLE'));
             }
           });
         });
-        request.once('error', (error) => finishRun(result(false, 'HTTP_ERROR', { errorCode: error.code || 'HTTP_ERROR' })));
-        timer = setTimeout(() => { request.destroy(); finishRun(result(false, 'HTTP_TIMEOUT', { timeoutMs: this.#timeoutMs })); }, this.#timeoutMs);
+        request.once('error', (error) => void finishRun(result(false, 'HTTP_ERROR', { errorCode: error.code || 'HTTP_ERROR' })));
+        timer = setTimeout(() => {
+          try {
+            request.destroy();
+          } catch {
+            // Already destroyed; the finish below still runs.
+          }
+          void finishRun(result(false, 'HTTP_TIMEOUT', { timeoutMs: this.#timeoutMs }));
+        }, this.#timeoutMs);
         poller = setInterval(async () => {
           if (settled) return;
           try {
             const current = await this.#killSwitch.assertNotTriggered();
             if (!current.allowed) await cancel();
           } catch {
-            await cancel();
+            // cancel() is non-rejecting by construction (finishRun
+            // converts cleanup failures to a resolved value and
+            // destroy() is guarded above), but a rejection escaping
+            // this interval callback would be unhandled and crash the
+            // process — there is no unhandledRejection handler. Never
+            // let it escape: a second cancel attempt is best-effort.
+            try {
+              await cancel();
+            } catch {
+              // Already finishing; the timeout is the backstop.
+            }
           }
         }, this.#pollIntervalMs);
-      }).catch(() => finishRun(result(false, 'PROCESS_ERROR')));
+      }).catch(() => void finishRun(result(false, 'PROCESS_ERROR')));
     });
     return run;
   }

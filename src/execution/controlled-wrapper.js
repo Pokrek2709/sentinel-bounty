@@ -199,7 +199,18 @@ class ControlledExecution {
           if (!currentKillStatus.allowed) await terminate({ cause: 'KILL_SWITCH' });
         } catch {
           // An unreadable kill-switch state is fail-closed: stop the child.
-          await terminate({ cause: 'KILL_SWITCH' });
+          // terminate() itself can throw (e.g. signalling a process
+          // group that no longer exists with an unexpected code): a
+          // rejection escaping this interval callback would be
+          // unhandled and crash the process — there is no
+          // unhandledRejection handler — so the retry is best-effort
+          // and swallowed. The run is still bounded: the timeout below
+          // always settles it.
+          try {
+            await terminate({ cause: 'KILL_SWITCH' });
+          } catch {
+            // Already stopping, or the child is gone.
+          }
         } finally {
           killCheckInFlight = false;
         }
@@ -219,8 +230,25 @@ class ControlledExecution {
       )));
       timer = setTimeout(async () => {
         timeoutTriggered = true;
-        await terminate();
-        finish(result(false, 'EXECUTION_TIMEOUT', { timeoutMs: this.#timeoutMs, stdout: output.stdout, stderr: output.stderr }));
+        let terminationFailed = false;
+        try {
+          await terminate();
+        } catch {
+          // terminate() can throw (e.g. signalling a process group
+          // with an unexpected error code). The old code let that
+          // rejection escape this callback — unhandled, crashing the
+          // process — AND never called finish(), so the run promise
+          // hung forever. The timeout is the backstop: the run always
+          // settles, and the failure is reported honestly in the
+          // result instead of being lost.
+          terminationFailed = true;
+        }
+        finish(result(false, 'EXECUTION_TIMEOUT', {
+          timeoutMs: this.#timeoutMs,
+          stdout: output.stdout,
+          stderr: output.stderr,
+          ...(terminationFailed ? { terminationFailed: true } : {}),
+        }));
       }, this.#timeoutMs);
     });
     return run;

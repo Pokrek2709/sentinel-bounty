@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { ensurePrivateDir } = require('../policy/state-permissions');
+const { closeAndRemoveLock } = require('../policy/lock-file');
 
 const MAX_RECORD_BYTES = 32 * 1024;
 const MAX_LOG_BYTES = 10 * 1024 * 1024;
@@ -143,8 +144,10 @@ class AuditLog {
       await this.#cleanupTemporaryFiles();
       return await operation();
     } finally {
-      await lock.close();
-      await fs.unlink(this.#lockFile).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+      // Round 47: close() throwing used to skip the lock removal and
+      // leave a stale lock behind for up to 60 s. closeAndRemoveLock
+      // removes the file even when close() throws.
+      await closeAndRemoveLock(lock, this.#lockFile);
     }
   }
 

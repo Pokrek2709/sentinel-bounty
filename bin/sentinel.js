@@ -16,6 +16,7 @@ const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
 const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/state-backup');
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
 const { runDrill } = require('../src/policy/incident-drill');
+const { closeAndRemoveLock } = require('../src/policy/lock-file');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -382,8 +383,10 @@ async function withTokenRotationLock(filePath, operation) {
   try {
     return await operation();
   } finally {
-    await handle.close();
-    await fs.unlink(lockFile).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+    // Round 47: close() throwing used to skip the lock removal and
+    // leave a stale rotation lock behind for up to 60 s. See
+    // src/policy/lock-file.js.
+    await closeAndRemoveLock(handle, lockFile);
   }
 }
 

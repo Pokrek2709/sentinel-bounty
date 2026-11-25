@@ -154,3 +154,72 @@ test('kill switch cancels an active wrapper worker and prevents future execution
   assert.equal(blocked.reason, 'KILL_SWITCH_ACTIVE');
   assert.equal(blocked.cancellation, 'KILL_SWITCH_ACTIVE');
 });
+
+// A child that can never be killed: kill() throws an error the
+// termination code does not classify (EPERM), so terminate() throws.
+// Round 47: the timeout path and the kill poller must both survive
+// that — the run settles by its timeout, the failure is reported,
+// and nothing escapes as an unhandled rejection.
+function unkillableProcess() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdout.setEncoding = () => {};
+  child.stderr.setEncoding = () => {};
+  child.pid = 999999;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = () => { throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' }); };
+  return child;
+}
+
+test('a throwing terminate() still settles the run by timeout and reports terminationFailed', async () => {
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const context = setup({ timeoutMs: 50, cancellationGraceMs: 0, spawnProcess: () => unkillableProcess() });
+    const result = await context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
+    assert.equal(result.reason, 'EXECUTION_TIMEOUT');
+    assert.equal(result.terminationFailed, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+  }
+});
+
+test('a throwing terminate() in the kill poller never escapes and the run still settles', async (t) => {
+  const directory = await makeTempDir(t, 'sentinel-wrapper-unkillable-');
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const stateFile = path.join(directory, 'kill-switch.json');
+    const skillDirectory = path.join(directory, 'skill');
+    const localKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    const remoteKillSwitch = new PersistentKillSwitch({ stateFile, skillDirectory, resetToken: 'local-reset-token-1234' });
+    const context = setup({
+      killSwitch: localKillSwitch,
+      killPollIntervalMs: 10,
+      timeoutMs: 500,
+      cancellationGraceMs: 0,
+      spawnProcess: () => unkillableProcess(),
+    });
+    const execution = context.wrapper.execute({ targetId: 'local-lab', requestUrl: 'https://example.test/', action: 'safe_scanning', toolName: 'node_version', approvalId: context.approvalId, estimatedRequests: 1, scopeFingerprint: context.fingerprint });
+    // The remote trigger fires while the run is active: the poller
+    // sees the armed switch and calls terminate(), which throws on
+    // the unkillable child — twice per tick (try, then the catch
+    // retry). The run must still settle by its timeout.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await remoteKillSwitch.trigger({ triggeredBy: 'remote-human', reason: 'Cross-process lab stop' });
+    const result = await execution;
+    assert.equal(result.reason, 'EXECUTION_TIMEOUT');
+    assert.equal(result.terminationFailed, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
