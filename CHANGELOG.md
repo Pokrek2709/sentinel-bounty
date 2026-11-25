@@ -7,6 +7,32 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Mixed-target reports with explicit opt-in (round 49, 2026-11-26)
+
+- A report covering more than one distinct `target_id` is now
+  refused by default (`REPORT_MIXED_TARGETS_REFUSED`, naming the
+  target count and every target, and pointing at the opt-in flag) —
+  the pre-round-49 generator rendered mixed input silently and put
+  only the first finding's `target_id` into JSON `target_id`,
+  dropping the rest (verified by probe before the change). With
+  `--allow-mixed-targets` (generator option `allowMixedTargets`)
+  the report groups by target first, then by asset within each
+  target (reusing `groupFindingsByAsset`), in deterministic order
+  (target ascending, asset ascending, severity, finding id), with
+  the finding number global across targets, and states the full
+  target list in its header in all three formats (Markdown sentence
+  + `## Target:` sections with `### Asset:` subsections; HTML
+  paragraph + `<h2>Target:` / `<h3>Asset:`; JSON `target_ids`
+  sorted array + `mixed_targets: true` + `target_id` per group,
+  while top-level `target_id` holds the first target in sorted
+  order, as `schemas/report.schema.json` still requires it).
+  Platform templates render one finding per report, so they can
+  never be mixed-target; the mixed-target check runs before the
+  template branch. Single-target output is byte-identical to
+  before (the round-44 golden hashes still pass). No automatic
+  splitting into one report per target; whether mixed-target
+  reports should ever be the default remains a user decision.
+
 ### Conservative semantic dedup v1 (round 48, 2026-11-26)
 
 - Second dedup pass after the exact-key dedup (`semanticDedupeFindings`

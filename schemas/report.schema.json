@@ -13,7 +13,9 @@
   ],
   "properties": {
     "report_id": { "type": "string" },
-    "target_id": { "type": "string" },
+    "target_id": { "type": "string", "description": "Target the report covers. In a multi-target report (mixed_targets true) this holds the first target in sorted order; target_ids lists all of them." },
+    "target_ids": { "type": "array", "items": { "type": "string" }, "description": "All targets covered, sorted ascending. Present only in multi-target reports (mixed_targets true)." },
+    "mixed_targets": { "type": "boolean", "description": "True when the report covers more than one target (opted in with --allow-mixed-targets). Single-target reports omit this field." },
     "session_id": { "type": "string" },
     "program_name": { "type": "string" },
     "generated_at": { "type": "string", "format": "date-time" },
@@ -38,10 +40,11 @@
     },
     "groups": {
       "type": "array",
-      "description": "Findings grouped by asset_id (generic reports only; platform-template JSON omits this field). Groups are ordered by asset_id ascending; findings inside a group by severity then finding_id. The flat findings array carries the same findings in grouped order.",
+      "description": "Findings grouped by asset_id (generic reports only; platform-template JSON omits this field). Groups are ordered by asset_id ascending; findings inside a group by severity then finding_id. The flat findings array carries the same findings in grouped order. In a multi-target report each group also carries its target_id, and groups are ordered by target_id ascending then asset_id ascending.",
       "items": {
         "type": "object",
         "properties": {
+          "target_id": { "type": "string", "description": "Target this group belongs to. Present only in multi-target reports." },
           "asset_id": { "type": "string" },
           "findings_count": { "type": "integer" },
           "findings_summary": {

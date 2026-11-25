@@ -14,6 +14,19 @@
 // a verdict: validation and deduplication happen before grouping, and
 // the validator's verdict is carried per finding, untouched.
 //
+// Mixed targets: a report input covering more than one distinct
+// `target_id` is REFUSED by default (`REPORT_MIXED_TARGETS_REFUSED`)
+// — a mixed-target report that names only one target would
+// misattribute findings, and the pre-round-49 generator did exactly
+// that: it rendered mixed input silently and put only the first
+// finding's target into JSON `target_id`, dropping the rest. The
+// operator may opt in with `allowMixedTargets` (CLI
+// `--allow-mixed-targets`): the report then groups by target first,
+// then by asset within each target, and states the full target list
+// in its header (Markdown, JSON, and HTML). Platform templates render
+// one finding per report, so they can never be mixed-target; the
+// mixed-target check runs before the template branch.
+//
 // Determinism: the same input always produces byte-identical output. No
 // wall-clock timestamp is ever generated here: `generated_at` comes from
 // the caller (the `--generated-at` flag, or the newest `created_at` among
@@ -295,6 +308,34 @@ function groupFindingsByAsset(findings) {
   return groups;
 }
 
+// Group findings by target_id first, then by asset_id within each
+// target. Returns [{ target_id, groups }] with targets ordered by
+// target_id ascending (plain string order) and asset groups in the
+// round-42 order (groupFindingsByAsset). The input array is never
+// mutated. A missing, empty, whitespace-only, or non-string
+// target_id maps to the "unassigned" target; in practice
+// `validateFinding` rejects such a finding first (target_id is a
+// required schema field), so the unassigned bucket is defensive for
+// direct callers — generateReport never sees it.
+function groupFindingsByTarget(findings) {
+  if (!Array.isArray(findings)) {
+    throw new Error('groupFindingsByTarget expects an array of findings.');
+  }
+  const byTarget = new Map();
+  for (const finding of findings) {
+    const raw = finding && typeof finding.target_id === 'string' ? finding.target_id.trim() : '';
+    const key = raw === '' ? 'unassigned' : raw;
+    if (!byTarget.has(key)) byTarget.set(key, []);
+    byTarget.get(key).push(finding);
+  }
+  return [...byTarget.entries()]
+    .sort((a, b) => compareStrings(a[0], b[0]))
+    .map(([targetId, targetFindings]) => ({
+      target_id: targetId,
+      groups: groupFindingsByAsset(targetFindings),
+    }));
+}
+
 // Deterministic report id: a hash of the program name and the sorted
 // finding ids only, so the same findings under the same program always
 // get the same id, independent of when the report was generated.
@@ -413,7 +454,7 @@ function markdownFinding(finding, number) {
   return lines.join('\n');
 }
 
-function renderMarkdown({ programName, generatedAt, counts, groups }) {
+function renderMarkdown({ programName, generatedAt, counts, groups, targetGroups, multiTarget, targetIds }) {
   const lines = [];
   lines.push(`# Bug Bounty Report — ${programName}`);
   lines.push('');
@@ -430,21 +471,39 @@ function renderMarkdown({ programName, generatedAt, counts, groups }) {
   lines.push('');
   lines.push(executiveSummary(counts, programName));
   lines.push('');
+  if (multiTarget) {
+    lines.push(`This report covers multiple targets: ${targetIds.join(', ')}.`);
+    lines.push('');
+  }
   // Findings render grouped by asset; the finding number is global
   // and sequential across groups, so a single-finding report keeps
-  // its existing numbering (only the group header is new).
+  // its existing numbering (only the group header is new). In
+  // multi-target mode the same asset sections nest under a
+  // `## Target:` section per target, and the finding number stays
+  // global across targets. The single-target rendering below is
+  // byte-identical to the pre-round-49 output: no target header is
+  // added when there is only one target.
   let number = 0;
-  groups.forEach((group) => {
+  const renderAssetGroup = (group, heading) => {
     const groupCounts = countBySeverity(group.findings);
     const severitySummary = SEVERITY_ORDER.map((severity) => `${severity}: ${groupCounts[severity]}`).join(', ');
     const noun = group.findings.length === 1 ? 'finding' : 'findings';
-    lines.push(`## Asset: ${group.asset_id} — ${group.findings.length} ${noun} (${severitySummary})`);
+    lines.push(`${heading} Asset: ${group.asset_id} — ${group.findings.length} ${noun} (${severitySummary})`);
     lines.push('');
     group.findings.forEach((finding) => {
       number += 1;
       lines.push(markdownFinding(finding, number));
     });
-  });
+  };
+  if (multiTarget) {
+    targetGroups.forEach((targetGroup) => {
+      lines.push(`## Target: ${targetGroup.target_id}`);
+      lines.push('');
+      targetGroup.groups.forEach((group) => renderAssetGroup(group, '###'));
+    });
+  } else {
+    groups.forEach((group) => renderAssetGroup(group, '##'));
+  }
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
@@ -548,7 +607,7 @@ function htmlFinding(finding, number) {
 // Deterministic: the same input always produces byte-identical output
 // (grouping order comes from groupFindingsByAsset; `generated_at` is
 // caller-supplied or "Not specified", never the wall clock).
-function renderHtml({ reportId, programName, generatedAt, counts, groups, summary }) {
+function renderHtml({ reportId, programName, generatedAt, counts, groups, targetGroups, multiTarget, targetIds, summary }) {
   const lines = [];
   lines.push('<!DOCTYPE html>');
   lines.push('<html lang="en">');
@@ -572,23 +631,38 @@ function renderHtml({ reportId, programName, generatedAt, counts, groups, summar
   lines.push(`<tr><td>total</td><td class="num">${counts.total}</td></tr>`);
   lines.push('</table>');
   lines.push(`<p>${escapeHtml(summary)}</p>`);
+  if (multiTarget) {
+    lines.push(`<p>This report covers multiple targets: ${targetIds.map((targetId) => escapeHtml(targetId)).join(', ')}</p>`);
+  }
+  // Single-target rendering is byte-identical to the pre-round-49
+  // output: no target heading is added when there is only one target.
+  // Multi-target mode nests the asset sections under a per-target
+  // heading, with the same global finding numbering.
   let number = 0;
-  groups.forEach((group) => {
+  const renderAssetGroup = (group, headingTag) => {
     const groupCounts = countBySeverity(group.findings);
     const severitySummary = SEVERITY_ORDER.map((severity) => `${severity}: ${groupCounts[severity]}`).join(', ');
     const noun = group.findings.length === 1 ? 'finding' : 'findings';
-    lines.push(`<h2>Asset: ${escapeHtml(group.asset_id)} — ${group.findings.length} ${noun} (${severitySummary})</h2>`);
+    lines.push(`<${headingTag}>Asset: ${escapeHtml(group.asset_id)} — ${group.findings.length} ${noun} (${severitySummary})</${headingTag}>`);
     group.findings.forEach((finding) => {
       number += 1;
       lines.push(htmlFinding(finding, number));
     });
-  });
+  };
+  if (multiTarget) {
+    targetGroups.forEach((targetGroup) => {
+      lines.push(`<h2>Target: ${escapeHtml(targetGroup.target_id)}</h2>`);
+      targetGroup.groups.forEach((group) => renderAssetGroup(group, 'h3'));
+    });
+  } else {
+    groups.forEach((group) => renderAssetGroup(group, 'h2'));
+  }
   lines.push('</body>');
   lines.push('</html>');
   return `${lines.join('\n')}\n`;
 }
 
-function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template, groups }) {
+function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template, groups, targetGroups, multiTarget, targetIds }) {
   // Each finding carries its per-class evidence checklist (see
   // src/analysis/validator.js evidenceChecklistForClass): the class
   // that matched, and every checklist item with present/required.
@@ -607,20 +681,45 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
     findings_summary: counts,
     findings: findingsWithChecklist,
   };
+  // Multi-target reports state the full target list explicitly:
+  // `target_id` is still required by schemas/report.schema.json, so
+  // it holds the first target in sorted order (the same value the
+  // single-target path carries); `target_ids` is the authoritative
+  // list, and `mixed_targets` marks the report so no consumer can
+  // mistake it for a single-target report.
+  if (multiTarget) {
+    report.target_ids = [...targetIds];
+    report.mixed_targets = true;
+  }
   // Generic reports carry the asset grouping alongside the flat
   // findings array (which stays in grouped order). Platform-template
   // JSON keeps its previous flat shape: a template renders one
   // finding per report, so grouping adds nothing and is omitted.
+  // In multi-target mode each group also carries its target_id, so
+  // a group can never be read as belonging to the wrong target.
   if (groups) {
-    report.groups = groups.map((group) => ({
-      asset_id: group.asset_id,
-      findings_count: group.findings.length,
-      findings_summary: countBySeverity(group.findings),
-      findings: group.findings.map((finding) => ({
-        ...finding,
-        evidence_checklist: evidenceChecklistForClass(finding),
-      })),
-    }));
+    if (multiTarget) {
+      report.groups = targetGroups.flatMap((targetGroup) => targetGroup.groups.map((group) => ({
+        target_id: targetGroup.target_id,
+        asset_id: group.asset_id,
+        findings_count: group.findings.length,
+        findings_summary: countBySeverity(group.findings),
+        findings: group.findings.map((finding) => ({
+          ...finding,
+          evidence_checklist: evidenceChecklistForClass(finding),
+        })),
+      })));
+    } else {
+      report.groups = groups.map((group) => ({
+        asset_id: group.asset_id,
+        findings_count: group.findings.length,
+        findings_summary: countBySeverity(group.findings),
+        findings: group.findings.map((finding) => ({
+          ...finding,
+          evidence_checklist: evidenceChecklistForClass(finding),
+        })),
+      }));
+    }
   }
   if (sessionId) report.session_id = sessionId;
   if (template) report.template = template;
@@ -628,30 +727,50 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
 }
 
 // Generate a report from one or more validated findings.
-// options: { programName, generatedAt, format, template } — format is
-// 'markdown' (default), 'json', or 'html'; template is 'generic'
-// (default) or the name of a platform template (see
-// src/report/templates.js). A named template renders exactly one
-// finding per report — the platforms accept one bug per submission —
-// and its required sections fail cleanly when their source field is
-// missing, instead of inventing content. Platform templates are
-// Markdown-only: requesting one with `--format html` fails cleanly.
-// Findings are grouped by asset_id before rendering (see
-// groupFindingsByAsset); the flat JSON `findings` array follows the
-// same grouped order, and `target_id` / `session_id` come from the
-// first finding in grouped order. Throws on any validation failure;
-// nothing is written by this function, so a failure can never leave a
-// half-written output file.
+// options: { programName, generatedAt, format, template,
+// allowMixedTargets } — format is 'markdown' (default), 'json', or
+// 'html'; template is 'generic' (default) or the name of a platform
+// template (see src/report/templates.js). A named template renders
+// exactly one finding per report — the platforms accept one bug per
+// submission — and its required sections fail cleanly when their
+// source field is missing, instead of inventing content. Platform
+// templates are Markdown-only: requesting one with `--format html`
+// fails cleanly. Findings are grouped by target first, then by
+// asset_id within each target (see groupFindingsByTarget); the flat
+// JSON `findings` array follows the same grouped order, and
+// `target_id` / `session_id` come from the first finding in grouped
+// order. By default a report covering more than one distinct
+// `target_id` is refused (`REPORT_MIXED_TARGETS_REFUSED`); pass
+// `allowMixedTargets: true` (CLI `--allow-mixed-targets`) to opt in
+// explicitly. Throws on any validation failure; nothing is written
+// by this function, so a failure can never leave a half-written
+// output file.
 function generateReport(findings, options = {}) {
   if (!Array.isArray(findings) || findings.length === 0) {
     throw new Error('At least one finding is required to generate a report.');
   }
   const validated = findings.map((finding, index) => validateFinding(finding, index));
+  // Mixed-target refusal (round 49): the distinct targets are the
+  // trimmed target_ids in sorted order. The check runs after
+  // validation, so a missing target_id still fails as a missing
+  // required field first. A template report can never trip this
+  // check: templates render one finding, which carries one target.
+  const targetIds = [...new Set(validated.map((finding) => String(finding.target_id).trim()))].sort(compareStrings);
+  const allowMixedTargets = options.allowMixedTargets === true;
+  if (targetIds.length > 1 && !allowMixedTargets) {
+    throw new Error(
+      `REPORT_MIXED_TARGETS_REFUSED: report covers ${targetIds.length} targets (${targetIds.join(', ')}). ` +
+      'Refusing to render a multi-target report by default: a report that names only one target would misattribute findings. ' +
+      'Pass --allow-mixed-targets to opt in explicitly.',
+    );
+  }
+  const multiTarget = targetIds.length > 1;
   // Grouping is a pure reorder of the validated set: verdicts were
   // already computed by the validator (and deduplication, when the
   // caller runs it, happens before this call), so grouping cannot
   // change what a finding says — only where it renders.
-  const groups = groupFindingsByAsset(validated);
+  const targetGroups = groupFindingsByTarget(validated);
+  const groups = targetGroups.flatMap((targetGroup) => targetGroup.groups);
   const orderedFindings = groups.flatMap((group) => group.findings);
   const programName = typeof options.programName === 'string' && options.programName.trim()
     ? options.programName.trim()
@@ -722,6 +841,9 @@ function generateReport(findings, options = {}) {
       findings: orderedFindings,
       summary,
       groups,
+      targetGroups,
+      multiTarget,
+      targetIds,
     });
   }
   if (format === 'html') {
@@ -731,10 +853,13 @@ function generateReport(findings, options = {}) {
       generatedAt,
       counts,
       groups,
+      targetGroups,
+      multiTarget,
+      targetIds,
       summary,
     });
   }
-  return renderMarkdown({ programName, generatedAt, counts, groups });
+  return renderMarkdown({ programName, generatedAt, counts, groups, targetGroups, multiTarget, targetIds });
 }
 
-module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, escapeHtml, SEVERITY_ORDER };
+module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, SEVERITY_ORDER };

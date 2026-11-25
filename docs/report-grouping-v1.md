@@ -71,12 +71,16 @@ deliberate and tested, not an oversight.
 ## What is NOT implemented
 
 - **Mixed-target grouping is still an open policy decision.**
-  Findings from different targets in one report are grouped by
-  asset but are NOT split into separate per-target reports, and
-  `target_id` / `session_id` still come from a single (first, in
-  grouped order) finding. Grouping by asset within one report is
-  not the same as grouping across targets; the cross-target policy
-  (split, tag, or refuse) needs a user decision.
+  Findings from different targets in one report are REFUSED by
+  default (`REPORT_MIXED_TARGETS_REFUSED`) since round 49: the
+  pre-round-49 generator rendered mixed input silently and put only
+  the first finding's target into JSON `target_id`. With
+  `--allow-mixed-targets` the report groups by target first, then
+  by asset, and states the full target list in its header — see
+  [report-mixed-targets-v1](report-mixed-targets-v1.md). Grouping by
+  asset within one report is not the same as grouping across
+  targets; the cross-target policy (split, tag, or refuse) is
+  decided as "refuse by default, tag + group with opt-in".
 - No grouping by severity alone, by CWE, or by vulnerability type —
   asset is the only grouping key in v1.
 

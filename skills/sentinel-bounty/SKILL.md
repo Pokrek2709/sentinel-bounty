@@ -47,12 +47,16 @@ Findings render grouped by `asset_id` (groups ordered by asset_id
 ascending, findings inside a group by severity then finding_id, with a
 global finding number across groups; the generic JSON report carries a
 `groups` array alongside the flat findings array in the same grouped
-order, while platform-template JSON omits it). The HTML export renders
+order, while platform-template JSON omits it). A report covering more
+than one distinct `target_id` is refused by default
+(`REPORT_MIXED_TARGETS_REFUSED`); the operator opts in with
+`--allow-mixed-targets`, and the report then groups by target first,
+then by asset, stating the full target list in its header. The HTML export renders
 the same grouped findings as a single self-contained file (inline CSS
 only, no JavaScript, no external resources, every value HTML-escaped;
 references render as inert text, never as links). See
-`docs/report-grouping-v1.md`, `docs/evidence-checklists-v1.md`, and
-`docs/report-html-v1.md`.
+`docs/report-grouping-v1.md`, `docs/report-mixed-targets-v1.md`,
+`docs/evidence-checklists-v1.md`, and `docs/report-html-v1.md`.
 
 These commands make no network request and execute no security scanner.
 
