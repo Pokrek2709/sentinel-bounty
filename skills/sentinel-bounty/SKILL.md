@@ -31,19 +31,23 @@ sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]
 sentinel audit verify [--state-dir <path>]
 sentinel backup --out <file> [--state-dir <path>]
 sentinel restore --from <file> [--state-dir <path>]
-sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]
-sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]
+sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>]
+sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html] [--generated-at <iso>] [--program <name>]
 ```
 
 `sentinel check-env` is a local capability report (zero network requests, no scanner): it enforces the Node.js 18 minimum (`runtime`), checks the documented tools from `config/environment-tools.json` (`docker`, `subfinder`, `dnsx`, `httpx`, `katana`) and reports each unavailable tool's purpose and install hint, probes writable storage and cross-run persistence (`filesystem`), and probes the kill-switch state machinery in an isolated temporary directory (`processTermination`; end-to-end cancellation is proven by `sentinel drill`). It exits 0 even when tools are unavailable — it reports, it does not gate; `sentinel verify-install` is the gate. See `docs/check-env-audit-v1.md`.
 
-`sentinel report` renders validated findings into a deterministic bug-bounty report (Markdown by default, JSON with `--format json`); a finding whose severity disagrees with its CVSS score, or that is missing a required field, fails instead of producing a report. `--template immunefi|code4rena` renders one finding into a platform's section layout (one finding per report; a finding without a proof of concept fails for those templates); `--template generic` is the default multi-finding report. Every rendered finding carries its per-class evidence checklist (`knowledge/evidence-checklists.json`, 8 classes, generic fallback): the Markdown report adds an `### Evidence Checklist` section naming the class and marking each item present/missing and required/recommended, and the JSON report attaches it as `evidence_checklist` on each finding; platform templates render their fixed sections only in Markdown.
+`sentinel report` renders validated findings into a deterministic bug-bounty report (Markdown by default, JSON with `--format json`, standalone HTML with `--format html` — one self-contained file, inline CSS only, no JavaScript, no external resources, every value HTML-escaped); a finding whose severity disagrees with its CVSS score, or that is missing a required field, fails instead of producing a report. `--template immunefi|code4rena` renders one finding into a platform's section layout (one finding per report; a finding without a proof of concept fails for those templates; platform templates are Markdown-only, so `--format html` with a template fails cleanly); `--template generic` is the default multi-finding report. Every rendered finding carries its per-class evidence checklist (`knowledge/evidence-checklists.json`, 8 classes, generic fallback): the Markdown report adds an `### Evidence Checklist` section naming the class and marking each item present/missing and required/recommended, and the JSON report attaches it as `evidence_checklist` on each finding; platform templates render their fixed sections only in Markdown.
 Findings render grouped by `asset_id` (groups ordered by asset_id
 ascending, findings inside a group by severity then finding_id, with a
 global finding number across groups; the generic JSON report carries a
 `groups` array alongside the flat findings array in the same grouped
-order, while platform-template JSON omits it). See
-`docs/report-grouping-v1.md` and `docs/evidence-checklists-v1.md`.
+order, while platform-template JSON omits it). The HTML export renders
+the same grouped findings as a single self-contained file (inline CSS
+only, no JavaScript, no external resources, every value HTML-escaped;
+references render as inert text, never as links). See
+`docs/report-grouping-v1.md`, `docs/evidence-checklists-v1.md`, and
+`docs/report-html-v1.md`.
 
 These commands make no network request and execute no security scanner.
 

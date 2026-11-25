@@ -1,5 +1,5 @@
 // Reporting engine (Phase 7): renders VALIDATED finding objects into a
-// deterministic bug-bounty report (Markdown or JSON).
+// deterministic bug-bounty report (Markdown, JSON, or standalone HTML).
 //
 // Grouping: findings are grouped by `asset_id` before rendering.
 // Groups are ordered by asset_id ascending (plain string order, never
@@ -51,9 +51,17 @@
 // `evidenceChecklistForClass`): the Markdown report renders it as an
 // "Evidence Checklist" section naming the class and marking each item
 // present/missing and required/recommended; the JSON report attaches
-// it as `evidence_checklist` on each finding. Platform templates
+// it as `evidence_checklist` on each finding; the HTML report renders
+// it as a list with the same [x]/[ ] marks. Platform templates
 // (Immunefi/Code4rena) render their own fixed sections and do not
 // carry the checklist in Markdown; their JSON form still does.
+//
+// HTML output: a single self-contained file (inline CSS only, no
+// JavaScript, no external resources). Finding content is UNTRUSTED —
+// it can contain attacker-controlled strings — so every interpolated
+// value is HTML-escaped before it reaches the output (see
+// `escapeHtml`); references and asset URLs render as inert text, never
+// as links, so no `href`/`src` attribute exists anywhere in the file.
 //
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
@@ -300,6 +308,27 @@ function formatValue(value, fallback = 'Not provided') {
   return String(value);
 }
 
+// Escape a value for HTML text content. Every interpolated value in
+// the HTML report goes through this — finding content is untrusted and
+// may contain markup, quotes, or `javascript:`-style strings, which
+// must render as inert text, never as executable markup. Attribute
+// contexts do not exist in the HTML report at all (no href/src), so
+// text escaping is the only context that needs covering; the single
+// quote is escaped anyway, so a future attribute would not silently
+// become safe by accident — it would still need its own review.
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function htmlText(value, fallback = 'Not provided') {
+  return escapeHtml(formatValue(value, fallback));
+}
+
 function markdownFinding(finding, number) {
   const lines = [];
   lines.push(`## ${number}. ${finding.title} [${finding.severity.toUpperCase()}]`);
@@ -406,6 +435,143 @@ function renderMarkdown({ programName, generatedAt, counts, groups }) {
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
+// Inline stylesheet for the HTML report. Kept deliberately small and
+// static: no external fonts, images, or stylesheets, no JavaScript.
+// Severity colours are the only semantic styling; the page stays
+// readable with styles disabled because every value is also present
+// as text (the severity label, the [x]/[ ] marks).
+const HTML_STYLES = [
+  'body{font-family:system-ui,sans-serif;margin:2em auto;max-width:60em;padding:0 1em;color:#111}',
+  'h1{font-size:1.5em}h2{font-size:1.25em;border-bottom:1px solid #999;padding-bottom:.25em}',
+  'h3{font-size:1.1em}h4{font-size:1em;margin-bottom:.25em}',
+  'table{border-collapse:collapse}th,td{border:1px solid #999;padding:.25em .75em;text-align:left}',
+  'td.num{text-align:right}.sev{font-weight:bold;padding:.1em .4em;border-radius:.25em}',
+  '.sev-critical{background:#f8d7da}.sev-high{background:#ffe0b3}.sev-medium{background:#fff3cd}',
+  '.sev-low{background:#d1ecf1}.sev-informational{background:#e2e3e5}',
+  'article{border:1px solid #999;padding:0 1em;margin-bottom:1em}',
+  'dt{font-weight:bold}dd{margin:0 0 .5em 0}',
+].join('\n');
+
+function htmlFinding(finding, number) {
+  const lines = [];
+  lines.push('<article>');
+  lines.push(`<h3>${number}. ${escapeHtml(finding.title)} <span class="sev sev-${finding.severity}">${escapeHtml(finding.severity.toUpperCase())}</span></h3>`);
+  lines.push('<dl>');
+  lines.push(`<dt>Finding ID</dt><dd>${escapeHtml(finding.finding_id)}</dd>`);
+  lines.push(`<dt>Severity</dt><dd>${escapeHtml(finding.severity)}</dd>`);
+  const cvssLine = finding.cvss_score !== undefined && finding.cvss_score !== null
+    ? escapeHtml(String(finding.cvss_score)) + (finding.cvss_vector ? ` (${escapeHtml(finding.cvss_vector)})` : '')
+    : 'Not scored';
+  lines.push(`<dt>CVSS</dt><dd>${cvssLine}</dd>`);
+  if (finding.cvss_temporal_score !== undefined && finding.cvss_temporal_score !== null) {
+    lines.push(`<dt>CVSS temporal</dt><dd>${escapeHtml(String(finding.cvss_temporal_score))}</dd>`);
+  }
+  if (finding.cvss_environmental_score !== undefined && finding.cvss_environmental_score !== null) {
+    lines.push(`<dt>CVSS environmental</dt><dd>${escapeHtml(String(finding.cvss_environmental_score))}</dd>`);
+  }
+  lines.push(`<dt>CWE</dt><dd>${htmlText(finding.cwe_id)}</dd>`);
+  lines.push(`<dt>Vulnerability type</dt><dd>${escapeHtml(finding.vulnerability_type)}</dd>`);
+  const component = finding.asset_url
+    ? `${escapeHtml(finding.asset_id)} (${escapeHtml(finding.asset_url)})`
+    : escapeHtml(finding.asset_id);
+  lines.push(`<dt>Affected component</dt><dd>${component}</dd>`);
+  lines.push(`<dt>Confidence</dt><dd>${escapeHtml(finding.confidence)}</dd>`);
+  lines.push(`<dt>Validation status</dt><dd>${escapeHtml(finding.validation_status)}</dd>`);
+  lines.push('</dl>');
+  lines.push('<h4>Description</h4>');
+  lines.push(`<p>${escapeHtml(finding.description)}</p>`);
+  lines.push('<h4>Steps to Reproduce</h4>');
+  lines.push('<ol>');
+  finding.steps_to_reproduce.forEach((step) => {
+    lines.push(`<li>${escapeHtml(step)}</li>`);
+  });
+  lines.push('</ol>');
+  lines.push('<h4>Proof of Concept</h4>');
+  lines.push(`<p>${htmlText(finding.proof_of_concept)}</p>`);
+  if (Array.isArray(finding.evidence) && finding.evidence.length > 0) {
+    finding.evidence.forEach((item, index) => {
+      lines.push(`<p>Evidence ${index + 1}:</p>`);
+      lines.push('<ul>');
+      if (item.request) lines.push(`<li>Request: ${escapeHtml(item.request)}</li>`);
+      if (item.response) lines.push(`<li>Response: ${escapeHtml(item.response)}</li>`);
+      if (item.notes) lines.push(`<li>Notes: ${escapeHtml(item.notes)}</li>`);
+      lines.push('</ul>');
+    });
+  }
+  lines.push('<h4>Evidence Checklist</h4>');
+  const checklist = evidenceChecklistForClass(finding);
+  const classNote = checklist.classId === 'generic'
+    ? ' — the vulnerability type matched no class, so the generic checklist applies'
+    : '';
+  lines.push(`<p>Class: ${escapeHtml(checklist.label)}${escapeHtml(classNote)}</p>`);
+  lines.push('<ul>');
+  checklist.items.forEach((entry) => {
+    const box = entry.present ? '[x]' : '[ ]';
+    const suffix = entry.present ? '' : ' — missing';
+    lines.push(`<li>${box} ${escapeHtml(entry.item)} (${entry.required ? 'required' : 'recommended'})${suffix}</li>`);
+  });
+  lines.push('</ul>');
+  lines.push('<h4>Impact</h4>');
+  lines.push(`<p>${escapeHtml(finding.impact)}</p>`);
+  lines.push('<h4>Remediation</h4>');
+  lines.push(`<p>${escapeHtml(finding.remediation)}</p>`);
+  lines.push('<h4>References</h4>');
+  if (Array.isArray(finding.references) && finding.references.length > 0) {
+    lines.push('<ul>');
+    finding.references.forEach((reference) => lines.push(`<li>${escapeHtml(reference)}</li>`));
+    lines.push('</ul>');
+  } else {
+    lines.push('<p>Not provided</p>');
+  }
+  lines.push('</article>');
+  return lines.join('\n');
+}
+
+// Render the same grouped findings as Markdown, as one self-contained
+// HTML file: inline CSS only, no JavaScript, no external resources.
+// Deterministic: the same input always produces byte-identical output
+// (grouping order comes from groupFindingsByAsset; `generated_at` is
+// caller-supplied or "Not specified", never the wall clock).
+function renderHtml({ reportId, programName, generatedAt, counts, groups, summary }) {
+  const lines = [];
+  lines.push('<!DOCTYPE html>');
+  lines.push('<html lang="en">');
+  lines.push('<head>');
+  lines.push('<meta charset="utf-8">');
+  lines.push(`<title>Bug Bounty Report — ${escapeHtml(programName)}</title>`);
+  lines.push('<style>');
+  lines.push(HTML_STYLES);
+  lines.push('</style>');
+  lines.push('</head>');
+  lines.push('<body>');
+  lines.push(`<h1>Bug Bounty Report — ${escapeHtml(programName)}</h1>`);
+  lines.push(`<p>Report ID: ${escapeHtml(reportId)}</p>`);
+  lines.push(`<p>Generated: ${escapeHtml(generatedAt || 'Not specified')}</p>`);
+  lines.push('<h2>Summary</h2>');
+  lines.push('<table>');
+  lines.push('<tr><th>Severity</th><th>Count</th></tr>');
+  SEVERITY_ORDER.forEach((severity) => {
+    lines.push(`<tr><td>${severity}</td><td class="num">${counts[severity]}</td></tr>`);
+  });
+  lines.push(`<tr><td>total</td><td class="num">${counts.total}</td></tr>`);
+  lines.push('</table>');
+  lines.push(`<p>${escapeHtml(summary)}</p>`);
+  let number = 0;
+  groups.forEach((group) => {
+    const groupCounts = countBySeverity(group.findings);
+    const severitySummary = SEVERITY_ORDER.map((severity) => `${severity}: ${groupCounts[severity]}`).join(', ');
+    const noun = group.findings.length === 1 ? 'finding' : 'findings';
+    lines.push(`<h2>Asset: ${escapeHtml(group.asset_id)} — ${group.findings.length} ${noun} (${severitySummary})</h2>`);
+    group.findings.forEach((finding) => {
+      number += 1;
+      lines.push(htmlFinding(finding, number));
+    });
+  });
+  lines.push('</body>');
+  lines.push('</html>');
+  return `${lines.join('\n')}\n`;
+}
+
 function renderJson({ reportId, targetId, sessionId, programName, generatedAt, counts, findings, summary, template, groups }) {
   // Each finding carries its per-class evidence checklist (see
   // src/analysis/validator.js evidenceChecklistForClass): the class
@@ -447,16 +613,19 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
 
 // Generate a report from one or more validated findings.
 // options: { programName, generatedAt, format, template } — format is
-// 'markdown' (default) or 'json'; template is 'generic' (default) or the
-// name of a platform template (see src/report/templates.js). A named
-// template renders exactly one finding per report — the platforms accept
-// one bug per submission — and its required sections fail cleanly when
-// their source field is missing, instead of inventing content. Findings
-// are grouped by asset_id before rendering (see groupFindingsByAsset);
-// the flat JSON `findings` array follows the same grouped order, and
-// `target_id` / `session_id` come from the first finding in grouped
-// order. Throws on any validation failure; nothing is written by this
-// function, so a failure can never leave a half-written output file.
+// 'markdown' (default), 'json', or 'html'; template is 'generic'
+// (default) or the name of a platform template (see
+// src/report/templates.js). A named template renders exactly one
+// finding per report — the platforms accept one bug per submission —
+// and its required sections fail cleanly when their source field is
+// missing, instead of inventing content. Platform templates are
+// Markdown-only: requesting one with `--format html` fails cleanly.
+// Findings are grouped by asset_id before rendering (see
+// groupFindingsByAsset); the flat JSON `findings` array follows the
+// same grouped order, and `target_id` / `session_id` come from the
+// first finding in grouped order. Throws on any validation failure;
+// nothing is written by this function, so a failure can never leave a
+// half-written output file.
 function generateReport(findings, options = {}) {
   if (!Array.isArray(findings) || findings.length === 0) {
     throw new Error('At least one finding is required to generate a report.');
@@ -488,8 +657,8 @@ function generateReport(findings, options = {}) {
   const counts = countBySeverity(validated);
   const summary = executiveSummary(counts, programName);
   const format = options.format || 'markdown';
-  if (format !== 'markdown' && format !== 'json') {
-    throw new Error(`Invalid format: ${format} (expected "markdown" or "json").`);
+  if (format !== 'markdown' && format !== 'json' && format !== 'html') {
+    throw new Error(`Invalid format: ${format} (expected "markdown", "json", or "html").`);
   }
   if (format === 'json' && !generatedAt) {
     // schemas/report.schema.json requires generated_at as a date-time
@@ -501,6 +670,9 @@ function generateReport(findings, options = {}) {
     ? options.template.trim()
     : 'generic';
   if (templateName !== 'generic') {
+    if (format === 'html') {
+      throw new Error(`Template "${templateName}" renders Markdown only; HTML output uses the generic template.`);
+    }
     const template = loadTemplate(templateName);
     if (validated.length !== 1) {
       throw new Error(
@@ -536,7 +708,17 @@ function generateReport(findings, options = {}) {
       groups,
     });
   }
+  if (format === 'html') {
+    return renderHtml({
+      reportId: deriveReportId(programName, validated),
+      programName,
+      generatedAt,
+      counts,
+      groups,
+      summary,
+    });
+  }
   return renderMarkdown({ programName, generatedAt, counts, groups });
 }
 
-module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, SEVERITY_ORDER };
+module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, escapeHtml, SEVERITY_ORDER };

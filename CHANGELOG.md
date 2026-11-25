@@ -7,6 +7,30 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Standalone HTML report export (round 44, 2026-11-26)
+
+- `sentinel report --format html` renders the same validated,
+  grouped findings as Markdown/JSON into one self-contained HTML
+  file: inline CSS only, no JavaScript, no external resources (no
+  CDN links, images, fonts, `@import`, `url()`, or any `href`/`src`
+  attribute). It carries report ID, severity summary, executive
+  summary, per-asset sections in the round-42 grouping order, CVSS
+  base/temporal/environmental scores, and the per-class evidence
+  checklist with `[x]`/`[ ]` marks; it is deterministic
+  (byte-identical across runs and input orders). Finding content is
+  untrusted, so every interpolated value is HTML-escaped
+  (`escapeHtml`, exported from `src/report/generator.js`);
+  references and asset URLs render as inert text, never as links.
+  The hostile-content test pins the honest subtlety: `onerror`,
+  `onload`, `src=`, and `javascript:` still appear in the file as
+  escaped text inside `&lt;...&gt;` — the check is tag-based (every
+  tag must be one the generator emits, no tag may carry
+  `href`/`src`), not string-absence. Platform templates stay
+  Markdown-only: `--format html` with `--template immunefi|code4rena`
+  fails cleanly. Markdown/JSON output is unchanged (golden SHA-256
+  hashes pinned in `tests/report-html.test.js`). Suite 305 → 316
+  tests. See `docs/report-html-v1.md`.
+
 ### Audit-log hash chain and `audit verify` (round 43, 2026-11-26)
 
 - Every audit record now carries a SHA-256 hash chained to the
