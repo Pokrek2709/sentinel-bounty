@@ -104,12 +104,11 @@ report shows the score instead of "Not scored".
 
 ## Known limitations
 
-- **Base metrics only.** Temporal (E, RL, RC) and environmental
-  (CR, IR, AR, MAV, MAC, MPR, MUI, MS, MC, MI, MA) metrics are out
-  of scope: a vector carrying them is rejected as an unknown metric.
-  Adding them would need the temporal/environmental formulas plus a
-  decision about which score (base vs temporal vs environmental) the
-  severity bands and the report use.
+- **Temporal/environmental metrics are implemented now** (round 38)
+  — see [cvss-temporal-environmental-v1](cvss-temporal-environmental-v1.md)
+  for the parser extensions, formulas, precedence rules, and its
+  own limitations. This module used to reject vectors carrying them
+  as unknown metrics; it no longer does.
 - **The stub normalizer does not cross-check the vector.**
   `src/detection/normalized-record.js` derives severity from the
   declared score only; a raw record whose vector disagrees with its

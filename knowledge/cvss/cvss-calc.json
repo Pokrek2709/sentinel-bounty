@@ -37,6 +37,69 @@
       "values": { "H": 0.56, "L": 0.22, "N": 0.0 }
     }
   },
+  "temporal": {
+    "E": {
+      "name": "Exploit Code Maturity",
+      "values": { "X": 1.0, "U": 0.91, "P": 0.94, "F": 0.97, "H": 1.0 }
+    },
+    "RL": {
+      "name": "Remediation Level",
+      "values": { "X": 1.0, "O": 0.95, "T": 0.96, "W": 0.97, "U": 1.0 }
+    },
+    "RC": {
+      "name": "Report Confidence",
+      "values": { "X": 1.0, "U": 0.92, "R": 0.96, "C": 1.0 }
+    }
+  },
+  "environmental": {
+    "CR": {
+      "name": "Confidentiality Requirement",
+      "values": { "X": 1.0, "L": 0.5, "M": 1.0, "H": 1.5 }
+    },
+    "IR": {
+      "name": "Integrity Requirement",
+      "values": { "X": 1.0, "L": 0.5, "M": 1.0, "H": 1.5 }
+    },
+    "AR": {
+      "name": "Availability Requirement",
+      "values": { "X": 1.0, "L": 0.5, "M": 1.0, "H": 1.5 }
+    },
+    "MAV": {
+      "name": "Modified Attack Vector",
+      "values": { "X": null, "N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2 }
+    },
+    "MAC": {
+      "name": "Modified Attack Complexity",
+      "values": { "X": null, "L": 0.77, "H": 0.44 }
+    },
+    "MPR": {
+      "name": "Modified Privileges Required",
+      "values": {
+        "unchanged": { "X": null, "N": 0.85, "L": 0.62, "H": 0.27 },
+        "changed": { "X": null, "N": 0.85, "L": 0.68, "H": 0.5 }
+      }
+    },
+    "MUI": {
+      "name": "Modified User Interaction",
+      "values": { "X": null, "N": 0.85, "R": 0.62 }
+    },
+    "MS": {
+      "name": "Modified Scope",
+      "values": { "X": null, "U": "Unchanged", "C": "Changed" }
+    },
+    "MC": {
+      "name": "Modified Confidentiality",
+      "values": { "X": null, "H": 0.56, "L": 0.22, "N": 0.0 }
+    },
+    "MI": {
+      "name": "Modified Integrity",
+      "values": { "X": null, "H": 0.56, "L": 0.22, "N": 0.0 }
+    },
+    "MA": {
+      "name": "Modified Availability",
+      "values": { "X": null, "H": 0.56, "L": 0.22, "N": 0.0 }
+    }
+  },
   "severity_ratings": [
     { "min": 9.0, "max": 10.0, "name": "critical" },
     { "min": 7.0, "max": 8.9, "name": "high" },

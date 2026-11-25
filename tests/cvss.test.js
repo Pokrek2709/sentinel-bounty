@@ -95,8 +95,9 @@ test('malformed vectors fail with a named code (not a partial parse)', () => {
     ['CVSS:3.1/XX:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', 'CVSS_UNKNOWN_METRIC'],
     ['CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/', 'CVSS_MALFORMED_PART'],
     ['CVSS:3.1/AVN/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', 'CVSS_MALFORMED_PART'],
-    // Temporal/environmental parts are rejected, not silently dropped.
-    ['CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:P', 'CVSS_UNKNOWN_METRIC'],
+    // Temporal/environmental parts are now ACCEPTED (round 38) — see
+    // tests/cvss-temporal-environmental.test.js for their own
+    // malformed cases. Unknown keys are still rejected, not dropped.
     ['', 'CVSS_EMPTY_VECTOR'],
     ['   ', 'CVSS_EMPTY_VECTOR'],
   ];

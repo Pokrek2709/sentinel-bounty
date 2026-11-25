@@ -135,6 +135,10 @@ function renderField(field, finding) {
         : '';
       return [`- **CVSS:** ${String(value)}${vector}`];
     }
+    case 'cvss_temporal_score':
+      return [`- **CVSS temporal:** ${String(value)}`];
+    case 'cvss_environmental_score':
+      return [`- **CVSS environmental:** ${String(value)}`];
     case 'cvss_vector':
       return null; // Rendered with cvss_score; a lone vector has no line of its own.
     case 'cwe_id':

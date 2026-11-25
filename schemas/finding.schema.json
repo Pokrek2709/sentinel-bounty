@@ -32,6 +32,8 @@
     },
     "cvss_vector": { "type": "string" },
     "cvss_score": { "type": "number", "minimum": 0, "maximum": 10 },
+    "cvss_temporal_score": { "type": "number", "minimum": 0, "maximum": 10 },
+    "cvss_environmental_score": { "type": "number", "minimum": 0, "maximum": 10 },
     "confidence": {
       "type": "string",
       "enum": ["confirmed", "potential", "false_positive", "needs_manual_review"]

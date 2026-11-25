@@ -14,10 +14,19 @@
 // `cvss_vector` (see `src/analysis/cvss.js`). When a finding carries
 // both `severity` and a score and they disagree, the report FAILS with
 // an error; when a vector disagrees with a declared score, or the
-// vector itself is malformed, the report FAILS too. A report must
-// never carry a wrong severity label, so the generator refuses to
-// guess which of the two is right — and a vector-derived score is
-// written into the rendered finding instead of "Not scored".
+// vector itself is malformed, the report FAILS too. The same strict
+// rule applies to the declared `cvss_temporal_score` and
+// `cvss_environmental_score`: a vector whose computed temporal
+// (environmental) score disagrees with the declared one fails the
+// report, and a present-but-invalid declared temporal/environmental
+// score fails it as well. When only the vector is present, its
+// computed base, temporal, and environmental scores are all derived
+// and written into the rendered finding. The severity is checked
+// against the BASE score only — temporal and environmental scores
+// never re-band a finding. A report must never carry a wrong severity
+// label, so the generator refuses to guess which of the two is right
+// — and a vector-derived score is written into the rendered finding
+// instead of "Not scored".
 //
 // Completeness: a finding missing any field required by
 // `schemas/finding.schema.json` fails validation with an error naming the
@@ -118,14 +127,22 @@ function validateFinding(finding, index) {
     throw new Error(`${label} has invalid severity: ${String(finding.severity)}.`);
   }
   // Vector resolution (see ../analysis/cvss.js resolveCvss): a malformed
-  // vector or a vector that disagrees with the declared score fails the
+  // vector or a vector that disagrees with a declared score fails the
   // report — a report must never carry a score the vector contradicts.
-  // When only the vector is present, its computed score is derived and
-  // the finding is returned with cvss_score filled in, so the rendered
-  // report shows the derived score instead of "Not scored".
+  // The same strict rule applies to the declared temporal and
+  // environmental scores. When only the vector is present, its computed
+  // base, temporal, and environmental scores are derived and the
+  // finding is returned with the missing ones filled in, so the
+  // rendered report shows the derived scores instead of "Not scored".
   const cvss = resolveCvss(finding);
   if (cvss.error) {
     throw new Error(`${label} has ${cvss.error}.`);
+  }
+  if (cvss.temporalError) {
+    throw new Error(`${label} has ${cvss.temporalError}.`);
+  }
+  if (cvss.environmentalError) {
+    throw new Error(`${label} has ${cvss.environmentalError}.`);
   }
   let effectiveScore = null;
   let scoreFromVector = false;
@@ -137,6 +154,16 @@ function validateFinding(finding, index) {
   } else if (cvss.vectorScore !== null) {
     effectiveScore = cvss.vectorScore;
     scoreFromVector = true;
+  }
+  if (finding.cvss_temporal_score !== undefined && finding.cvss_temporal_score !== null) {
+    if (typeof finding.cvss_temporal_score !== 'number' || !Number.isFinite(finding.cvss_temporal_score) || finding.cvss_temporal_score < 0 || finding.cvss_temporal_score > 10) {
+      throw new Error(`${label} has invalid cvss_temporal_score: ${String(finding.cvss_temporal_score)} (expected a number from 0 to 10).`);
+    }
+  }
+  if (finding.cvss_environmental_score !== undefined && finding.cvss_environmental_score !== null) {
+    if (typeof finding.cvss_environmental_score !== 'number' || !Number.isFinite(finding.cvss_environmental_score) || finding.cvss_environmental_score < 0 || finding.cvss_environmental_score > 10) {
+      throw new Error(`${label} has invalid cvss_environmental_score: ${String(finding.cvss_environmental_score)} (expected a number from 0 to 10).`);
+    }
   }
   if (effectiveScore !== null) {
     const derived = severityForScore(effectiveScore);
@@ -153,7 +180,24 @@ function validateFinding(finding, index) {
   if (!Array.isArray(finding.steps_to_reproduce) || finding.steps_to_reproduce.some((step) => typeof step !== 'string' || step.trim() === '')) {
     throw new Error(`${label} has invalid steps_to_reproduce: expected a non-empty array of strings.`);
   }
-  return scoreFromVector ? { ...finding, cvss_score: effectiveScore } : finding;
+  // Fill in every score the vector computed that the finding did not
+  // declare: base, temporal, and environmental. A declared score is
+  // never overwritten — a mismatch above already failed the report.
+  const filled = { ...finding };
+  let filledAnything = false;
+  if (scoreFromVector) {
+    filled.cvss_score = effectiveScore;
+    filledAnything = true;
+  }
+  if ((finding.cvss_temporal_score === undefined || finding.cvss_temporal_score === null) && cvss.temporalScore !== null) {
+    filled.cvss_temporal_score = cvss.temporalScore;
+    filledAnything = true;
+  }
+  if ((finding.cvss_environmental_score === undefined || finding.cvss_environmental_score === null) && cvss.environmentalScore !== null) {
+    filled.cvss_environmental_score = cvss.environmentalScore;
+    filledAnything = true;
+  }
+  return filledAnything ? filled : finding;
 }
 
 function countBySeverity(findings) {
@@ -201,6 +245,12 @@ function markdownFinding(finding, number) {
   lines.push(`- **Finding ID:** ${finding.finding_id}`);
   lines.push(`- **Severity:** ${finding.severity}`);
   lines.push(`- **CVSS:** ${finding.cvss_score !== undefined && finding.cvss_score !== null ? String(finding.cvss_score) : 'Not scored'}${finding.cvss_vector ? ` (${finding.cvss_vector})` : ''}`);
+  if (finding.cvss_temporal_score !== undefined && finding.cvss_temporal_score !== null) {
+    lines.push(`- **CVSS temporal:** ${String(finding.cvss_temporal_score)}`);
+  }
+  if (finding.cvss_environmental_score !== undefined && finding.cvss_environmental_score !== null) {
+    lines.push(`- **CVSS environmental:** ${String(finding.cvss_environmental_score)}`);
+  }
   lines.push(`- **CWE:** ${formatValue(finding.cwe_id)}`);
   lines.push(`- **Vulnerability type:** ${finding.vulnerability_type}`);
   lines.push(`- **Affected component:** ${finding.asset_id}${finding.asset_url ? ` (${finding.asset_url})` : ''}`);

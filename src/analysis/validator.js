@@ -23,7 +23,8 @@
 //      cannot be band-checked at all, and with an unbandable cvss_score
 //      it previously slipped through as 'valid' — while the report
 //      generator rejects it outright ('has invalid severity').
-//   5. severity/cvss mismatch, a present-but-invalid cvss_score, a
+//   5. severity/cvss mismatch, a present-but-invalid cvss_score,
+//      cvss_temporal_score, or cvss_environmental_score, a
 //      malformed or disagreeing cvss_vector, and missing
 //      reproducibility evidence are collected together: a finding can
 //      report e.g. 'severity/cvss mismatch' and 'missing
@@ -33,7 +34,18 @@
 //      *mismatch*. A cvss_vector that is present but malformed is
 //      reported as 'invalid cvss_vector: ...' on its own; a vector
 //      whose computed score disagrees with a declared cvss_score is
-//      reported as 'cvss_vector/cvss_score mismatch: ...'. When the
+//      reported as 'cvss_vector/cvss_score mismatch: ...'. The same
+//      strict rule applies to the temporal and environmental scores:
+//      a vector whose computed temporal (environmental) score
+//      disagrees with a declared cvss_temporal_score
+//      (cvss_environmental_score) is reported as
+//      'cvss_vector/cvss_temporal_score mismatch: ...'
+//      ('cvss_vector/cvss_environmental_score mismatch: ...'), and a
+//      present-but-invalid declared temporal/environmental score is
+//      reported as 'invalid cvss_temporal_score' /
+//      'invalid cvss_environmental_score'. The severity is checked
+//      against the BASE score only — temporal and environmental
+//      scores never re-band a finding's severity. When the
 //      vector parses and no valid declared score exists, the
 //      vector-derived score is the effective score: the severity is
 //      checked against it instead of going unchecked. A missing
@@ -120,8 +132,22 @@ function severityMatchesCvss(severity, cvssScore) {
 // schema (type number, minimum 0, maximum 10) and the report
 // generator, which rejects such a score. A missing score (undefined
 // or null) is not invalid — it stays unchecked, as documented.
+// The same rule, per field, for the declared temporal and
+// environmental scores.
 function hasInvalidCvssScore(finding) {
   const score = finding.cvss_score;
+  if (score === undefined || score === null) return false;
+  return typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 10;
+}
+
+function hasInvalidCvssTemporalScore(finding) {
+  const score = finding.cvss_temporal_score;
+  if (score === undefined || score === null) return false;
+  return typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 10;
+}
+
+function hasInvalidCvssEnvironmentalScore(finding) {
+  const score = finding.cvss_environmental_score;
   if (score === undefined || score === null) return false;
   return typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 10;
 }
@@ -168,18 +194,34 @@ function validateFinding(finding) {
 
   const reasons = [];
   // Vector resolution (see ./cvss.js resolveCvss): a malformed vector
-  // or a vector that disagrees with the declared score is a reason of
+  // or a vector that disagrees with a declared score is a reason of
   // its own; the effective score is the declared score when valid,
-  // else the vector-derived score, else null (unchecked).
+  // else the vector-derived score, else null (unchecked). The same
+  // applies to the declared temporal and environmental scores: a
+  // mismatch is a reason of its own, and a present-but-invalid
+  // declared temporal/environmental score is reported as invalid.
+  // The severity is checked against the BASE score only.
   const cvss = resolveCvss(finding);
   if (cvss.error) {
     reasons.push(cvss.error);
+  }
+  if (cvss.temporalError) {
+    reasons.push(cvss.temporalError);
+  }
+  if (cvss.environmentalError) {
+    reasons.push(cvss.environmentalError);
   }
   if (!severityMatchesCvss(finding.severity, cvss.effectiveScore)) {
     reasons.push('severity/cvss mismatch');
   }
   if (hasInvalidCvssScore(finding)) {
     reasons.push('invalid cvss_score');
+  }
+  if (hasInvalidCvssTemporalScore(finding)) {
+    reasons.push('invalid cvss_temporal_score');
+  }
+  if (hasInvalidCvssEnvironmentalScore(finding)) {
+    reasons.push('invalid cvss_environmental_score');
   }
   reasons.push(...missingEvidenceReasons(finding));
 

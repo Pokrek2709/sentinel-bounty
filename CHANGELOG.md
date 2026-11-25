@@ -7,6 +7,33 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### CVSS 3.1 temporal + environmental metrics (round 38, 2026-11-26)
+
+- `src/analysis/cvss.js` parses and scores the full CVSS 3.1 vector:
+  temporal metrics E/RL/RC (`Roundup(BaseScore x E x RL x RC)`) and
+  environmental metrics CR/IR/AR/MAV/MAC/MPR/MUI/MS/MC/MI/MA
+  (ModifiedISCBase capped at 0.915, scope-changed/unchanged
+  modified-impact formulas, double Roundup before the temporal
+  multipliers). Modified metrics fall back to their base metric on X
+  (MS to S, requirements to 1.00). Values live in
+  `knowledge/cvss/cvss-calc.json` (`temporal`/`environmental`
+  tables); the module holds only the formulas. `resolveCvss()`
+  returns `temporalScore`/`environmentalScore` plus named
+  `temporalError`/`environmentalError` mismatches, and the validator
+  and report generator enforce the same strict rule as for the base
+  score; the generator fills in and renders derived temporal/
+  environmental scores (generic and Immunefi/Code4rena templates).
+  Severity is still checked against the BASE score only. Scores are
+  computed only for metric groups the vector carries (absent = null,
+  never fabricated from all-X). New optional schema fields
+  `cvss_temporal_score` / `cvss_environmental_score`. Expected
+  scores are hand-derived from the FIRST specification's formulas
+  and cross-checked with an independent computation — no network
+  oracle was reachable, so they are NOT copied from the FIRST
+  calculator; re-checking them against it is the first verification
+  for a future networked run. See
+  `docs/cvss-temporal-environmental-v1.md`. Suite 225 → 254 tests.
+
 ### State backup/restore and audit-log rotation proof (round 37, 2026-11-26)
 
 - `sentinel backup --out <file>` / `sentinel restore --from <file>`
