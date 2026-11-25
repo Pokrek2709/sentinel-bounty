@@ -29,6 +29,36 @@ An in-scope decision does not authorize execution. No real target may be tested 
 - Node.js 18 or later.
 - No npm dependencies are currently required.
 
+## Install (for other people)
+
+Install this prototype as a local custom skill. It is not an official or verified Meta Muse integration, and installing it does not authorize testing any real target.
+
+1. Clone the repository:
+
+   ```sh
+   git clone https://github.com/Pokrek2709/sentinel-bounty.git
+   cd sentinel-bounty
+   ```
+
+2. Check the requirements: Node.js 18 or later; no npm dependencies are currently required.
+3. Install it as a custom skill by following [docs/adapt-to-agent.md](docs/adapt-to-agent.md). That document is the step-by-step adaptation procedure: read `skills/sentinel-bounty/SKILL.md`, copy the skill (the contract plus `bin/`, `src/`, `schemas/`, `policies/`, `examples/`, `knowledge/`, `agents/`) to your agent platform's skill location, and record what was changed. For Muse, `SKILL.md` goes at the installed skill directory's root (for example `~/workspace/custom-skills/sentinel-bounty/SKILL.md`). Do not describe the result as an official or verified integration.
+4. Verify the install from the repository (or installed) root. These commands are local-only and make no network request:
+
+   ```sh
+   npm test
+   node bin/sentinel.js verify-install
+   node bin/sentinel.js check-env
+   node bin/sentinel.js kill-switch status
+   node bin/sentinel.js check-scope --target examples/local-target.example.json --url https://app.example.test/docs
+   ```
+
+   Expected: `npm test` passes; `verify-install` exits 0 with all six checks PASS (Node >= 18, CLI reachable, kill-switch inactive, audit log healthy, scope config present, skill files present); `check-env` exits 0 with `runtime` and `binaryExecution` `verified`; `kill-switch status` reports `active: false` with no workers running; `check-scope` reports `decision.allowed: true` with reason `IN_SCOPE` for the `example.test` lab URL and `safety: "No network request was made."` The full expected output is in [docs/adapt-to-agent.md](docs/adapt-to-agent.md). If a command fails, record the exact command, exit code, and output; do not work around it by changing the target, the state directory, or the command.
+
+   If you installed the package binary (`sentinel`, see the `bin` field in `package.json`), the same subcommands apply as `sentinel verify-install`.
+5. Uninstall by following [docs/uninstall-restore.md](docs/uninstall-restore.md). Resolve any leased operator token and any armed kill-switch state first; the state directory (`~/workspace/sentinel-bounty/state/`) is kept by default. Do not delete an armed kill-switch state to finish faster.
+
+For the full documentation list, see the [docs index](docs/README.md).
+
 ## Quick start: local-only checks
 
 ```sh
@@ -72,7 +102,7 @@ The default state directory is `~/workspace/sentinel-bounty/state/`, outside the
 - `src/report/` — deterministic bug-bounty report generator (`sentinel report`).
 - `skills/sentinel-bounty/SKILL.md` — source custom-skill contract, not an official Muse manifest.
 - `policies/` and `schemas/` — design policies and data contracts.
-- `docs/` — PoC, implementation, and sharing status. Adapting the skill to an agent platform: [adapt-to-agent](docs/adapt-to-agent.md). Removing it again: [uninstall-restore](docs/uninstall-restore.md).
+- `docs/` — PoC, implementation, and sharing status. Full list: [docs index](docs/README.md). Adapting the skill to an agent platform: [adapt-to-agent](docs/adapt-to-agent.md). Removing it again: [uninstall-restore](docs/uninstall-restore.md).
 
 ## Sharing and Muse trial
 

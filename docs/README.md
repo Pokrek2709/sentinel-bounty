@@ -1,0 +1,37 @@
+# Documentation index
+
+Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt-to-agent.md) if you are installing the skill, and [uninstall-restore](uninstall-restore.md) if you are removing it. The repository README is at [../README.md](../README.md); the platform-neutral skill contract is at [../skills/sentinel-bounty/SKILL.md](../skills/sentinel-bounty/SKILL.md).
+
+## Install, adapt, remove
+
+- [adapt-to-agent](adapt-to-agent.md) — Step-by-step procedure (paste-to-agent prompt) for adapting the skill contract to your agent platform; for anyone installing the skill.
+- [uninstall-restore](uninstall-restore.md) — Step-by-step procedure (paste-to-agent prompt) for removing the skill and restoring the machine; for anyone uninstalling it.
+- [github-prototype-readiness](github-prototype-readiness.md) — What this repository is safe to share as (a private experimental prototype) and what it is not; for anyone considering sharing the repo.
+- [implementation-status](implementation-status.md) — Phase-by-phase implementation status as of 2026-11-21, with evidence links; for reviewers tracking what is built versus still open.
+
+## Core components (v1)
+
+- [approval-gate-v1](approval-gate-v1.md) — Bound, single-use, fail-closed approval gate primitive; for implementers and reviewers of the approval flow.
+- [controlled-wrapper-v1](controlled-wrapper-v1.md) — Fixed-command execution boundary for local lab execution; for implementers and reviewers of controlled execution.
+- [scope-manager-v1](scope-manager-v1.md) — Default-deny target registration and HTTP(S) DNS-host scope matching; for implementers and reviewers of scope enforcement.
+- [request-governor-v1](request-governor-v1.md) — Per-domain token-bucket rate governor, request budgets, concurrency limits, and backoff state; for implementers and reviewers of request policy.
+- [kill-switch-v1](kill-switch-v1.md) — In-memory, fail-closed kill switch core; for implementers and reviewers of cancellation.
+- [persistent-kill-switch-v1](persistent-kill-switch-v1.md) — Cross-process, file-backed persistent kill switch with a token-gated operator CLI; for operators and implementers of the lab kill switch.
+- [local-http-adapter-v1](local-http-adapter-v1.md) — GET-only `localhost` HTTP adapter for the local lab; for implementers and reviewers of lab network access.
+
+## Finding pipeline (phases 5–7, fixtures only)
+
+- [detection-stub-v1](detection-stub-v1.md) — Fixture-only detector stub that reshapes local JSON fixtures into normalized findings (no real scanner); for implementers of the finding pipeline.
+- [validation-v1](validation-v1.md) — Rule-based finding validator with deduplication and an evidence checklist; for implementers and reviewers of finding validation.
+- [pipeline-v1](pipeline-v1.md) — End-to-end lab-local pipeline (stub detector → validator → dedup → report generator) over fixtures; for implementers and reviewers of the full chain.
+- [reporting-v1](reporting-v1.md) — Deterministic bug-bounty report generator (`sentinel report`, Markdown or JSON); for implementers and users rendering validated findings.
+
+## Muse capability evidence (user-supplied lab reports)
+
+- [muse-capability-evidence-2026-11-18](muse-capability-evidence-2026-11-18.md) — Initial Muse capability evidence: custom-skill discovery and CLI invocation in a direct trial; for engineering decisions on Muse feasibility.
+- [muse-capability-followup-2026-11-19](muse-capability-followup-2026-11-19.md) — Follow-up Muse trial results: Python detection and discovery only when `SKILL.md` is at the skill root; for engineering decisions.
+- [muse-capability-pgid-2026-11-20](muse-capability-pgid-2026-11-20.md) — PGID and cross-process kill-switch evidence (process-group termination, concurrent triggers, locking); for reviewers of process-group cancellation.
+- [muse-kill-switch-lab-evidence-2026-11-20](muse-kill-switch-lab-evidence-2026-11-20.md) — Muse lab evidence for kill-switch cancellation behaviour (SIGTERM, isolated process tree); for reviewers of cancellation.
+- [muse-wrapper-lab-followup-2026-11-20](muse-wrapper-lab-followup-2026-11-20.md) — Wrapper and cancellation follow-up evidence (process-tree termination, persistent state directory, file modes); for reviewers.
+- [muse-http-adapter-evidence-2026-11-21](muse-http-adapter-evidence-2026-11-21.md) — Real-run Muse evidence for the `localhost` HTTP adapter (rejects external hosts, no redirect following); for reviewers of the lab adapter.
+- [muse-secure-vm-poc](muse-secure-vm-poc.md) — Muse Secure VM feasibility PoC procedure and its partially-verified status; for anyone assessing Muse Secure VM.

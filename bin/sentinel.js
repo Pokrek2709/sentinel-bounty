@@ -10,6 +10,7 @@ const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch')
 const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
 const { generateReport } = require('../src/report/generator');
+const { runVerifyInstall } = require('../src/install/verifier');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -42,6 +43,7 @@ function usage() {
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json] [--generated-at <iso>] [--program <name>]',
+    '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
   ].join('\n');
@@ -462,8 +464,24 @@ async function runReport(args) {
   process.stdout.write(report);
 }
 
+async function runVerifyInstallCommand(args) {
+  const options = parseOptions(args, ['--state-dir', '--skill-dir']);
+  const skillDirectory = path.resolve(options.skillDir || path.resolve(__dirname, '..'));
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const result = await runVerifyInstall({ skillDirectory, stateDirectory });
+  for (const check of result.checks) {
+    process.stdout.write(`${check.status} ${check.id}: ${check.reason}\n`);
+  }
+  process.stdout.write(`verify-install: ${result.passed} passed, ${result.failed} failed — ${result.overall}\n`);
+  if (result.failed > 0) process.exitCode = 1;
+}
+
 async function main(argv) {
   const [command, ...args] = argv;
+  if (command === 'verify-install') {
+    await runVerifyInstallCommand(args);
+    return;
+  }
   if (command === 'report') {
     await runReport(args);
     return;
