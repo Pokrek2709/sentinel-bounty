@@ -88,10 +88,10 @@ test('audit health classifies EACCES as AUDIT_LOG_PERMISSION_DENIED, not AUDIT_L
 test('audit rotation triggers at the configured limit and keeps the active log small', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-rotate-'));
   try {
-    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 300, retentionCount: 3 });
-    // One record is ~130 bytes, so three appends (~390) cross the
-    // 300-byte limit: the first two rotate into .1, only the third
-    // remains active.
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 700, retentionCount: 3 });
+    // A chained record is ~310 bytes (round 43: prevHash + hash are 64
+    // hex each), so three appends (~930) cross the 700-byte limit: the
+    // first two rotate into .1, only the third remains active.
     await audit.append('EVENT_A', { n: 1 });
     await audit.append('EVENT_B', { n: 2 });
     await audit.append('EVENT_C', { n: 3 });
@@ -110,10 +110,11 @@ test('audit rotation triggers at the configured limit and keeps the active log s
 test('audit rotation loses no records: active log plus archives hold every event in order', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-noloss-'));
   try {
-    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 700, retentionCount: 3 });
-    // 700 bytes rotates every ~5 records, so 12 records rotate twice
-    // while still fitting inside 3 retained archives: every record must
-    // survive. (With a 300-byte limit the same 12 records would exceed
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 1000, retentionCount: 3 });
+    // A chained record is ~310 bytes (round 43), so a 1,000-byte limit
+    // rotates every ~3 records: 12 records span the active log plus
+    // three archives (capacity ~4,000 bytes) and every record survives.
+    // (With a 300-byte limit the same 12 records would exceed
     // retention and the oldest would be dropped by design — that is the
     // bounded-archives test below, not a loss bug.)
     const written = [];
@@ -158,7 +159,7 @@ test('audit archives stay bounded at the retention count', async () => {
 test('audit health reports a corrupt archive instead of silently dropping it', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-audit-corrupt-archive-'));
   try {
-    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 300, retentionCount: 3 });
+    const audit = new AuditLog({ logFile: path.join(directory, 'state', 'audit.jsonl'), skillDirectory: path.join(directory, 'skill'), rotationBytes: 700, retentionCount: 3 });
     await audit.append('EVENT_A', { n: 1 });
     await audit.append('EVENT_B', { n: 2 });
     await audit.append('EVENT_C', { n: 3 });

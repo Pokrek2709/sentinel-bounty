@@ -45,6 +45,7 @@ function usage() {
     '  sentinel kill-switch audit-health [--state-dir <path>]',
     '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
+    '  sentinel audit verify [--state-dir <path>]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel drill [--state-dir <path>] [--recover]',
@@ -442,6 +443,28 @@ async function appendOperatorAudit(stateDirectory, event, details) {
   }
 }
 
+async function runAuditCommand(args) {
+  const [action, ...actionArgs] = args;
+  if (action !== 'verify') throw new Error(`Unknown audit action: ${action}`);
+  const options = parseOptions(actionArgs, ['--state-dir']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
+  try {
+    const result = await audit.verifyChain();
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    // A broken chain is an audit problem (exit 4, like audit-health),
+    // not an authorization failure (exit 3) or a crash (exit 1).
+    if (!result.verified) process.exitCode = 4;
+  } catch (error) {
+    if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) {
+      process.stdout.write(`${JSON.stringify({ verified: false, reason: error.message }, null, 2)}\n`);
+      process.exitCode = 4;
+      return;
+    }
+    throw error;
+  }
+}
+
 async function runReport(args) {
   const options = parseOptions(args, ['--finding', '--findings', '--out', '--format', '--template', '--generated-at', '--program']);
   if ((options.finding && options.findings) || (!options.finding && !options.findings)) {
@@ -562,6 +585,10 @@ async function main(argv) {
   }
   if (command === 'verify-install') {
     await runVerifyInstallCommand(args);
+    return;
+  }
+  if (command === 'audit') {
+    await runAuditCommand(args);
     return;
   }
   if (command === 'report') {

@@ -90,13 +90,14 @@ For a local lab kill-switch, keep the presented reset token in a secure environm
 ```sh
 node bin/sentinel.js kill-switch status
 node bin/sentinel.js kill-switch audit-health
+node bin/sentinel.js audit verify
 node bin/sentinel.js kill-switch trigger --actor local-operator --reason "stop lab run"
 SENTINEL_OPERATOR_RESET_TOKEN="provided-by-secure-vault" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch reset --actor local-operator
 SENTINEL_OPERATOR_RESET_TOKEN="current-token" SENTINEL_OPERATOR_NEW_RESET_TOKEN="replacement-token" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch rotate-token --actor local-operator
 SENTINEL_OPERATOR_RESET_TOKEN="current-token" SENTINEL_OPERATOR_RESET_TOKEN_HASH_FILE="/secure/path/operator-reset-token.sha256" node bin/sentinel.js kill-switch revoke-token --actor local-operator
 ```
 
-The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset/rotation/revocation events are recorded in `audit.jsonl`; if a trigger audit append fails, the trigger still completes with a non-zero audit-integrity signal, while reset, rotation, and revocation require a healthy audit path first. Repair an unhealthy audit path before retrying reset; do not delete the active kill-switch state. Concurrent rotations are serialized. Token validity defaults to approximately 90 days with immediate invalidation on rotation.
+The default state directory is `~/workspace/sentinel-bounty/state/`, outside the reinstallable skill directory. Reset remains fail-closed while another process has a live worker lease. Trigger/reset/rotation/revocation events are recorded in `audit.jsonl`; if a trigger audit append fails, the trigger still completes with a non-zero audit-integrity signal, while reset, rotation, and revocation require a healthy audit path first. Repair an unhealthy audit path before retrying reset; do not delete the active kill-switch state. Concurrent rotations are serialized. Token validity defaults to approximately 90 days with immediate invalidation on rotation. Every audit record carries a SHA-256 hash chained to the previous record (`sentinel audit verify` replays the chain and reports the first broken link with its file and line, exit 4 when broken); see [docs/audit-integrity-v1.md](docs/audit-integrity-v1.md).
 
 ## Project layout
 

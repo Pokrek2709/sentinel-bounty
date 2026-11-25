@@ -8,6 +8,37 @@ const DEFAULT_ROTATION_BYTES = 8 * 1024 * 1024;
 const DEFAULT_RETENTION_COUNT = 3;
 const DEFAULT_STALE_LOCK_MS = 60_000;
 
+// Hash-chain format, version 1 (round 43). Every record appended after
+// this round carries chainVersion, prevHash, and hash:
+//   hash = SHA-256(JSON.stringify({
+//     chainVersion: 1, version, event, eventId, recordedAt, details,
+//     prevHash }))
+// with keys in exactly that order (insertion order is preserved by
+// JSON.stringify and by JSON.parse, so an independent checker that
+// rebuilds the object in the same order reproduces the hash). The
+// details hashed are the REDACTED details actually stored, never the
+// caller's raw values. The first chained record of a fresh chain uses
+// GENESIS_PREV_HASH as its prevHash. Verification checks internal
+// consistency only (see verifyChain): it does NOT enforce that the
+// first retained chained record chains from genesis, because rotation
+// retention legitimately drops the oldest records — a dropped prefix
+// is indistinguishable from a deleted one. See docs/audit-integrity-v1.md.
+const CHAIN_VERSION = 1;
+const GENESIS_PREV_HASH = '0'.repeat(64);
+
+function computeAuditRecordHash(record) {
+  const canonical = {
+    chainVersion: CHAIN_VERSION,
+    version: record.version,
+    event: record.event,
+    eventId: record.eventId,
+    recordedAt: record.recordedAt,
+    details: record.details,
+    prevHash: record.prevHash,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
 function requireAbsoluteOutside(file, skillDirectory, field) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) throw new TypeError(`${field} must be an absolute path.`);
   if (typeof skillDirectory !== 'string' || !path.isAbsolute(skillDirectory)) throw new TypeError('skillDirectory must be an absolute path.');
@@ -141,28 +172,75 @@ class AuditLog {
     await fs.rename(this.#logFile, `${this.#logFile}.1`).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   }
 
+  // The newest parseable record, newest file first (active log, then
+  // .1, .2, …). The first parseable record decides: a chained record
+  // returns its hash; a legacy record returns GENESIS_PREV_HASH,
+  // because chaining started after the last legacy record was written,
+  // so no chained record can exist anywhere older. Unparseable lines
+  // are skipped (a garbage tail must not stop the writer from chaining
+  // onto the last good record — verification still reports the garbage
+  // line). Called only while the lock is held.
+  async #chainTailUnlocked() {
+    const files = [this.#logFile];
+    for (let index = 1; index <= this.#retentionCount; index += 1) files.push(`${this.#logFile}.${index}`);
+    for (const file of files) {
+      let text = '';
+      try {
+        text = await fs.readFile(file, 'utf8');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        continue;
+      }
+      const lines = text.split('\n').filter(Boolean);
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        let parsed;
+        try {
+          parsed = JSON.parse(lines[index]);
+        } catch {
+          continue;
+        }
+        if (!parsed || typeof parsed !== 'object') continue;
+        if (typeof parsed.hash === 'string' && /^[a-f0-9]{64}$/.test(parsed.hash)) return parsed.hash;
+        return GENESIS_PREV_HASH;
+      }
+    }
+    return GENESIS_PREV_HASH;
+  }
+
   async append(event, details = {}) {
     if (typeof event !== 'string' || event.trim() === '') throw new TypeError('event must be a non-empty string.');
     const record = {
+      chainVersion: CHAIN_VERSION,
       version: 1,
       event: event.trim(),
       eventId: crypto.randomUUID(),
       recordedAt: new Date(this.#clock()).toISOString(),
       details: redact(details),
     };
-    const line = `${JSON.stringify(record)}\n`;
-    if (Buffer.byteLength(line) > MAX_RECORD_BYTES) throw new RangeError('Audit record exceeds the maximum size.');
+    // Size pre-check before the lock: prevHash and hash are always 64
+    // hex characters, so the byte length is identical whatever the real
+    // tail hash turns out to be.
+    const probeLine = `${JSON.stringify({ ...record, prevHash: GENESIS_PREV_HASH, hash: GENESIS_PREV_HASH })}\n`;
+    if (Buffer.byteLength(probeLine) > MAX_RECORD_BYTES) throw new RangeError('Audit record exceeds the maximum size.');
+    let written = null;
     await this.#withLock(async () => {
+      // The prevHash is resolved under the lock, so no concurrent
+      // append can interleave a record between the tail read and this
+      // write. The stored line and the returned record are the same
+      // object: callers can recompute the hash from the return value.
+      const prevHash = await this.#chainTailUnlocked();
+      written = { ...record, prevHash, hash: computeAuditRecordHash({ ...record, prevHash }) };
+      const chainedLine = `${JSON.stringify(written)}\n`;
       let existing = '';
       try {
         existing = await fs.readFile(this.#logFile, 'utf8');
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
       }
-      let next = `${existing}${line}`;
+      let next = `${existing}${chainedLine}`;
       if (Buffer.byteLength(next) > this.#rotationBytes) {
         await this.#rotateUnlocked();
-        next = line;
+        next = chainedLine;
       }
       if (Buffer.byteLength(next) > MAX_LOG_BYTES) throw new RangeError('Audit record exceeds the maximum size.');
       const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -177,7 +255,7 @@ class AuditLog {
         if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
       }
     });
-    return Object.freeze(record);
+    return Object.freeze(written);
   }
 
   async healthCheck({ additionalBytes = 0 } = {}) {
@@ -291,6 +369,114 @@ class AuditLog {
       return events;
     }));
   }
+
+  // Replay the hash chain over the complete retained set (archives
+  // oldest first, then the active log — the same order as
+  // readAllEvents()). Returns a frozen result; it never throws for a
+  // broken chain, only for storage failures (lock, permission, path),
+  // which surface as the classified AUDIT_LOG_* codes.
+  //
+  // Verification rules (round 43):
+  // - Records without a `hash` field are LEGACY (written before
+  //   chaining): they must form a contiguous prefix. A legacy record
+  //   after a chained one is a break (AUDIT_CHAIN_LEGACY_AFTER_CHAINED).
+  // - A chained record's prevHash must equal the previous chained
+  //   record's hash (AUDIT_CHAIN_PREV_MISMATCH), and its stored hash
+  //   must equal the recomputed hash (AUDIT_CHAIN_HASH_MISMATCH).
+  // - A line that is not valid JSONL is a break
+  //   (AUDIT_CHAIN_UNPARSEABLE) — structural corruption is reported
+  //   here as a chain break; healthCheck() keeps its own
+  //   AUDIT_LOG_CORRUPT / AUDIT_LOG_ARCHIVE_CORRUPT codes.
+  // - The FIRST chained record's prevHash is accepted as the anchor
+  //   and reported as anchorHash: it is NOT required to equal
+  //   GENESIS_PREV_HASH, because rotation retention legitimately drops
+  //   the oldest records. Consequence, stated honestly: deleting a
+  //   leading prefix — or the last record, which has no successor —
+  //   is undetectable. The chain detects modification, reordering,
+  //   and deletion of any record that still has a successor in the
+  //   retained set. An attacker who can rewrite the whole log (and
+  //   recompute every hash) is outside this mechanism entirely; the
+  //   chain is tamper-EVIDENCE, not tamper-PREVENTION.
+  async verifyChain() {
+    const broken = (entry, reason, counts) => Object.freeze({
+      verified: false,
+      totalRecords: counts.totalRecords,
+      legacyRecords: counts.legacyRecords,
+      chainedRecords: counts.chainedRecords,
+      anchorHash: counts.anchorHash,
+      // file + line only: the raw line is never echoed back (it can
+      // carry long details, and the operator already has the file).
+      brokenAt: Object.freeze({ file: entry.file, line: entry.line, reason }),
+      reason,
+    });
+    try {
+      return Object.freeze(await this.#withLock(async () => {
+        const entries = [];
+        const files = [];
+        for (let index = this.#retentionCount; index >= 1; index -= 1) files.push(`${this.#logFile}.${index}`);
+        files.push(this.#logFile);
+        for (const file of files) {
+          let text = '';
+          try {
+            text = await fs.readFile(file, 'utf8');
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+            continue;
+          }
+          const label = path.basename(file);
+          text.split('\n').filter(Boolean).forEach((line, index) => {
+            entries.push({ file: label, line: index + 1, text: line });
+          });
+        }
+        const counts = { totalRecords: entries.length, legacyRecords: 0, chainedRecords: 0, anchorHash: null };
+        let seenChained = false;
+        let expectedPrev = null;
+        for (const entry of entries) {
+          let parsed;
+          try {
+            parsed = JSON.parse(entry.text);
+          } catch {
+            return broken(entry, 'AUDIT_CHAIN_UNPARSEABLE', counts);
+          }
+          if (!parsed || typeof parsed !== 'object' || typeof parsed.event !== 'string') {
+            return broken(entry, 'AUDIT_CHAIN_UNPARSEABLE', counts);
+          }
+          if (typeof parsed.hash !== 'string') {
+            if (seenChained) return broken(entry, 'AUDIT_CHAIN_LEGACY_AFTER_CHAINED', counts);
+            counts.legacyRecords += 1;
+            continue;
+          }
+          if (!seenChained) {
+            seenChained = true;
+            counts.anchorHash = typeof parsed.prevHash === 'string' ? parsed.prevHash : null;
+            expectedPrev = parsed.prevHash;
+          }
+          if (typeof parsed.prevHash !== 'string' || parsed.prevHash !== expectedPrev) {
+            return broken(entry, 'AUDIT_CHAIN_PREV_MISMATCH', counts);
+          }
+          if (!/^[a-f0-9]{64}$/.test(parsed.hash) || computeAuditRecordHash(parsed) !== parsed.hash) {
+            return broken(entry, 'AUDIT_CHAIN_HASH_MISMATCH', counts);
+          }
+          counts.chainedRecords += 1;
+          expectedPrev = parsed.hash;
+        }
+        return {
+          verified: true,
+          totalRecords: counts.totalRecords,
+          legacyRecords: counts.legacyRecords,
+          chainedRecords: counts.chainedRecords,
+          anchorHash: counts.anchorHash,
+          brokenAt: null,
+          reason: null,
+        };
+      }));
+    } catch (error) {
+      if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) throw error;
+      const classified = classifyAuditStorageError(error);
+      if (classified) throw new Error(classified);
+      throw error;
+    }
+  }
 }
 
-module.exports = { AuditLog, redact };
+module.exports = { AuditLog, redact, computeAuditRecordHash, GENESIS_PREV_HASH, CHAIN_VERSION };

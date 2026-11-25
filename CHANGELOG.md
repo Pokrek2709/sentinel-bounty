@@ -7,6 +7,32 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Audit-log hash chain and `audit verify` (round 43, 2026-11-26)
+
+- Every audit record now carries a SHA-256 hash chained to the
+  previous record (format v1: `chainVersion`, `prevHash`, `hash`;
+  hash over the canonical JSON of the record's fields in documented
+  order, genesis prevHash is 64 zeroes; a worked example with a
+  hand-verifiable hash is in `docs/audit-integrity-v1.md`).
+  `sentinel audit verify` replays the chain over the active log plus
+  rotated archives (oldest first) and reports the first broken link
+  with its file and line (exit 4 when broken): modification
+  (`AUDIT_CHAIN_HASH_MISMATCH`), reordering or middle deletion
+  (`AUDIT_CHAIN_PREV_MISMATCH`), a legacy record after chained ones
+  (`AUDIT_CHAIN_LEGACY_AFTER_CHAINED`), an unparseable line
+  (`AUDIT_CHAIN_UNPARSEABLE`). Pre-chain records verify as a legacy
+  prefix and are never rewritten. Honest limits, pinned by tests:
+  deleting a leading prefix or the last record is undetectable, and a
+  full rewrite with recomputed hashes is outside the mechanism
+  (tamper-evidence, not tamper-prevention). The writer never refuses
+  to append because the chain is broken, so a tampered log cannot
+  destroy the ability to record the incident that follows;
+  `healthCheck()` stays structural-only and remains the gate before
+  reset. A chained record is ~310 bytes (was ~130), so the round-37
+  rotation tests were re-tuned to the new size (limits 700/1,000
+  bytes); rotation behavior is unchanged. Suite 295 → 305 tests.
+  See `docs/audit-integrity-v1.md`.
+
 ### Report grouping by asset (round 42, 2026-11-26)
 
 - `sentinel report` now groups findings by `asset_id` in both output
