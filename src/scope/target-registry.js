@@ -185,20 +185,179 @@ function decision(allowed, reason, detail = {}) {
   return Object.freeze({ allowed, reason, ...detail });
 }
 
-function evaluateTargetRequest(target, requestUrl) {
+// --- Scope-decision explainability (round 52, Phase 3) ---------------------
+// The scope rules are evaluated in a fixed order; the first rule whose
+// condition holds decides the outcome and the rest are never evaluated.
+// A trail records every rule in that order, honestly marking the ones
+// that were short-circuited as not evaluated. The decision logic itself
+// is unchanged: explainability only observes it.
+
+const TRAIL_RULES = Object.freeze([
+  { rule: 'TARGET_REGISTERED', description: 'The target_id is registered in this registry.' },
+  { rule: 'URL_VALID', description: 'The request URL is an absolute http(s) URL without credentials or an IP host.' },
+  { rule: 'EXCLUDED_DOMAIN', description: 'The request hostname matches an excluded domain (exact or subdomain).' },
+  { rule: 'ALLOWED_DOMAIN', description: 'The request hostname matches no allowed domain.' },
+  { rule: 'EXCLUDED_PATH', description: 'The request path matches an excluded path.' },
+  { rule: 'IN_SCOPE', description: 'All scope rules passed; the request is in scope.' },
+]);
+
+const BUILTIN_SOURCE = 'built-in: src/scope/target-registry.js';
+const BUILTIN_PATH_SOURCE = 'built-in default: src/scope/target-registry.js (DEFAULT_EXCLUDED_PATHS); policies/scope-policy.md section 4';
+
+function trailEntry(rule, evaluated, matched, outcome, source, detail, note) {
+  const meta = TRAIL_RULES.find((entry) => entry.rule === rule);
+  return Object.freeze({
+    rule,
+    description: meta ? meta.description : '',
+    evaluated,
+    matched,
+    outcome,
+    source,
+    detail: Object.freeze(detail),
+    note,
+  });
+}
+
+function notEvaluatedEntries(ruleNames, sourceFor) {
+  return ruleNames.map((rule) => trailEntry(
+    rule, false, false, 'not-evaluated', sourceFor(rule), {},
+    'An earlier rule already decided the outcome.',
+  ));
+}
+
+function targetFileSource(targetFile, field) {
+  return targetFile ? `target file: ${targetFile} (${field})` : `target file (${field})`;
+}
+
+function suggestionFor(reason, detail, targetFile) {
+  switch (reason) {
+    case 'TARGET_NOT_REGISTERED':
+      return `Register the target first: sentinel check-scope --target <target.json> --url <url> with target_id "${detail.targetId}".`;
+    case 'INVALID_URL':
+      return 'Fix the request URL: use an absolute http(s) URL without credentials or an IP host.';
+    case 'EXCLUDED_DOMAIN':
+      return `Remove "${detail.pattern}" from excluded_domains in ${targetFile || 'the target file'}, or use a different host.`;
+    case 'HOST_OUT_OF_SCOPE':
+      return `Add "${detail.hostname}" (or a matching wildcard) to allowed_domains in ${targetFile || 'the target file'}.`;
+    case 'EXCLUDED_PATH':
+      if (DEFAULT_EXCLUDED_PATHS.includes(detail.pattern)) {
+        return `"${detail.pattern}" is a built-in policy default (policies/scope-policy.md section 4) and cannot be un-excluded from the target file; use a different path.`;
+      }
+      return `Remove "${detail.pattern}" from excluded_paths in ${targetFile || 'the target file'}, or use a different path.`;
+    case 'IN_SCOPE':
+      return 'No change needed — the request is in scope.';
+    default:
+      return 'No suggestion recorded for this decision.';
+  }
+}
+
+// Evaluates a request against a normalized target and returns the decision
+// together with the full rule trail. The decision object is identical to
+// what evaluateTargetRequest returns; only the observation is new.
+function evaluateTargetRequestWithTrail(target, requestUrl, source = {}) {
+  const targetFile = source.targetFile || null;
+  const trail = [];
+  const rest = (fromIndex) => notEvaluatedEntries(
+    TRAIL_RULES.slice(fromIndex).map((entry) => entry.rule),
+    (rule) => (rule === 'EXCLUDED_PATH' ? targetFileSource(targetFile, 'excluded_paths') : targetFileSource(targetFile, 'allowed_domains')),
+  );
+
   let request;
   try {
     request = normalizeUrl(requestUrl, 'request URL');
   } catch (error) {
-    return decision(false, 'INVALID_URL', { detail: error.message });
+    const detail = { detail: error.message };
+    trail.push(trailEntry('URL_VALID', true, true, 'deny', BUILTIN_SOURCE, { url: requestUrl, error: error.message }, `Request URL is not valid: ${error.message}`));
+    trail.push(...rest(2));
+    return {
+      decision: decision(false, 'INVALID_URL', detail),
+      trail,
+      decidingRule: 'URL_VALID',
+      suggestion: suggestionFor('INVALID_URL', detail, targetFile),
+    };
   }
+  trail.push(trailEntry('URL_VALID', true, false, 'pass', BUILTIN_SOURCE, { url: requestUrl }, 'Request URL parses as an absolute http(s) URL.'));
+
   const excludedDomain = target.excludedDomains.find((pattern) => excludedDomainMatches(request.hostname, pattern));
-  if (excludedDomain) return decision(false, 'EXCLUDED_DOMAIN', { hostname: request.hostname, pattern: excludedDomain.raw });
+  if (excludedDomain) {
+    const detail = { hostname: request.hostname, pattern: excludedDomain.raw };
+    trail.push(trailEntry('EXCLUDED_DOMAIN', true, true, 'deny', targetFileSource(targetFile, 'excluded_domains'), detail, `Hostname "${request.hostname}" matches excluded domain "${excludedDomain.raw}".`));
+    trail.push(...rest(3));
+    return {
+      decision: decision(false, 'EXCLUDED_DOMAIN', detail),
+      trail,
+      decidingRule: 'EXCLUDED_DOMAIN',
+      suggestion: suggestionFor('EXCLUDED_DOMAIN', detail, targetFile),
+    };
+  }
+  trail.push(trailEntry('EXCLUDED_DOMAIN', true, false, 'pass', targetFileSource(targetFile, 'excluded_domains'), { hostname: request.hostname }, `Hostname "${request.hostname}" matches no excluded domain.`));
+
   const allowedDomain = target.allowedDomains.find((pattern) => domainMatches(request.hostname, pattern));
-  if (!allowedDomain) return decision(false, 'HOST_OUT_OF_SCOPE', { hostname: request.hostname });
+  if (!allowedDomain) {
+    const detail = { hostname: request.hostname };
+    trail.push(trailEntry('ALLOWED_DOMAIN', true, true, 'deny', targetFileSource(targetFile, 'allowed_domains'), detail, `Hostname "${request.hostname}" matches no allowed domain.`));
+    trail.push(...rest(4));
+    return {
+      decision: decision(false, 'HOST_OUT_OF_SCOPE', detail),
+      trail,
+      decidingRule: 'ALLOWED_DOMAIN',
+      suggestion: suggestionFor('HOST_OUT_OF_SCOPE', detail, targetFile),
+    };
+  }
+  trail.push(trailEntry('ALLOWED_DOMAIN', true, false, 'pass', targetFileSource(targetFile, 'allowed_domains'), { hostname: request.hostname, pattern: allowedDomain.raw }, `Hostname "${request.hostname}" matches allowed domain "${allowedDomain.raw}".`));
+
   const excludedPath = target.excludedPaths.find((entry) => pathMatches(request.path, entry));
-  if (excludedPath) return decision(false, 'EXCLUDED_PATH', { hostname: request.hostname, path: request.path, pattern: excludedPath });
-  return decision(true, 'IN_SCOPE', { hostname: request.hostname, path: request.path, pattern: allowedDomain.raw });
+  if (excludedPath) {
+    const detail = { hostname: request.hostname, path: request.path, pattern: excludedPath };
+    const pathSource = DEFAULT_EXCLUDED_PATHS.includes(excludedPath) ? BUILTIN_PATH_SOURCE : targetFileSource(targetFile, 'excluded_paths');
+    trail.push(trailEntry('EXCLUDED_PATH', true, true, 'deny', pathSource, detail, `Path "${request.path}" matches excluded path "${excludedPath}".`));
+    trail.push(...rest(5));
+    return {
+      decision: decision(false, 'EXCLUDED_PATH', detail),
+      trail,
+      decidingRule: 'EXCLUDED_PATH',
+      suggestion: suggestionFor('EXCLUDED_PATH', detail, targetFile),
+    };
+  }
+  trail.push(trailEntry('EXCLUDED_PATH', true, false, 'pass', targetFileSource(targetFile, 'excluded_paths'), { hostname: request.hostname, path: request.path }, `Path "${request.path}" matches no excluded path.`));
+
+  const detail = { hostname: request.hostname, path: request.path, pattern: allowedDomain.raw };
+  trail.push(trailEntry('IN_SCOPE', true, true, 'allow', targetFileSource(targetFile, 'allowed_domains'), detail, 'All scope rules passed.'));
+  return {
+    decision: decision(true, 'IN_SCOPE', detail),
+    trail,
+    decidingRule: 'IN_SCOPE',
+    suggestion: suggestionFor('IN_SCOPE', detail, targetFile),
+  };
+}
+
+function renderScopeExplanationText(explanation) {
+  const lines = [
+    'Scope decision',
+    `  Target: ${explanation.targetId}`,
+    `  Request URL: ${explanation.requestUrl}`,
+    `  Decision: ${explanation.decision.reason} (${explanation.decision.allowed ? 'allowed' : 'denied'})`,
+    `  Policy source: ${explanation.source.targetFile || '(target file path not provided)'}`,
+    '',
+    '  Rules evaluated in order:',
+  ];
+  explanation.rules.forEach((entry, index) => {
+    const verdict = entry.outcome === 'allow' ? 'DECIDED (allow)'
+      : entry.outcome === 'deny' ? 'DECIDED (deny)'
+        : entry.outcome === 'pass' ? 'passed'
+          : 'not evaluated';
+    lines.push(`  ${index + 1}. ${entry.rule}: ${verdict} — ${entry.note} (source: ${entry.source})`);
+  });
+  lines.push(
+    '',
+    `  Deciding rule: ${explanation.decidingRule}`,
+    `  Suggestion: ${explanation.suggestion}`,
+  );
+  return lines.join('\n');
+}
+
+function evaluateTargetRequest(target, requestUrl) {
+  return evaluateTargetRequestWithTrail(target, requestUrl).decision;
 }
 
 class TargetRegistry {
@@ -217,6 +376,50 @@ class TargetRegistry {
     return evaluateTargetRequest(target, requestUrl);
   }
 
+  // Explains a scope decision: the decision itself plus the ordered rule
+  // trail, the deciding rule, and a suggestion. The decision is identical
+  // to evaluate(); only the observation is new. `source.targetFile` is the
+  // --target file path, used to cite the policy source in the trail.
+  explain(targetId, requestUrl, source = {}) {
+    const targetFile = source.targetFile || null;
+    const target = this.#targets.get(targetId);
+    if (!target) {
+      const detail = { targetId };
+      const trail = [
+        trailEntry('TARGET_REGISTERED', true, true, 'deny', 'registry: TargetRegistry', detail, `Target "${targetId}" is not registered in this registry.`),
+        ...notEvaluatedEntries(
+          ['URL_VALID', 'EXCLUDED_DOMAIN', 'ALLOWED_DOMAIN', 'EXCLUDED_PATH', 'IN_SCOPE'],
+          (rule) => (rule === 'EXCLUDED_PATH' ? targetFileSource(targetFile, 'excluded_paths') : targetFileSource(targetFile, 'allowed_domains')),
+        ),
+      ];
+      return Object.freeze({
+        targetId,
+        requestUrl,
+        decision: decision(false, 'TARGET_NOT_REGISTERED', detail),
+        rules: trail,
+        decidingRule: 'TARGET_REGISTERED',
+        suggestion: suggestionFor('TARGET_NOT_REGISTERED', detail, targetFile),
+        source: Object.freeze({ targetFile }),
+      });
+    }
+    const evaluated = evaluateTargetRequestWithTrail(target, requestUrl, source);
+    const registered = trailEntry(
+      'TARGET_REGISTERED', true, false, 'pass',
+      targetFile ? `registry: TargetRegistry (registered from ${targetFile})` : 'registry: TargetRegistry',
+      { targetId },
+      `Target "${targetId}" is registered.`,
+    );
+    return Object.freeze({
+      targetId,
+      requestUrl,
+      decision: evaluated.decision,
+      rules: Object.freeze([registered, ...evaluated.trail]),
+      decidingRule: evaluated.decidingRule,
+      suggestion: evaluated.suggestion,
+      source: Object.freeze({ targetFile }),
+    });
+  }
+
   getScopeFingerprint(targetId) {
     const target = this.#targets.get(targetId);
     return target ? scopeFingerprint(target) : null;
@@ -228,4 +431,4 @@ class TargetRegistry {
   }
 }
 
-module.exports = { DEFAULT_EXCLUDED_PATHS, TargetRegistry, evaluateTargetRequest, normalizeTarget };
+module.exports = { DEFAULT_EXCLUDED_PATHS, TargetRegistry, evaluateTargetRequest, evaluateTargetRequestWithTrail, renderScopeExplanationText, normalizeTarget };

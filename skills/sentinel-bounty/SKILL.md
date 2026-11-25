@@ -21,7 +21,7 @@ The personas do not expand permissions. They must preserve default-deny scope, e
 
 ```text
 sentinel check-env [--output <path>] [--probe-dir <path>]
-sentinel check-scope --target <target.json> --url <url>
+sentinel check-scope --target <target.json> --url <url> [--explain] [--json]
 sentinel kill-switch status [--state-dir <path>]
 sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]
 sentinel kill-switch reset --actor <id> [--state-dir <path>]

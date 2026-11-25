@@ -105,7 +105,7 @@ The default state directory is `~/workspace/sentinel-bounty/state/`, outside the
 ## Project layout
 
 - `src/environment/` — local environment checker.
-- `src/scope/` — target registration and default-deny scope matching.
+- `src/scope/` — target registration, default-deny scope matching, and scope-decision explainability (`check-scope --explain`).
 - `src/policy/` — local request governor.
 - `src/detection/` — normalized finding record + fixture-based detector stub (no real scanner) behind a pluggable detector interface (`sentinel detect`).
 - `src/analysis/` — rule-based finding validation, deduplication, evidence checklist.

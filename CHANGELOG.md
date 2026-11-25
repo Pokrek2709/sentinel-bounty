@@ -7,6 +7,32 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Scope-decision explainability (round 52, 2026-11-26)
+
+- `sentinel check-scope --target <target.json> --url <url> [--explain]
+  [--json]` explains a scope decision: the ordered rule trail (which rule
+  matched, from which policy source), the deciding rule, and a one-line
+  suggestion for what would change the outcome. `--explain` prints a
+  human-readable trail; `--explain --json` carries the same trail as
+  structured data under `explanation` (rules with `evaluated` / `matched`
+  / `outcome` / `source` / `detail` / `note`, `decidingRule`,
+  `suggestion`, `source.targetFile`). Plain (non-explain) output is
+  byte-identical to before this round. The six rules are evaluated in a
+  fixed order (`TARGET_REGISTERED`, `URL_VALID`, `EXCLUDED_DOMAIN`,
+  `ALLOWED_DOMAIN`, `EXCLUDED_PATH`, `IN_SCOPE`); the first rule whose
+  condition holds decides and the rest are honestly marked
+  `not evaluated`. Excluded-path matches cite the target file
+  (`excluded_paths`) or the built-in default
+  (`DEFAULT_EXCLUDED_PATHS`; `policies/scope-policy.md` section 4) —
+  built-in defaults cannot be un-excluded from the target file, and the
+  suggestion says so. The decision logic itself is unchanged:
+  `explain().decision` is asserted identical to `evaluate()` across the
+  full URL matrix. A corrupt or missing `--target` file fails before any
+  trail is produced (`Invalid JSON in <path>` / `Cannot read <path>`,
+  exit 1). Programmatic use: `TargetRegistry.explain(targetId, url, {
+  targetFile })`, `evaluateTargetRequestWithTrail(target, url, source)`,
+  `renderScopeExplanationText(explanation)`.
+
 ### Pluggable detector interface (round 51, 2026-11-26)
 
 - The detector contract is defined (`src/detection/detector.js`):

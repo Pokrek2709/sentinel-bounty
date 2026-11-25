@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const { runEnvironmentCheck } = require('../src/environment/checker');
-const { TargetRegistry } = require('../src/scope/target-registry');
+const { TargetRegistry, renderScopeExplanationText } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
 const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
@@ -41,7 +41,7 @@ function usage() {
   return [
     'Usage:',
     '  sentinel check-env [--output <path>] [--probe-dir <path>]',
-    '  sentinel check-scope --target <target.json> --url <url>',
+    '  sentinel check-scope --target <target.json> --url <url> [--explain] [--json]',
     '  sentinel kill-switch status [--state-dir <path>]',
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
@@ -695,17 +695,40 @@ async function main(argv) {
     return;
   }
   if (command === 'check-scope') {
-    const options = parseOptions(args, ['--target', '--url']);
+    // --explain and --json are boolean flags (same pattern as report
+    // --allow-mixed-targets and drill --recover): strip them before
+    // parseOptions, which only accepts valued options.
+    const explain = args.includes('--explain');
+    const json = args.includes('--json');
+    const options = parseOptions(args.filter((argument) => argument !== '--explain' && argument !== '--json'), ['--target', '--url']);
     if (!options.target || !options.url) throw new Error('check-scope requires --target and --url.');
-    const target = await readJsonFileBounded(path.resolve(options.target));
+    const targetPath = path.resolve(options.target);
+    const target = await readJsonFileBounded(targetPath);
     const registry = new TargetRegistry();
     const registered = registry.register(target);
-    process.stdout.write(`${JSON.stringify({
-      targetId: registered.targetId,
-      authorizationStatus: registered.authorizationStatus,
-      decision: registry.evaluate(registered.targetId, options.url),
-      safety: 'No network request was made.',
-    }, null, 2)}\n`);
+    const decision = registry.evaluate(registered.targetId, options.url);
+    if (!explain) {
+      // Plain output is unchanged: JSON with no explanation attached.
+      process.stdout.write(`${JSON.stringify({
+        targetId: registered.targetId,
+        authorizationStatus: registered.authorizationStatus,
+        decision,
+        safety: 'No network request was made.',
+      }, null, 2)}\n`);
+      return;
+    }
+    const explanation = registry.explain(registered.targetId, options.url, { targetFile: targetPath });
+    if (json) {
+      process.stdout.write(`${JSON.stringify({
+        targetId: registered.targetId,
+        authorizationStatus: registered.authorizationStatus,
+        decision,
+        explanation,
+        safety: 'No network request was made.',
+      }, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`${renderScopeExplanationText(explanation)}\n`);
     return;
   }
 
