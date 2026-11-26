@@ -7,6 +7,27 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Bugcrowd report template (round 60, 2026-11-26)
+
+- `sentinel report --template bugcrowd` renders one validated
+  finding into Bugcrowd's section layout (Description, Steps to
+  Reproduce, Impact, Recommended Fix, Supporting Material),
+  mirroring round 59's HackerOne pattern. No code change was
+  needed: the template is data only, a new JSON file in
+  `knowledge/report-templates/`, loaded and shape-validated by
+  the existing `src/report/templates.js` (only the CLI help text
+  names the new template). A finding without `proof_of_concept`
+  fails with a named error (required for "Steps to Reproduce");
+  JSON output adds `"template": "bugcrowd"`. Honest limit: the
+  section order and names follow Bugcrowd's standard report
+  structure as commonly documented and were derived offline —
+  the layout has NOT been verified against the live platform's
+  submission form, so check it before sending a real submission
+  (documented in `docs/report-templates-v1.md` and the
+  template's own description). Immunefi/Code4rena/HackerOne
+  outputs are byte-identical (golden hashes unmoved). Suite
+  493 → 496 tests.
+
 ### HackerOne report template (round 59, 2026-11-26)
 
 - `sentinel report --template hackerone` renders one validated

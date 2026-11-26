@@ -21,11 +21,11 @@ const medium = () => loadFixture('report-medium.json');
 const findingsArray = () => loadFixture('report-findings-array.json');
 
 test('listTemplates returns the data-file templates, sorted', () => {
-  assert.deepEqual(listTemplates(), ['code4rena', 'hackerone', 'immunefi']);
+  assert.deepEqual(listTemplates(), ['bugcrowd', 'code4rena', 'hackerone', 'immunefi']);
 });
 
 test('loadTemplate loads the template from its data file, not from code', () => {
-  for (const name of ['immunefi', 'code4rena', 'hackerone']) {
+  for (const name of ['immunefi', 'code4rena', 'hackerone', 'bugcrowd']) {
     const fromDisk = JSON.parse(fs.readFileSync(
       path.resolve(__dirname, '..', 'knowledge', 'report-templates', `${name}.json`), 'utf8',
     ));
@@ -34,7 +34,7 @@ test('loadTemplate loads the template from its data file, not from code', () => 
 });
 
 test('loadTemplate rejects unknown names with the available list', () => {
-  assert.throws(() => loadTemplate('nosuch'), /Unknown report template: "nosuch" \(available: code4rena, hackerone, immunefi\)/);
+  assert.throws(() => loadTemplate('nosuch'), /Unknown report template: "nosuch" \(available: bugcrowd, code4rena, hackerone, immunefi\)/);
   assert.throws(() => loadTemplate(''), /Unknown report template/);
 });
 
@@ -90,8 +90,25 @@ test('hackerone markdown has its own headings and the same finding data', () => 
   assert.match(report, /- https:\/\/cwe\.mitre\.org\/data\/definitions\/89\.html/);
 });
 
+test('bugcrowd markdown has its own headings and the same finding data', () => {
+  const report = generateReport([critical()], { ...OPTIONS, template: 'bugcrowd' });
+  assert.match(report, /^# SQL injection in login username parameter \[CRITICAL\]/m);
+  assert.match(report, /- \*\*Severity:\*\* critical/);
+  assert.match(report, /- \*\*CVSS:\*\* 9\.8 \(CVSS:3\.1\/AV:N\/AC:L\/PR:N\/UI:N\/S:U\/C:H\/I:H\/A:H\)/);
+  assert.match(report, /- \*\*Program:\*\* Lab Program/);
+  const headings = [...report.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+  assert.deepEqual(headings, ['Description', 'Steps to Reproduce', 'Impact', 'Recommended Fix', 'Supporting Material']);
+  assert.match(report, /The login endpoint concatenates/);
+  assert.match(report, /POST \/login username=' OR 1=1 -- password=x => HTTP 200 with session cookie for user id 1\./);
+  assert.match(report, /1\. Send a POST request to \/login/);
+  assert.match(report, /Evidence 1:/);
+  assert.match(report, /Full authentication bypass/);
+  assert.match(report, /Use parameterized queries/);
+  assert.match(report, /- https:\/\/cwe\.mitre\.org\/data\/definitions\/89\.html/);
+});
+
 test('template rendering is deterministic: same input, byte-identical output', () => {
-  for (const template of ['immunefi', 'code4rena', 'hackerone']) {
+  for (const template of ['immunefi', 'code4rena', 'hackerone', 'bugcrowd']) {
     const first = generateReport([critical()], { ...OPTIONS, template });
     const second = generateReport([critical()], { ...OPTIONS, template });
     assert.equal(first, second);
@@ -104,12 +121,12 @@ test('template rendering is deterministic: same input, byte-identical output', (
 test('a finding without proof_of_concept fails all templates with a named field', () => {
   // The medium fixture is schema-valid but carries no proof_of_concept.
   // Immunefi and Code4rena require it for "Proof of Concept"; HackerOne
-  // requires it for "Steps to Reproduce".
-  const sections = { immunefi: 'Proof of Concept', code4rena: 'Proof of Concept', hackerone: 'Steps to Reproduce' };
-  for (const template of ['immunefi', 'code4rena', 'hackerone']) {
+  // and Bugcrowd require it for "Steps to Reproduce".
+  const sections = { immunefi: 'Proof of Concept', code4rena: 'Proof of Concept', hackerone: 'Steps to Reproduce', bugcrowd: 'Steps to Reproduce' };
+  for (const template of ['immunefi', 'code4rena', 'hackerone', 'bugcrowd']) {
     assert.throws(
       () => generateReport([medium()], { ...OPTIONS, template }),
-      /Template "immunefi"|Template "code4rena"|Template "hackerone"/,
+      /Template "immunefi"|Template "code4rena"|Template "hackerone"|Template "bugcrowd"/,
     );
     assert.throws(
       () => generateReport([medium()], { ...OPTIONS, template }),
@@ -169,6 +186,17 @@ test('JSON output with the hackerone template names the template', () => {
   assert.equal(generic.report_id, parsed.report_id);
 });
 
+test('JSON output with the bugcrowd template names the template', () => {
+  const parsed = JSON.parse(generateReport([critical()], { ...OPTIONS, template: 'bugcrowd', format: 'json' }));
+  for (const key of ['report_id', 'program_name', 'generated_at', 'executive_summary', 'findings_summary', 'findings']) {
+    assert.ok(key in parsed, `missing required key: ${key}`);
+  }
+  assert.equal(parsed.template, 'bugcrowd');
+  assert.equal(parsed.findings.length, 1);
+  const generic = JSON.parse(generateReport([critical()], { ...OPTIONS, format: 'json' }));
+  assert.equal(generic.report_id, parsed.report_id);
+});
+
 test('the generic template is unchanged when no --template is given', () => {
   const report = generateReport(findingsArray(), OPTIONS);
   assert.match(report, /# Bug Bounty Report — Lab Program/);
@@ -207,6 +235,18 @@ test('CLI report --template hackerone prints the platform sections', async () =>
   assert.match(stdout, /## Supporting Material/);
 });
 
+test('CLI report --template bugcrowd prints the platform sections', async () => {
+  const { stdout } = await execFileAsync(process.execPath, [
+    CLI, 'report', '--finding', path.join(__dirname, 'fixtures', 'report-critical.json'),
+    '--template', 'bugcrowd', '--program', 'Lab Program', '--generated-at', '2026-11-26T02:00:00.000Z',
+  ]);
+  assert.match(stdout, /^# SQL injection in login username parameter \[CRITICAL\]/m);
+  assert.match(stdout, /## Description/);
+  assert.match(stdout, /## Steps to Reproduce/);
+  assert.match(stdout, /## Recommended Fix/);
+  assert.match(stdout, /## Supporting Material/);
+});
+
 test('CLI report --template code4rena --format json --out writes JSON naming the template', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-template-'));
   try {
@@ -232,7 +272,7 @@ test('CLI report with an unknown template exits non-zero', async () => {
       '--template', 'nosuch',
     ]),
     (error) => {
-      assert.match(error.stderr, /Unknown report template: "nosuch" \(available: code4rena, hackerone, immunefi\)/);
+      assert.match(error.stderr, /Unknown report template: "nosuch" \(available: bugcrowd, code4rena, hackerone, immunefi\)/);
       assert.notEqual(error.code, 0);
       return true;
     },

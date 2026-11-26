@@ -61,7 +61,7 @@ function usage() {
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel state export [--state-dir <path>] [--out <file>]',
     '  sentinel drill [--state-dir <path>] [--recover]',
-    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv] [--template generic|immunefi|code4rena|hackerone] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
+    '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv] [--template generic|immunefi|code4rena|hackerone|bugcrowd] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',

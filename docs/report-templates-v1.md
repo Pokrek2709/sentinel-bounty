@@ -11,8 +11,9 @@ section layout a bounty platform expects, via
 | `immunefi` | Immunefi | Vulnerability Details, Proof of Concept, Impact, Recommendation, References |
 | `code4rena` | Code4rena | Description, Proof of Concept, Impact, Recommended Mitigation, Links |
 | `hackerone` | HackerOne | Vulnerability Description, Steps to Reproduce, Impact, Recommended Fix, Supporting Material |
+| `bugcrowd` | Bugcrowd | Description, Steps to Reproduce, Impact, Recommended Fix, Supporting Material |
 
-Both templates start with the same header block: the finding title with
+All four templates start with the same header block: the finding title with
 its severity, then CVSS (score and vector), CWE, vulnerability type,
 affected component, finding ID, confidence, validation status, program,
 and generated time. The default template is `generic` — the existing
@@ -32,7 +33,7 @@ multi-finding report from [reporting-v1](reporting-v1.md), unchanged.
 `description`, `impact`, `remediation`, and `steps_to_reproduce` are
 already required by the finding schema, so their sections can only fail
 if the finding itself is invalid. `proof_of_concept` is optional in the
-schema but required by all three platform templates: a finding without one
+schema but required by all four platform templates: a finding without one
 fails with a named error
 (`Template "immunefi" requires field(s) "proof_of_concept" for section
 "Proof of Concept" ...`; HackerOne requires it for section
@@ -70,6 +71,20 @@ encodes the section layout only, not Cantina-specific submission
 metadata (severity labels, program fields, or form requirements) — check
 Cantina's current submission form before sending.
 
+## Bugcrowd — not platform-verified
+
+The Bugcrowd template encodes the platform's standard report
+structure as commonly documented (title, description, steps to
+reproduce, impact, recommended fix, supporting material). Like
+HackerOne, its section order and names were derived offline and have
+**not** been checked against the live platform's submission form.
+The template renders the finding's own fields only — nothing is
+invented — but verify the section names and order against Bugcrowd's
+current form before sending a real submission. If the platform's
+layout differs, update the JSON data file
+(`knowledge/report-templates/bugcrowd.json`) and its tests, not the
+renderer.
+
 ## HackerOne — not platform-verified
 
 The HackerOne template encodes the platform's standard report
@@ -88,7 +103,7 @@ the renderer.
 ## Templates are data, not code
 
 Each template is a JSON file in `knowledge/report-templates/`
-(`immunefi.json`, `code4rena.json`, `hackerone.json`) declaring its `name`, `platform`,
+(`immunefi.json`, `code4rena.json`, `hackerone.json`, `bugcrowd.json`) declaring its `name`, `platform`,
 and `sections`. A section declares an `id`, a `heading` (null for the
 header block), the `fields` that feed it, whether it is `required`, and
 its `required_fields`. `src/report/templates.js` loads the file at
