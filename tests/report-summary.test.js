@@ -230,7 +230,7 @@ test('renderSummary omits the session line when no session id is given', () => {
 test('an unknown format is still rejected with the updated named error', () => {
   assert.throws(
     () => generateReport(loadFixture('report-findings-array.json'), { ...OPTIONS, format: 'yaml' }),
-    /Invalid format: yaml \(expected "markdown", "json", "html", "csv", or "summary"\)/,
+    /Invalid format: yaml \(expected "markdown", "json", "html", "csv", "summary", or "jsonl"\)/,
   );
 });
 

@@ -84,11 +84,12 @@ validator directly.
   and the CSV output is asserted byte-identical to the round-55
   expected text.
 - One deliberate test-expectation change: the unknown-format
-  error now lists five formats
-  (`expected "markdown", "json", "html", "csv", or "summary"`),
-  so the round-55 assertion in `tests/report-csv.test.js` was
-  updated to the new message (same change, no behaviour change
-  beyond the added format).
+  error now lists six formats
+  (`expected "markdown", "json", "html", "csv", "summary", or
+  "jsonl"`), so the round-55 assertion in
+  `tests/report-csv.test.js` and this round's own assertion were
+  updated to the new message in round 66 (same change, no
+  behaviour change beyond the added format).
 
 ## Known limitations
 

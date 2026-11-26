@@ -1,6 +1,6 @@
 // Reporting engine (Phase 7): renders VALIDATED finding objects into a
 // deterministic bug-bounty report (Markdown, JSON, standalone HTML, flat
-// CSV, or a compact plain-text summary).
+// CSV, a compact plain-text summary, or a streaming JSONL export).
 //
 // Grouping: findings are grouped by `asset_id` before rendering.
 // Groups are ordered by asset_id ascending (plain string order, never
@@ -876,12 +876,15 @@ function assertTemplateAllowsFormat(templateName, format) {
   if (format === 'summary') {
     throw new Error(`Template "${templateName}" renders Markdown only; summary output uses the generic template.`);
   }
+  if (format === 'jsonl') {
+    throw new Error(`Template "${templateName}" renders Markdown only; JSONL output uses the generic template.`);
+  }
 }
 
 // Generate a report from one or more validated findings.
 // options: { programName, generatedAt, format, template,
 // allowMixedTargets, verifier } — format is 'markdown' (default), 'json',
-// 'html', 'csv', or 'summary'; template is 'generic' (default) or the name of a
+// 'html', 'csv', 'summary', or 'jsonl'; template is 'generic' (default) or the name of a
 // platform template (see src/report/templates.js). verifier is 'stub', a
 // verifier function, or a module path (CLI --verifier); when set,
 // each finding carries an advisory ai_verdict (see
@@ -899,8 +902,9 @@ function assertTemplateAllowsFormat(templateName, format) {
 // `target_id` is refused (`REPORT_MIXED_TARGETS_REFUSED`); pass
 // `allowMixedTargets: true` (CLI `--allow-mixed-targets`) to opt in
 // explicitly. An empty finding set renders the CSV header row only
-// when the format is csv (and no template is requested), and the
-// zero-count summary when the format is summary; every other format
+// when the format is csv (and no template is requested), the
+// zero-count summary when the format is summary, and the summary
+// line only when the format is jsonl; every other format
 // still requires at least one finding. Throws on any validation failure; nothing is written
 // by this function, so a failure can never leave a half-written
 // output file.
@@ -909,8 +913,8 @@ function generateReport(findings, options = {}) {
     throw new Error('generateReport expects an array of findings.');
   }
   const format = options.format || 'markdown';
-  if (format !== 'markdown' && format !== 'json' && format !== 'html' && format !== 'csv' && format !== 'summary') {
-    throw new Error(`Invalid format: ${format} (expected "markdown", "json", "html", "csv", or "summary").`);
+  if (format !== 'markdown' && format !== 'json' && format !== 'html' && format !== 'csv' && format !== 'summary' && format !== 'jsonl') {
+    throw new Error(`Invalid format: ${format} (expected "markdown", "json", "html", "csv", "summary", or "jsonl").`);
   }
   const templateName = typeof options.template === 'string' && options.template.trim()
     ? options.template.trim()
@@ -919,11 +923,12 @@ function generateReport(findings, options = {}) {
     // CSV is a flat export: the header row is meaningful on its own
     // (an empty export for a triage import), so an empty set renders
     // just the header. A summary is a headline count, so an empty
-    // set renders the zero-count summary with "No findings." Every
-    // other format is a report about findings and still requires at
-    // least one. The template check runs first, so an empty set with
-    // a template is refused as a template error, not as a
-    // missing-findings error.
+    // set renders the zero-count summary with "No findings." A JSONL
+    // export is a stream, so an empty set renders the summary line
+    // only (total 0). Every other format is a report about findings
+    // and still requires at least one. The template check runs first,
+    // so an empty set with a template is refused as a template
+    // error, not as a missing-findings error.
     assertTemplateAllowsFormat(templateName, format);
     if (format === 'csv') return renderCsv([]);
     if (format === 'summary') {
@@ -944,6 +949,26 @@ function generateReport(findings, options = {}) {
         counts: countBySeverity([]),
         orderedFindings: [],
         aiVerdictCount: 0,
+      });
+    }
+    if (format === 'jsonl') {
+      // The JSONL renderer is required lazily for the same reason as
+      // the summary renderer: src/report/jsonl.js needs
+      // countByVerdict from src/report/summary.js, which needs
+      // SEVERITY_ORDER from this module — a top-level require here
+      // would create a require cycle and leave it undefined.
+      const { renderJsonl } = require('./jsonl');
+      const emptyProgram = typeof options.programName === 'string' && options.programName.trim()
+        ? options.programName.trim()
+        : 'Unnamed Program';
+      return renderJsonl({
+        reportId: deriveReportId(emptyProgram, []),
+        targetId: null,
+        sessionId: null,
+        targetIds: [],
+        multiTarget: false,
+        counts: countBySeverity([]),
+        orderedFindings: [],
       });
     }
     throw new Error('At least one finding is required to generate a report.');
@@ -1059,6 +1084,30 @@ function generateReport(findings, options = {}) {
       counts,
       orderedFindings,
       aiVerdictCount,
+    });
+  }
+  if (format === 'jsonl') {
+    // Streaming export (round 66): one JSON object per line — a
+    // summary line first, then one finding per line in the same
+    // grouped order as the flat JSON `findings` array. No
+    // generated_at is needed — like CSV and summary, a JSONL export
+    // carries no report header beyond the summary line. The
+    // template branch above already refused template + jsonl, and
+    // the mixed-target check above already refused unflagged
+    // multi-target input. The target id comes from the first
+    // finding in grouped order, the same source JSON uses.
+    const { renderJsonl } = require('./jsonl');
+    const sessionId = typeof orderedFindings[0].session_id === 'string' && orderedFindings[0].session_id.trim() !== ''
+      ? orderedFindings[0].session_id
+      : null;
+    return renderJsonl({
+      reportId: deriveReportId(programName, reported),
+      targetId: orderedFindings[0].target_id,
+      sessionId,
+      targetIds,
+      multiTarget,
+      counts,
+      orderedFindings,
     });
   }
   if (format === 'json') {

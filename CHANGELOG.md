@@ -7,6 +7,30 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Streaming JSONL report export (round 66, 2026-11-26)
+
+- `sentinel report --format jsonl` renders one JSON object per
+  line: a summary line first (`type: "report-summary"`,
+  `report_id`, `total`, `counts_by_severity`,
+  `counts_by_verdict` over `validation_status`, `target_id`,
+  `session_id`, plus `target_ids` + `mixed_targets` for opt-in
+  multi-target reports), then one finding per line in the same
+  grouped order as the flat JSON `findings` array, each line the
+  same shape as the JSON format's finding entries (finding object
+  plus `evidence_checklist`, plus advisory `ai_verdict` when a
+  verifier ran). Deterministic across input orders; no
+  `--generated-at` needed (output identical with and without it);
+  an empty set renders the summary line only (total 0), not an
+  error. Template + jsonl refused like the other text formats;
+  `--json` refused as an unknown option (jsonl is its own
+  format); mixed-target rules unchanged. Counts are reused from
+  the shared helpers (`countBySeverity`,
+  `countByVerdict`), never re-implemented. Docs, SKILL.md (both
+  copies, `cmp` verified), and README updated. Two deliberate
+  test-expectation changes: the unknown-format error now lists six
+  formats, so the round-55 and round-61 assertions were updated
+  to the new message.
+
 ### Three more evidence checklists (round 65, 2026-11-26)
 
 - Per-class evidence checklists grow from twelve classes to fifteen
