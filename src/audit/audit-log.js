@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { ensurePrivateDir } = require('../policy/state-permissions');
 const { closeAndRemoveLock } = require('../policy/lock-file');
+const { readRetentionPolicyLenient } = require('./audit-retention');
 
 const MAX_RECORD_BYTES = 32 * 1024;
 const MAX_LOG_BYTES = 10 * 1024 * 1024;
@@ -178,6 +179,150 @@ class AuditLog {
     await fs.rename(this.#logFile, `${this.#logFile}.1`).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   }
 
+  // The retained set parsed into records, grouped by file, in chain
+  // order (archives oldest first, then the active log). Unparseable
+  // lines and non-object lines are skipped here — they are garbage the
+  // chain walk reports separately (verifyChain /
+  // verifyChainPerRecord), and they carry no recordedAt/hash a prune
+  // plan could cite. Called only while the lock is held.
+  async #readRetainedRecordsUnlocked(activeText) {
+    const parseLines = (text) => text.split('\n').filter(Boolean).map((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch {
+        return null;
+      }
+    }).filter((parsed) => parsed !== null);
+    const archives = new Map();
+    for (let index = this.#retentionCount; index >= 1; index -= 1) {
+      let text = '';
+      try {
+        text = await fs.readFile(`${this.#logFile}.${index}`, 'utf8');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      archives.set(index, parseLines(text));
+    }
+    return { active: parseLines(activeText), archives };
+  }
+
+  // Retention plan (round 62). Called only from append(), only when a
+  // rotation is about to happen, and only while the lock is held.
+  // Returns null when there is no policy (absent, corrupt, or
+  // symlinked — read leniently so a damaged policy file can never
+  // block audit appends) or when the policy prunes nothing. Otherwise
+  // returns the prune plan for THIS rotation:
+  //   { prunedCount, prunedFirstRecordedAt, prunedLastRecordedAt,
+  //     lastPrunedHash, maxArchives, maxRecords,
+  //     deleteArchiveIndices, truncateActiveLines }
+  //
+  // What leaves the retained set in this rotation, in chain order:
+  // - the oldest archive, dropped by the rotation itself (round 37:
+  //   the archive at index retentionCount falls off when everything
+  //   shifts). With a policy set this drop is anchored too — the anchor
+  //   is a complete account of what left the retained set in this
+  //   rotation. Without a policy the drop stays exactly as before:
+  //   silent, no anchor.
+  // - archives beyond max_archives (post-rotation index), when set.
+  // - the oldest lines of the rotated-in active log (.1), when
+  //   max_records is set and the retained total still exceeds it.
+  // The anchor itself (+1 record) and the incoming record (+1) count
+  // toward the retained total. The anchor is written to the NEW active
+  // log together with the incoming record — never into .1 — so
+  // truncation of .1 can remove every old active record: with
+  // max_records = 1 the retained set can bottom out at 2 records
+  // (anchor + incoming), documented in docs/audit-retention-v1.md, not
+  // silently violated.
+  async #planRetentionPruneUnlocked(activeText) {
+    const policy = await readRetentionPolicyLenient(path.dirname(this.#logFile));
+    if (!policy) return null;
+    const { active, archives } = await this.#readRetainedRecordsUnlocked(activeText);
+    const retentionCount = this.#retentionCount;
+    // Post-rotation, archive .k (pre-rotation) sits at index k+1; the
+    // pre-rotation archive at index retentionCount falls off.
+    const droppedByRotation = archives.get(retentionCount) || [];
+    const prunedByMaxArchives = [];
+    const deleteArchiveIndices = [];
+    if (policy.max_archives !== null) {
+      for (let index = policy.max_archives + 1; index <= retentionCount; index += 1) {
+        deleteArchiveIndices.push(index);
+      }
+      // Pre-rotation .k lands at post-rotation index k+1, so it is
+      // policy-pruned exactly when k+1 > max_archives, i.e. k >=
+      // max_archives (k ranges 1..retentionCount-1; k =
+      // retentionCount is the rotation drop, counted separately).
+      // Collected oldest first (highest k first): the pruned list is
+      // used in chain order for the anchor's first/last timestamps and
+      // last-pruned hash, so the order matters.
+      for (let k = retentionCount - 1; k >= policy.max_archives; k -= 1) {
+        prunedByMaxArchives.push(...(archives.get(k) || []));
+      }
+    }
+    // Kept archives after the policy: pre-rotation .k survives when
+    // k+1 <= max_archives (or when no max_archives is set).
+    let keptArchiveRecords = 0;
+    for (let k = 1; k <= retentionCount - 1; k += 1) {
+      if (policy.max_archives === null || k + 1 <= policy.max_archives) {
+        keptArchiveRecords += (archives.get(k) || []).length;
+      }
+    }
+    // Retained total after rotation + archive pruning: active records
+    // + anchor + incoming record + kept archives.
+    let truncateActiveLines = 0;
+    if (policy.max_records !== null) {
+      const retained = active.length + 2 + keptArchiveRecords;
+      if (retained > policy.max_records) {
+        truncateActiveLines = Math.min(retained - policy.max_records, active.length);
+      }
+    }
+    const prunedByMaxRecords = active.slice(0, truncateActiveLines);
+    const prunedInOrder = [...droppedByRotation, ...prunedByMaxArchives, ...prunedByMaxRecords];
+    if (prunedInOrder.length === 0) return null;
+    const firstWithTimestamp = prunedInOrder.find((record) => typeof record.recordedAt === 'string');
+    const lastWithTimestamp = [...prunedInOrder].reverse().find((record) => typeof record.recordedAt === 'string');
+    const lastWithHash = [...prunedInOrder].reverse().find((record) => typeof record.hash === 'string' && /^[a-f0-9]{64}$/.test(record.hash));
+    return Object.freeze({
+      prunedCount: prunedInOrder.length,
+      prunedFirstRecordedAt: firstWithTimestamp ? firstWithTimestamp.recordedAt : null,
+      prunedLastRecordedAt: lastWithTimestamp ? lastWithTimestamp.recordedAt : null,
+      lastPrunedHash: lastWithHash ? lastWithHash.hash : null,
+      maxArchives: policy.max_archives,
+      maxRecords: policy.max_records,
+      deleteArchiveIndices: Object.freeze(deleteArchiveIndices),
+      truncateActiveLines,
+    });
+  }
+
+  // Executes a retention plan AFTER #rotateUnlocked() has run: deletes
+  // the archives beyond max_archives and truncates the oldest lines of
+  // the rotated-in active log (.1). Called only while the lock is held.
+  // The anchor lives in the NEW active log, not in .1, so
+  // front-truncation of .1 can remove every old active record;
+  // truncateActiveLines was capped at the pre-rotation active count.
+  async #enforceRetentionPruneUnlocked(plan) {
+    for (const index of plan.deleteArchiveIndices) {
+      await fs.unlink(`${this.#logFile}.${index}`).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+    }
+    if (plan.truncateActiveLines > 0) {
+      const archiveOne = `${this.#logFile}.1`;
+      const text = await fs.readFile(archiveOne, 'utf8');
+      const lines = text.split('\n').filter(Boolean);
+      const kept = lines.slice(plan.truncateActiveLines);
+      const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
+      let renamed = false;
+      try {
+        await fs.writeFile(temporary, kept.length > 0 ? `${kept.join('\n')}\n` : '', { encoding: 'utf8', mode: 0o600 });
+        await fs.chmod(temporary, 0o600);
+        await fs.rename(temporary, archiveOne);
+        renamed = true;
+        await fs.chmod(archiveOne, 0o600);
+      } finally {
+        if (!renamed) await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+      }
+    }
+  }
+
   // The newest parseable record, newest file first (active log, then
   // .1, .2, …). The first parseable record decides: a chained record
   // returns its hash; a legacy record returns GENESIS_PREV_HASH,
@@ -245,8 +390,49 @@ class AuditLog {
       }
       let next = `${existing}${chainedLine}`;
       if (Buffer.byteLength(next) > this.#rotationBytes) {
+        // Retention (round 62): when rotation runs and a policy is set,
+        // the prune is RECORDED, not silent. The plan is computed from
+        // the pre-rotation retained set; when it prunes anything, an
+        // AUDIT_LOG_PRUNED anchor record is written to the NEW active
+        // log together with the incoming record (one atomic temp-file
+        // write, so there is no window where the anchor exists but the
+        // prune did not happen). The anchor chains from the old tail
+        // and the incoming record chains from the anchor, so the chain
+        // stays verifiable after the prune. A policy that prunes
+        // nothing writes no anchor and rotates exactly as before.
+        const prunePlan = await this.#planRetentionPruneUnlocked(existing);
+        let anchorLine = '';
+        if (prunePlan) {
+          const anchor = {
+            chainVersion: CHAIN_VERSION,
+            version: 1,
+            event: 'AUDIT_LOG_PRUNED',
+            eventId: crypto.randomUUID(),
+            // Stamped with the incoming record's time, not the clock:
+            // the anchor precedes the incoming record in chain order,
+            // so stamping it later would make recordedAt non-monotonic
+            // along the chain (an auditor reading the log in order
+            // would see a later timestamp before an earlier one, and a
+            // later prune's first/last timestamps could invert).
+            recordedAt: record.recordedAt,
+            details: redact({
+              prunedCount: prunePlan.prunedCount,
+              prunedFirstRecordedAt: prunePlan.prunedFirstRecordedAt,
+              prunedLastRecordedAt: prunePlan.prunedLastRecordedAt,
+              lastPrunedHash: prunePlan.lastPrunedHash,
+              maxArchives: prunePlan.maxArchives,
+              maxRecords: prunePlan.maxRecords,
+            }),
+          };
+          const anchorWithChain = { ...anchor, prevHash, hash: computeAuditRecordHash({ ...anchor, prevHash }) };
+          anchorLine = `${JSON.stringify(anchorWithChain)}\n`;
+          // The incoming record now chains from the anchor, not from
+          // the old tail.
+          written = { ...record, prevHash: anchorWithChain.hash, hash: computeAuditRecordHash({ ...record, prevHash: anchorWithChain.hash }) };
+        }
         await this.#rotateUnlocked();
-        next = chainedLine;
+        next = `${anchorLine}${JSON.stringify(written)}\n`;
+        if (prunePlan) await this.#enforceRetentionPruneUnlocked(prunePlan);
       }
       if (Buffer.byteLength(next) > MAX_LOG_BYTES) throw new RangeError('Audit record exceeds the maximum size.');
       const temporary = `${this.#logFile}.${process.pid}.${crypto.randomUUID()}.tmp`;

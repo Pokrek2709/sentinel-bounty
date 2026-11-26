@@ -10,6 +10,7 @@ const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch')
 const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
 const { renderAuditExport, AUDIT_EXPORT_FORMATS } = require('../src/audit/audit-export');
+const { retentionPathFor, readRetentionPolicy, writeRetentionPolicy } = require('../src/audit/audit-retention');
 const { generateReport } = require('../src/report/generator');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
@@ -57,6 +58,7 @@ function usage() {
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
     '  sentinel audit verify [--state-dir <path>]',
     '  sentinel audit export [--state-dir <path>] [--out <file>] [--format json|jsonl]',
+    '  sentinel audit retention [--state-dir <path>] [--max-archives <n>] [--max-records <n>] [--show]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel state export [--state-dir <path>] [--out <file>]',
@@ -550,9 +552,64 @@ async function appendOperatorAudit(stateDirectory, event, details) {
   }
 }
 
+async function runAuditRetentionCommand(args) {
+  // `sentinel audit retention` (round 62): set or show the audit-log
+  // retention policy `<state-dir>/audit-retention.json`. Setting it is
+  // an operator config write, so it is refused while the kill-switch
+  // is armed (same guard pattern as round 53's scope changes, checked
+  // before any policy read or write). `--show` is read-only and works
+  // while armed. A successful set writes an AUDIT_RETENTION_SET audit
+  // record; a set whose audit append fails reports `auditLogged: false`
+  // and exits 4, following the scope pattern.
+  const show = args.includes('--show');
+  const options = parseOptions(args.filter((argument) => argument !== '--show'), ['--state-dir', '--max-archives', '--max-records']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const retentionPath = retentionPathFor(stateDirectory);
+  if (show) {
+    if (options.maxArchives !== undefined || options.maxRecords !== undefined) {
+      throw new Error('audit retention: --show cannot be combined with --max-archives or --max-records.');
+    }
+    const policy = await readRetentionPolicy(stateDirectory);
+    process.stdout.write(`${JSON.stringify({ policy, store: retentionPath }, null, 2)}\n`);
+    return;
+  }
+  if (options.maxArchives === undefined && options.maxRecords === undefined) {
+    throw new Error('audit retention requires --max-archives <n> and/or --max-records <n>, or --show.');
+  }
+  const parseLimit = (raw, name) => {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`AUDIT_RETENTION_INVALID: ${name} must be an integer >= 1, got ${JSON.stringify(raw)}.`);
+    }
+    return value;
+  };
+  const { killSwitch } = await killSwitchFor({ stateDir: stateDirectory });
+  const guard = await killSwitch.assertNotTriggered();
+  if (!guard.allowed) {
+    process.stdout.write(`${JSON.stringify({ updated: false, reason: 'AUDIT_RETENTION_REFUSED_KILL_SWITCH_ACTIVE', trigger: guard.trigger || null }, null, 2)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const current = await readRetentionPolicy(stateDirectory);
+  const merged = {
+    schema_version: 1,
+    ...(current || {}),
+    ...(options.maxArchives !== undefined ? { max_archives: parseLimit(options.maxArchives, '--max-archives') } : {}),
+    ...(options.maxRecords !== undefined ? { max_records: parseLimit(options.maxRecords, '--max-records') } : {}),
+  };
+  const policy = await writeRetentionPolicy(stateDirectory, merged);
+  const auditLogged = await appendOperatorAudit(stateDirectory, 'AUDIT_RETENTION_SET', { maxArchives: policy.max_archives, maxRecords: policy.max_records, store: retentionPath });
+  process.stdout.write(`${JSON.stringify({ updated: true, policy, store: retentionPath, auditLogged }, null, 2)}\n`);
+  if (!auditLogged) process.exitCode = 4;
+}
+
 async function runAuditCommand(args) {
   const [action, ...actionArgs] = args;
-  if (action !== 'verify' && action !== 'export') throw new Error(`Unknown audit action: ${action}`);
+  if (action !== 'verify' && action !== 'export' && action !== 'retention') throw new Error(`Unknown audit action: ${action}`);
+  if (action === 'retention') {
+    await runAuditRetentionCommand(actionArgs);
+    return;
+  }
   if (action === 'verify') {
     const options = parseOptions(actionArgs, ['--state-dir']);
     const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);

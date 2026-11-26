@@ -7,6 +7,41 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Audit-log retention policy (round 62, 2026-11-26)
+
+- `sentinel audit retention [--max-archives <n>] [--max-records
+  <n>] [--show]` manages the operator's retention limits in
+  `<state-dir>/audit-retention.json` (mode 0600, symlinks refused,
+  schema v1; both limits optional, integers >= 1). Limits are
+  enforced lazily at rotation: archives beyond `max_archives` are
+  deleted and the oldest lines of the rotated-in active log are
+  truncated to `max_records`. Every prune is RECORDED, not silent —
+  an `AUDIT_LOG_PRUNED` anchor record (count, first/last
+  timestamps, hash of the last pruned record, limits in force) is
+  written to the new active log together with the incoming record
+  in one atomic write, chained from the old tail, so
+  `audit verify` still reports `verified: true` after a prune and
+  `audit export` shows the anchor as a verified record. Setting a
+  limit is refused while the kill-switch is armed
+  (`AUDIT_RETENTION_REFUSED_KILL_SWITCH_ACTIVE`) and writes an
+  `AUDIT_RETENTION_SET` audit record. A corrupt policy file fails
+  loudly on `--show`/set but never blocks audit appends (rotation
+  reads it leniently). With `max_records = 1` the retained set
+  bottoms out at anchor + incoming (2 records). New module
+  `src/audit/audit-retention.js`; `AuditLog.append` gains the
+  rotation-branch plan/enforce steps. Two bugs of this round's own
+  caught by its tests before commit: the anchor was first prepended
+  to the in-memory active log and lost when rotation renamed the
+  on-disk file (fixed by writing anchor + incoming record to the
+  new active log in one write), and the anchor was first stamped
+  with the clock, making `recordedAt` non-monotonic along the chain
+  (fixed by sharing the incoming record's timestamp). The round-39
+  EACCES nobody probe now also copies `audit-retention.js`,
+  `safe-write.js`, and `input-limits.js` into its scratch layout,
+  and the `audit bogus` error message is back to
+  `Unknown audit action: bogus` (a round-62 wording change broke
+  the existing test's expectation).
+
 ### Compact summary report format (round 61, 2026-11-26)
 
 - `sentinel report --format summary` renders a validated finding
