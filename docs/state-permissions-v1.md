@@ -111,6 +111,15 @@ that platform, and asserting it in tests failed the
 - The privacy guarantee on Windows is the OS ACL, which Node
   cannot observe. That is documented here, not hidden.
 
+Round 82 (2026-11-27) read the first Windows run after this
+fix — run 54, head `bcc3037`: conclusion `failure`, the
+`npm test` step, exit code 1. The failing test name is not
+visible from the lab (the jobs API names only the step, the
+check-run has no output, and the log needs admin access), so
+no further cause was guessed. Safe status until a Windows run
+passes: the fix is implemented but not proven to pass on
+Windows.
+
 ## Known limitations (honest)
 
 - Permissions are a local-OS control. They do not protect against

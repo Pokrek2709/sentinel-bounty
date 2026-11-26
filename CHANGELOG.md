@@ -7,6 +7,43 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Windows run 54 verdict: round-81 fix not proven green (round 82, 2026-11-27)
+
+- The first `windows-test` run after round 81 (run 54, head
+  `bcc3037`, 2026-11-26T18:38:39Z) completed with conclusion
+  `failure` — the `Run npm test` step failed with exit code 1
+  after a near-full-duration run, the same shape as the 53
+  runs before it. The POSIX-mode diagnosis from round 81
+  therefore did not turn the run green. Safe status until a
+  Windows run passes: the fix is implemented but not proven
+  to pass on Windows.
+- The failing test name is still not visible from the lab:
+  the jobs API names only the failed step (`Run npm test`),
+  and the check-run carries no output and a single
+  annotation ("Process completed with exit code 1"). The run
+  log download still needs admin access, and no fix was
+  guessed from the verdict alone — per the user's rule for
+  this round, an unreadable failing test name means stop,
+  not speculate.
+- Checked locally and cleared as a cause of the branching
+  logic: a one-off platform simulation (a `--require`
+  preload that reports `process.platform === 'win32'` so
+  the suite's win32 branches and skips engage) ran the
+  full suite green — 780 pass, 0 fail, 16 skipped. That is
+  NOT proof the real Windows run passes: the simulation
+  cannot reproduce OS-level Windows behavior (real `chmod`
+  no-ops, real `0666`/`0777` mode bits, real path
+  separators in the OS, real symlink privileges), so it
+  only proves the branching logic, not the run.
+- No code changed in this round and no test was loosened:
+  the Linux `0600`/`0700` assertions stay strict, and no
+  new platform skip or exception was added. What changed
+  is the record only: this entry and a status paragraph
+  in `docs/state-permissions-v1.md`. The next step is
+  named, not taken: the failing test name is readable
+  only from the Windows run log, which needs the user's
+  admin access.
+
 ### Windows CI failure investigated and fixed (round 81, 2026-11-27)
 
 - The `windows-test` workflow failed on all 53 runs since round
