@@ -9,6 +9,7 @@ const { TargetRegistry, renderScopeExplanationText } = require('../src/scope/tar
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
 const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
+const { renderAuditExport, AUDIT_EXPORT_FORMATS } = require('../src/audit/audit-export');
 const { generateReport } = require('../src/report/generator');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
@@ -54,6 +55,7 @@ function usage() {
     '  sentinel kill-switch rotate-token --actor <id> [--state-dir <path>]',
     '  sentinel kill-switch revoke-token --actor <id> [--state-dir <path>]',
     '  sentinel audit verify [--state-dir <path>]',
+    '  sentinel audit export [--state-dir <path>] [--out <file>] [--format json|jsonl]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel drill [--state-dir <path>] [--recover]',
@@ -548,19 +550,56 @@ async function appendOperatorAudit(stateDirectory, event, details) {
 
 async function runAuditCommand(args) {
   const [action, ...actionArgs] = args;
-  if (action !== 'verify') throw new Error(`Unknown audit action: ${action}`);
-  const options = parseOptions(actionArgs, ['--state-dir']);
+  if (action !== 'verify' && action !== 'export') throw new Error(`Unknown audit action: ${action}`);
+  if (action === 'verify') {
+    const options = parseOptions(actionArgs, ['--state-dir']);
+    const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+    const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
+    try {
+      const result = await audit.verifyChain();
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      // A broken chain is an audit problem (exit 4, like audit-health),
+      // not an authorization failure (exit 3) or a crash (exit 1).
+      if (!result.verified) process.exitCode = 4;
+    } catch (error) {
+      if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) {
+        process.stdout.write(`${JSON.stringify({ verified: false, reason: error.message }, null, 2)}\n`);
+        process.exitCode = 4;
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+  // `audit export` (round 56): dump the whole retained trail — active
+  // log plus archives, oldest first — with each record's hash-chain
+  // status attached. A broken chain is NOT a refusal: the export's
+  // whole point is to show exactly which records verify and which do
+  // not, so the command exits 0 even when records are broken. The
+  // format is validated BEFORE the log is touched, so a bad --format
+  // never takes the audit lock. The output carries no timestamp, so
+  // the same log always renders byte-identically.
+  const options = parseOptions(actionArgs, ['--state-dir', '--out', '--format']);
+  const format = options.format || 'json';
+  if (!AUDIT_EXPORT_FORMATS.includes(format)) {
+    throw new Error(`Invalid audit export format: ${format} (expected "json" or "jsonl").`);
+  }
   const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
   const audit = new AuditLog({ logFile: path.join(stateDirectory, 'audit.jsonl'), skillDirectory: path.resolve(__dirname, '..') });
   try {
-    const result = await audit.verifyChain();
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    // A broken chain is an audit problem (exit 4, like audit-health),
-    // not an authorization failure (exit 3) or a crash (exit 1).
-    if (!result.verified) process.exitCode = 4;
+    const result = await audit.verifyChainPerRecord();
+    const rendered = renderAuditExport(result, format);
+    if (options.out) {
+      const outputPath = path.resolve(options.out);
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await writeFileRefusingSymlink(outputPath, rendered, { encoding: 'utf8', mode: 0o600 });
+      process.stdout.write(`Audit export written to ${outputPath}\n`);
+      return;
+    }
+    process.stdout.write(rendered);
   } catch (error) {
     if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) {
-      process.stdout.write(`${JSON.stringify({ verified: false, reason: error.message }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ exported: false, reason: error.message }, null, 2)}\n`);
       process.exitCode = 4;
       return;
     }

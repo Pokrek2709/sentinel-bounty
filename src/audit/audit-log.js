@@ -376,6 +376,31 @@ class AuditLog {
     }));
   }
 
+  // Every retained line, in chain order (archives oldest first, then
+  // the active log), as { file, line, text } where `file` is the
+  // basename only (the raw line is never echoed back by callers).
+  // Shared by verifyChain() and verifyChainPerRecord().
+  async #readChainEntriesUnlocked() {
+    const entries = [];
+    const files = [];
+    for (let index = this.#retentionCount; index >= 1; index -= 1) files.push(`${this.#logFile}.${index}`);
+    files.push(this.#logFile);
+    for (const file of files) {
+      let text = '';
+      try {
+        text = await fs.readFile(file, 'utf8');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        continue;
+      }
+      const label = path.basename(file);
+      text.split('\n').filter(Boolean).forEach((line, index) => {
+        entries.push({ file: label, line: index + 1, text: line });
+      });
+    }
+    return entries;
+  }
+
   // Replay the hash chain over the complete retained set (archives
   // oldest first, then the active log — the same order as
   // readAllEvents()). Returns a frozen result; it never throws for a
@@ -417,23 +442,7 @@ class AuditLog {
     });
     try {
       return Object.freeze(await this.#withLock(async () => {
-        const entries = [];
-        const files = [];
-        for (let index = this.#retentionCount; index >= 1; index -= 1) files.push(`${this.#logFile}.${index}`);
-        files.push(this.#logFile);
-        for (const file of files) {
-          let text = '';
-          try {
-            text = await fs.readFile(file, 'utf8');
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error;
-            continue;
-          }
-          const label = path.basename(file);
-          text.split('\n').filter(Boolean).forEach((line, index) => {
-            entries.push({ file: label, line: index + 1, text: line });
-          });
-        }
+        const entries = await this.#readChainEntriesUnlocked();
         const counts = { totalRecords: entries.length, legacyRecords: 0, chainedRecords: 0, anchorHash: null };
         let seenChained = false;
         let expectedPrev = null;
@@ -475,6 +484,91 @@ class AuditLog {
           brokenAt: null,
           reason: null,
         };
+      }));
+    } catch (error) {
+      if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) throw error;
+      const classified = classifyAuditStorageError(error);
+      if (classified) throw new Error(classified);
+      throw error;
+    }
+  }
+
+  // Per-record chain verification for `sentinel audit export`
+  // (round 56). Unlike verifyChain(), which stops at the FIRST break,
+  // this walks every retained line and attaches a status to each one,
+  // so an auditor can see exactly which records verify and which do
+  // not. Status values:
+  // - 'verified': a chained record whose prevHash matches the previous
+  //   chained record's stored hash and whose stored hash recomputes.
+  // - 'legacy': a record without a hash field, in the pre-chain prefix.
+  // - 'broken': unparseable, legacy-after-chained, prev mismatch, or
+  //   hash mismatch (reason carries the AUDIT_CHAIN_* code).
+  // The walk continues past breaks: after a broken chained record the
+  // next record is checked against the broken record's STORED hash,
+  // because that is what the next record's prevHash references. The
+  // summary counts records by status (verifiedRecords /
+  // legacyRecords / brokenRecords — counts, not booleans); the
+  // top-level `verified` boolean is true exactly when no record is
+  // broken. The same honest limits as verifyChain() apply: a deleted
+  // leading prefix or last record is undetectable, and a full rewrite
+  // with recomputed hashes verifies clean.
+  async verifyChainPerRecord() {
+    try {
+      return Object.freeze(await this.#withLock(async () => {
+        const entries = await this.#readChainEntriesUnlocked();
+        const records = [];
+        const summary = { totalRecords: entries.length, verifiedRecords: 0, legacyRecords: 0, brokenRecords: 0, anchorHash: null, firstRecordedAt: null, lastRecordedAt: null };
+        let seenChained = false;
+        let expectedPrev = null;
+        for (const entry of entries) {
+          let parsed;
+          try {
+            parsed = JSON.parse(entry.text);
+          } catch {
+            records.push(Object.freeze({ file: entry.file, line: entry.line, chain: Object.freeze({ status: 'broken', reason: 'AUDIT_CHAIN_UNPARSEABLE' }), record: null }));
+            summary.brokenRecords += 1;
+            continue;
+          }
+          if (!parsed || typeof parsed !== 'object' || typeof parsed.event !== 'string') {
+            records.push(Object.freeze({ file: entry.file, line: entry.line, chain: Object.freeze({ status: 'broken', reason: 'AUDIT_CHAIN_UNPARSEABLE' }), record: null }));
+            summary.brokenRecords += 1;
+            continue;
+          }
+          if (typeof parsed.recordedAt === 'string') {
+            if (summary.firstRecordedAt === null) summary.firstRecordedAt = parsed.recordedAt;
+            summary.lastRecordedAt = parsed.recordedAt;
+          }
+          if (typeof parsed.hash !== 'string') {
+            if (seenChained) {
+              records.push(Object.freeze({ file: entry.file, line: entry.line, chain: Object.freeze({ status: 'broken', reason: 'AUDIT_CHAIN_LEGACY_AFTER_CHAINED' }), record: parsed }));
+              summary.brokenRecords += 1;
+            } else {
+              records.push(Object.freeze({ file: entry.file, line: entry.line, chain: Object.freeze({ status: 'legacy', reason: null }), record: parsed }));
+              summary.legacyRecords += 1;
+            }
+            continue;
+          }
+          if (!seenChained) {
+            seenChained = true;
+            summary.anchorHash = typeof parsed.prevHash === 'string' ? parsed.prevHash : null;
+            expectedPrev = parsed.prevHash;
+          }
+          let reason = null;
+          if (typeof parsed.prevHash !== 'string' || parsed.prevHash !== expectedPrev) {
+            reason = 'AUDIT_CHAIN_PREV_MISMATCH';
+          } else if (!/^[a-f0-9]{64}$/.test(parsed.hash) || computeAuditRecordHash(parsed) !== parsed.hash) {
+            reason = 'AUDIT_CHAIN_HASH_MISMATCH';
+          }
+          if (reason) {
+            records.push(Object.freeze({ file: entry.file, line: entry.line, chain: Object.freeze({ status: 'broken', reason }), record: parsed }));
+            summary.brokenRecords += 1;
+          } else {
+            records.push(Object.freeze({ file: entry.file, line: entry.line, chain: Object.freeze({ status: 'verified', reason: null }), record: parsed }));
+            summary.verifiedRecords += 1;
+          }
+          expectedPrev = parsed.hash;
+        }
+        return { verified: summary.brokenRecords === 0, summary: Object.freeze(summary), records: Object.freeze(records) };
       }));
     } catch (error) {
       if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) throw error;

@@ -7,6 +7,38 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Verifiable audit export (round 56, 2026-11-26)
+
+- `sentinel audit export [--state-dir <path>] [--out <file>]
+  [--format json|jsonl]` dumps the whole retained audit trail —
+  active log plus rotated archives, oldest first — with each
+  record's hash-chain status attached (`verified` / `legacy` /
+  `broken`, with the `AUDIT_CHAIN_*` reason for broken records)
+  and a summary with per-status counts (`totalRecords`,
+  `verifiedRecords`, `legacyRecords`, `brokenRecords`,
+  `anchorHash`, `firstRecordedAt`, `lastRecordedAt`). The
+  top-level `verified` boolean is true exactly when no record is
+  broken. JSON renders one object
+  `{ exportVersion: 1, verified, summary, records }`; JSONL renders
+  one compact line per record plus a final summary line marked
+  `{ "type": "audit-export-summary", … }` (record lines carry no
+  `type` field). A broken chain is NOT a refusal — the export exits
+  0 and shows exactly which records verify and which do not —
+  unlike `audit verify`, which exits 4 on a broken chain. The
+  export carries no timestamp, so the same log always renders
+  byte-identically. `--out` writes mode `0600` and refuses a
+  symlinked output path; an unknown `--format` fails before the log
+  is touched. The per-record walk continues past breaks (a modified
+  record flags only itself; its successor still verifies, checked
+  against the modified record's stored hash). A garbage line becomes
+  an error entry with its file and line and a `null` record, never
+  silently dropped. The same honest limits as the chain itself
+  apply (prefix/last-record deletion undetectable, full rewrite
+  outside the mechanism), documented in
+  `docs/audit-export-v1.md`. `verifyChain()` is unchanged (the
+  entry-collection loop is now shared). 13 new tests in
+  `tests/audit-export.test.js`, suite 459 → 472.
+
 ### Flat CSV report export (round 55, 2026-11-26)
 
 - `sentinel report --format csv` renders the same validated,
