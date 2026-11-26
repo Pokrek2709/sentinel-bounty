@@ -29,6 +29,7 @@ const { anonymizeReport } = require('../src/report/anonymize');
 const { splitReport } = require('../src/report/split');
 const { filterReport } = require('../src/report/filter');
 const { computeReportStats, renderReportStatsText, renderReportStatsJson } = require('../src/report/stats');
+const { renderReport } = require('../src/report/render');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -90,6 +91,7 @@ function usage() {
     '  sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]',
     '  sentinel report filter <report.json> [--severity <level>] [--verdict <rule-verdict>] [--out <filtered.json>]',
     '  sentinel report stats <report.json> [--json]',
+    '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -932,6 +934,43 @@ async function runReportStats(args) {
   process.exitCode = 0;
 }
 
+async function runReportRender(args) {
+  // `sentinel report render` re-renders an existing JSON report
+  // file into another format (round 75, Phase 7): Markdown,
+  // JSON, HTML, CSV, summary, or JSONL, through the generator's
+  // own render path, so the output is byte-identical to what the
+  // generator would have produced for the same finding set. The
+  // source report's generated_at is carried through (never
+  // re-stamped); a platform-template source is refused; a
+  // mixed-target source renders only when it declares
+  // mixed_targets. --format is required. The rendered report
+  // goes to stdout (pipeable) or --out (safe-write, mode 0600);
+  // the one-line summary always goes to stderr, so stdout stays
+  // a clean report. The render is computed fully in memory
+  // first, so a bad input can never leave a half-written file
+  // behind.
+  const [filePath, ...optionArgs] = args;
+  if (!filePath || filePath.startsWith('--')) {
+    throw new Error('report render requires a report file: sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]');
+  }
+  const options = parseOptions(optionArgs, ['--format', '--out']);
+  if (!options.format) {
+    throw new Error('report render requires --format markdown|json|html|csv|summary|jsonl: sentinel report render <report.json> --format <format> [--out <file>]');
+  }
+  const report = await readReportFile(path.resolve(filePath));
+  const rendered = renderReport(report, { format: options.format });
+  const summary = rendered.summary;
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileRefusingSymlink(outputPath, rendered.report, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Rendered report written to ${outputPath}\n`);
+  } else {
+    process.stdout.write(rendered.report);
+  }
+  process.stderr.write(`rendered ${summary.total} findings as ${summary.format} from ${summary.report_id}\n`);
+}
+
 async function runReport(args) {
   // `sentinel report validate` is a subcommand of `report`
   // (round 67): intercept before parseOptions, which would reject
@@ -968,6 +1007,12 @@ async function runReport(args) {
   // (round 74): same intercept, same reason.
   if (args[0] === 'stats') {
     await runReportStats(args.slice(1));
+    return;
+  }
+  // `sentinel report render` is a subcommand of `report` too
+  // (round 75): same intercept, same reason.
+  if (args[0] === 'render') {
+    await runReportRender(args.slice(1));
     return;
   }
   // --allow-mixed-targets is a boolean flag (same pattern as drill

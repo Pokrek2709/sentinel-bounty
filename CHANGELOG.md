@@ -7,6 +7,35 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report render command (round 75, 2026-11-26)
+
+- New command `sentinel report render <report.json>
+  --format markdown|json|html|csv|summary|jsonl [--out <file>]`:
+  re-renders an existing JSON report file into another format
+  through the generator's own render path, so the output is
+  byte-identical to what the generator would have produced for
+  the same finding set (same report_id derivation, same
+  grouping, same counts). The source report's `generated_at`
+  is carried through via the shared `pickGeneratedAt` helper
+  (round 73) — never re-stamped; JSON output with no
+  timestamp anywhere fails with
+  `REPORT_RENDER_NO_GENERATED_AT`. A platform-template source
+  is refused (`REPORT_RENDER_TEMPLATE_REFUSED`); a
+  mixed-target source renders only when it declares
+  `mixed_targets` (a hand-edited second target without the
+  declaration is refused with
+  `REPORT_MIXED_TARGETS_REFUSED`); transformation metadata
+  blocks (`split`/`filter`/`anonymization`) are not carried
+  through. The rendered report goes to stdout (pipeable) or
+  `--out` (mode 0600), the one-line summary (`rendered N
+  findings as <format> from <report-id>`) to stderr; read-only
+  on the input. 26 new tests, including byte-identical
+  re-renders in all six formats, the generated_at
+  carry-through and fallback, template refusal,
+  mixed-target render + refusal, and the CLI contract
+  (stdout/stderr, --out mode 0600, input untouched, symlink
+  refused).
+
 ### Report stats command (round 74, 2026-11-26)
 
 - New command `sentinel report stats <report.json> [--json]`:
