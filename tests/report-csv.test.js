@@ -238,7 +238,7 @@ test('CSV refuses mixed-target input by default and renders it with the opt-in',
 test('an unknown format is still rejected with a named error', () => {
   assert.throws(
     () => generateReport(loadFixture('report-findings-array.json'), { ...OPTIONS, format: 'yaml' }),
-    /Invalid format: yaml \(expected "markdown", "json", "html", or "csv"\)/,
+    /Invalid format: yaml \(expected "markdown", "json", "html", "csv", or "summary"\)/,
   );
 });
 

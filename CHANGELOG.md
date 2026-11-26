@@ -7,6 +7,28 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Compact summary report format (round 61, 2026-11-26)
+
+- `sentinel report --format summary` renders a validated finding
+  set as a one-page plain-text executive summary — report id,
+  target/session, severity and verdict counts, highest severity,
+  the top 10 findings (severity then finding_id, with a "+N more"
+  line), the advisory AI-verdict count, and a pointer to the full
+  report. Plain text by design (pasteable into chat/email/tickets);
+  no `--generated-at` needed, like CSV. An empty finding set
+  renders the zero-count summary with "No findings." instead of
+  erroring. A platform template with summary output is refused
+  (`Template "<name>" renders Markdown only; summary output uses
+  the generic template.`); the report command has no `--json`
+  flag, so a stray `--json` is refused as `Unknown option:
+  --json`. The verdict counts are over the findings'
+  `validation_status` values, not the validator's rule verdict
+  enum (documented in `docs/report-summary-v1.md`). New renderer
+  `src/report/summary.js`; `src/report/generator.js` dispatches
+  to it (required lazily to avoid a require cycle over
+  `SEVERITY_ORDER`). Markdown/JSON/HTML/CSV output byte-identical
+  (golden hashes re-pinned).
+
 ### Bugcrowd report template (round 60, 2026-11-26)
 
 - `sentinel report --template bugcrowd` renders one validated

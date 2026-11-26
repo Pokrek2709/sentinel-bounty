@@ -1,6 +1,6 @@
 // Reporting engine (Phase 7): renders VALIDATED finding objects into a
-// deterministic bug-bounty report (Markdown, JSON, standalone HTML, or
-// flat CSV).
+// deterministic bug-bounty report (Markdown, JSON, standalone HTML, flat
+// CSV, or a compact plain-text summary).
 //
 // Grouping: findings are grouped by `asset_id` before rendering.
 // Groups are ordered by asset_id ascending (plain string order, never
@@ -860,11 +860,11 @@ function renderJson({ reportId, targetId, sessionId, programName, generatedAt, c
   return `${JSON.stringify(report, null, 2)}\n`;
 }
 
-// Platform templates are Markdown-only. A named template with HTML
-// or CSV output fails cleanly with the same message in both places
-// it is checked (the empty-set early return and the template branch
-// below), so the refusal never depends on how many findings there
-// are.
+// Platform templates are Markdown-only. A named template with HTML,
+// CSV, or summary output fails cleanly with the same message in both
+// places it is checked (the empty-set early return and the template
+// branch below), so the refusal never depends on how many findings
+// there are.
 function assertTemplateAllowsFormat(templateName, format) {
   if (templateName === 'generic') return;
   if (format === 'html') {
@@ -873,12 +873,15 @@ function assertTemplateAllowsFormat(templateName, format) {
   if (format === 'csv') {
     throw new Error(`Template "${templateName}" renders Markdown only; CSV output uses the generic template.`);
   }
+  if (format === 'summary') {
+    throw new Error(`Template "${templateName}" renders Markdown only; summary output uses the generic template.`);
+  }
 }
 
 // Generate a report from one or more validated findings.
 // options: { programName, generatedAt, format, template,
 // allowMixedTargets, verifier } — format is 'markdown' (default), 'json',
-// 'html', or 'csv'; template is 'generic' (default) or the name of a
+// 'html', 'csv', or 'summary'; template is 'generic' (default) or the name of a
 // platform template (see src/report/templates.js). verifier is 'stub', a
 // verifier function, or a module path (CLI --verifier); when set,
 // each finding carries an advisory ai_verdict (see
@@ -896,8 +899,9 @@ function assertTemplateAllowsFormat(templateName, format) {
 // `target_id` is refused (`REPORT_MIXED_TARGETS_REFUSED`); pass
 // `allowMixedTargets: true` (CLI `--allow-mixed-targets`) to opt in
 // explicitly. An empty finding set renders the CSV header row only
-// when the format is csv (and no template is requested); every other
-// format still requires at least one finding. Throws on any validation failure; nothing is written
+// when the format is csv (and no template is requested), and the
+// zero-count summary when the format is summary; every other format
+// still requires at least one finding. Throws on any validation failure; nothing is written
 // by this function, so a failure can never leave a half-written
 // output file.
 function generateReport(findings, options = {}) {
@@ -905,8 +909,8 @@ function generateReport(findings, options = {}) {
     throw new Error('generateReport expects an array of findings.');
   }
   const format = options.format || 'markdown';
-  if (format !== 'markdown' && format !== 'json' && format !== 'html' && format !== 'csv') {
-    throw new Error(`Invalid format: ${format} (expected "markdown", "json", "html", or "csv").`);
+  if (format !== 'markdown' && format !== 'json' && format !== 'html' && format !== 'csv' && format !== 'summary') {
+    throw new Error(`Invalid format: ${format} (expected "markdown", "json", "html", "csv", or "summary").`);
   }
   const templateName = typeof options.template === 'string' && options.template.trim()
     ? options.template.trim()
@@ -914,12 +918,34 @@ function generateReport(findings, options = {}) {
   if (findings.length === 0) {
     // CSV is a flat export: the header row is meaningful on its own
     // (an empty export for a triage import), so an empty set renders
-    // just the header. Every other format is a report about
-    // findings and still requires at least one. The template check
-    // runs first, so an empty set with a template is refused as a
-    // template error, not as a missing-findings error.
+    // just the header. A summary is a headline count, so an empty
+    // set renders the zero-count summary with "No findings." Every
+    // other format is a report about findings and still requires at
+    // least one. The template check runs first, so an empty set with
+    // a template is refused as a template error, not as a
+    // missing-findings error.
     assertTemplateAllowsFormat(templateName, format);
     if (format === 'csv') return renderCsv([]);
+    if (format === 'summary') {
+      // The summary renderer is required lazily, not at the top of
+      // this file: src/report/summary.js needs SEVERITY_ORDER from
+      // this module, so a top-level require here would create a
+      // require cycle and leave it undefined.
+      const { renderSummary } = require('./summary');
+      const emptyProgram = typeof options.programName === 'string' && options.programName.trim()
+        ? options.programName.trim()
+        : 'Unnamed Program';
+      return renderSummary({
+        reportId: deriveReportId(emptyProgram, []),
+        programName: emptyProgram,
+        targetIds: [],
+        multiTarget: false,
+        sessionId: null,
+        counts: countBySeverity([]),
+        orderedFindings: [],
+        aiVerdictCount: 0,
+      });
+    }
     throw new Error('At least one finding is required to generate a report.');
   }
   const validated = findings.map((finding, index) => validateFinding(finding, index));
@@ -1010,6 +1036,30 @@ function generateReport(findings, options = {}) {
       });
     }
     return renderTemplateReport(template, orderedFindings[0], { programName, generatedAt });
+  }
+  if (format === 'summary') {
+    // Compact one-page summary (round 61): headline counts plus the
+    // top findings, plain text, no generated_at needed — like CSV,
+    // a summary carries no report header beyond the counts. The
+    // template branch above already refused template + summary, and
+    // the mixed-target check above already refused unflagged
+    // multi-target input. The session line comes from the first
+    // finding in grouped order, the same source JSON uses.
+    const { renderSummary } = require('./summary');
+    const sessionId = typeof orderedFindings[0].session_id === 'string' && orderedFindings[0].session_id.trim() !== ''
+      ? orderedFindings[0].session_id
+      : null;
+    const aiVerdictCount = reported.filter((finding) => formatAiVerdict(finding) !== null).length;
+    return renderSummary({
+      reportId: deriveReportId(programName, reported),
+      programName,
+      targetIds,
+      multiTarget,
+      sessionId,
+      counts,
+      orderedFindings,
+      aiVerdictCount,
+    });
   }
   if (format === 'json') {
     return renderJson({
