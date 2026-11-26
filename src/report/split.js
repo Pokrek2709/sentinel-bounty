@@ -72,7 +72,7 @@
 // Node stdlib only.
 'use strict';
 
-const { generateReport, SEVERITY_ORDER } = require('./generator');
+const { generateReport, SEVERITY_ORDER, pickGeneratedAt } = require('./generator');
 const { validateReportShape } = require('./report-diff');
 const { validateOneFinding, FINDING_STATUSES } = require('./validate');
 const { programOf } = require('./merge');
@@ -84,29 +84,13 @@ const { programOf } = require('./merge');
 const GROUP_BY_VALUES = ['severity', 'verdict'];
 const VERDICT_ORDER = FINDING_STATUSES.filter((status) => status !== 'error');
 
-// The generated_at for one group's report: the input report's
-// own generated_at when it is a valid ISO timestamp, else the
-// newest finding created_at within the group, else a named
-// error — a JSON report requires generated_at and the module
-// never invents a timestamp from the wall clock (the same rule
-// as round 68's pickGeneratedAt and round 69's, reimplemented
-// here because neither module exports it).
-function pickGeneratedAt(report, findings) {
-  const input = typeof report.generated_at === 'string' && Number.isFinite(Date.parse(report.generated_at))
-    ? report.generated_at
-    : null;
-  if (input) return input;
-  const created = findings
-    .map((finding) => finding.created_at)
-    .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-  if (created.length > 0) {
-    return created.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
-  }
-  throw new Error(
-    'REPORT_SPLIT_NO_GENERATED_AT: the report carries no generated_at and no finding in this group carries created_at; '
-    + 'cannot produce a JSON report (generated_at is required).',
-  );
-}
+// The generated_at for one group's report comes from the
+// generator's shared pickGeneratedAt (round 73): the input
+// report's own generated_at when valid, else the newest finding
+// created_at within the group. The helper returns null when
+// nothing is available; this module throws its OWN named error
+// at the call site (a JSON report requires generated_at and the
+// module never invents a timestamp from the wall clock).
 
 // Split a parsed JSON report object (report_id + findings array;
 // shape-checked first, so a malformed report throws instead of
@@ -156,7 +140,13 @@ function splitReport(report, options = {}) {
   for (const group of order) {
     const groupFindings = byGroup.get(group);
     if (!groupFindings || groupFindings.length === 0) continue;
-    const generatedAt = pickGeneratedAt(report, groupFindings);
+    const generatedAt = pickGeneratedAt([report], groupFindings);
+    if (generatedAt === null) {
+      throw new Error(
+        'REPORT_SPLIT_NO_GENERATED_AT: the report carries no generated_at and no finding in this group carries created_at; '
+        + 'cannot produce a JSON report (generated_at is required).',
+      );
+    }
     const renderOptions = {
       format: 'json',
       programName,

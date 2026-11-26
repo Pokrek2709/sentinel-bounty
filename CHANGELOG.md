@@ -7,6 +7,23 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Shared `pickGeneratedAt` helper (round 73, 2026-11-26)
+
+- Pure refactor, no new command and no output change:
+  `pickGeneratedAt(reports, findings)` is now exported from
+  `src/report/generator.js` (newest valid `generated_at` among
+  the source reports, else newest finding `created_at`, else
+  null, never the wall clock), and all four call sites —
+  filter, split, merge (both inputs), anonymize — call it
+  instead of their own copies, each keeping its own named
+  error on null (`REPORT_FILTER/SPLIT/MERGE/ANONYMIZE_NO_GENERATED_AT`).
+  Corrects round 72: the duplication was a quadruple, not a
+  triple — `anonymize.js` carried a fourth copy the round-72
+  audit missed. 9 golden sha256 pins prove the four commands'
+  byte output is unchanged; 7 direct contract tests cover the
+  helper. `generateReport`'s own fallback and
+  `deriveExpectedReportId` deliberately left independent.
+
 ### Shared report-summary helpers exported (round 72, 2026-11-26)
 
 - Pure refactor, no new command and no output change:

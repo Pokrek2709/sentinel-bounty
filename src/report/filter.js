@@ -80,7 +80,7 @@
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
 
-const { generateReport, SEVERITY_ORDER, countBySeverity, executiveSummary } = require('./generator');
+const { generateReport, SEVERITY_ORDER, countBySeverity, executiveSummary, pickGeneratedAt } = require('./generator');
 const { validateReportShape } = require('./report-diff');
 const { validateOneFinding, deriveExpectedReportId, FINDING_STATUSES } = require('./validate');
 const { programOf } = require('./merge');
@@ -90,31 +90,13 @@ const { programOf } = require('./merge');
 // 'error' (an error finding fails the filter, it is never kept).
 const VERDICT_VALUES = FINDING_STATUSES.filter((status) => status !== 'error');
 
-// The generated_at for the filtered report: the input report's own
-// generated_at when it is a valid ISO timestamp, else the newest
-// finding created_at among the kept findings (or among all source
-// findings when the kept set is empty), else a named error — a JSON
-// report requires generated_at and the module never invents a
-// timestamp from the wall clock (the same rule as round 68's
-// pickGeneratedAt and round 70's, reimplemented here because
-// neither module exports it).
-function pickGeneratedAt(report, findings) {
-  const input = typeof report.generated_at === 'string' && Number.isFinite(Date.parse(report.generated_at))
-    ? report.generated_at
-    : null;
-  if (input) return input;
-  const created = findings
-    .map((finding) => finding.created_at)
-    .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-  if (created.length > 0) {
-    return created.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
-  }
-  throw new Error(
-    'REPORT_FILTER_NO_GENERATED_AT: the report carries no generated_at and no finding carries created_at; '
-    + 'cannot produce a JSON report (generated_at is required).',
-  );
-}
-
+// The generated_at for the filtered report comes from the
+// generator's shared pickGeneratedAt (round 73): the input
+// report's own generated_at when valid, else the newest finding
+// created_at among the kept findings (or among all source findings
+// when the kept set is empty). The helper returns null when nothing
+// is available; this module throws its OWN named error below (a
+// JSON report requires generated_at and the module never invents a
 // The target_id for the empty report: the source report's own
 // target_id when present, else the first target in sorted order
 // among the source findings (every generator-produced finding
@@ -232,7 +214,13 @@ function filterReport(report, options = {}) {
   const filterBlock = { from_report_id: report.report_id };
   if (severity !== null) filterBlock.severity = severity;
   if (verdict !== null) filterBlock.verdict = verdict;
-  const generatedAt = pickGeneratedAt(report, kept.length > 0 ? kept : report.findings);
+  const generatedAt = pickGeneratedAt([report], kept.length > 0 ? kept : report.findings);
+  if (generatedAt === null) {
+    throw new Error(
+      'REPORT_FILTER_NO_GENERATED_AT: the report carries no generated_at and no finding carries created_at; '
+      + 'cannot produce a JSON report (generated_at is required).',
+    );
+  }
   let rendered;
   if (kept.length === 0) {
     rendered = renderEmptyReport(report, programName, generatedAt, filterBlock);

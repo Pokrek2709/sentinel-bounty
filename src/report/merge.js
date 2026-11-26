@@ -70,7 +70,7 @@
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
 
-const { generateReport } = require('./generator');
+const { generateReport, pickGeneratedAt } = require('./generator');
 const { validateReportShape } = require('./report-diff');
 const { validateOneFinding } = require('./validate');
 const { MAX_FINDINGS } = require('../policy/input-limits');
@@ -137,28 +137,14 @@ function programOf(report) {
     : 'Unnamed Program';
 }
 
-// The generated_at for the merged report: the newer of the two
-// inputs' generated_at values when either carries a valid ISO
-// timestamp, else the newest finding created_at, else a named
-// error — a JSON report requires generated_at and the merge
-// never invents a timestamp from the wall clock.
-function pickGeneratedAt(a, b, findings) {
-  const candidates = [a.generated_at, b.generated_at]
-    .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-  if (candidates.length > 0) {
-    return candidates.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
-  }
-  const created = findings
-    .map((finding) => finding.created_at)
-    .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-  if (created.length > 0) {
-    return created.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
-  }
-  throw new Error(
-    'REPORT_MERGE_NO_GENERATED_AT: neither report carries generated_at and no finding carries created_at; '
-    + 'cannot produce a JSON report (generated_at is required).',
-  );
-}
+// The generated_at for the merged report comes from the
+// generator's shared pickGeneratedAt (round 73), called with
+// BOTH inputs: the newer of the two generated_at values when
+// either carries a valid ISO timestamp, else the newest finding
+// created_at. The helper returns null when nothing is available;
+// this module throws its OWN named error at the call site (a
+// JSON report requires generated_at and the merge never invents
+// a timestamp from the wall clock).
 
 // Merge two parsed JSON report objects (report_id + findings
 // array; shape-checked first, so a malformed report throws
@@ -229,7 +215,13 @@ function mergeReports(a, b) {
       `REPORT_MERGE_TOO_MANY_FINDINGS: merged report would carry ${merged.length} findings (maximum ${MAX_FINDINGS}).`,
     );
   }
-  const generatedAt = pickGeneratedAt(a, b, merged);
+  const generatedAt = pickGeneratedAt([a, b], merged);
+  if (generatedAt === null) {
+    throw new Error(
+      'REPORT_MERGE_NO_GENERATED_AT: neither report carries generated_at and no finding carries created_at; '
+      + 'cannot produce a JSON report (generated_at is required).',
+    );
+  }
   const report = generateReport(merged, {
     format: 'json',
     programName: programA,

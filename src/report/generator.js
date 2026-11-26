@@ -300,6 +300,34 @@ function countBySeverity(findings) {
   return counts;
 }
 
+// pickGeneratedAt(reports, findings): the generated_at for a derived
+// report (round 73) — the newest valid ISO generated_at among
+// `reports` (an array of source report objects; one element for
+// filter/split/anonymize, two for merge), else the newest valid
+// created_at among `findings`, else null. Never invents a timestamp
+// from the wall clock. This is the single implementation of the rule
+// that filter.js, split.js, merge.js, and anonymize.js each carried
+// as their own copy (same selection, different named error on the
+// empty case); the helper returns null when nothing is available
+// and each caller throws its OWN named error, so no error code
+// changed in the unification. A non-string or unparseable value is
+// ignored, never treated as a timestamp.
+function pickGeneratedAt(reports, findings) {
+  const candidates = reports
+    .map((report) => (report && typeof report.generated_at === 'string' ? report.generated_at : null))
+    .filter((value) => value !== null && Number.isFinite(Date.parse(value)));
+  if (candidates.length > 0) {
+    return candidates.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
+  }
+  const created = findings
+    .map((finding) => finding.created_at)
+    .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
+  if (created.length > 0) {
+    return created.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
+  }
+  return null;
+}
+
 const UNASSIGNED_ASSET = 'unassigned';
 
 // Plain string comparison (never localeCompare, which is
@@ -1149,4 +1177,4 @@ function generateReport(findings, options = {}) {
   return renderMarkdown({ programName, generatedAt, counts, groups, targetGroups, multiTarget, targetIds });
 }
 
-module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, executiveSummary, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, escapeCsvField, CSV_COLUMNS, SEVERITY_ORDER };
+module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, executiveSummary, pickGeneratedAt, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, escapeCsvField, CSV_COLUMNS, SEVERITY_ORDER };

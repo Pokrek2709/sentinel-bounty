@@ -106,7 +106,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { generateReport } = require('./generator');
+const { generateReport, pickGeneratedAt } = require('./generator');
 const { validateReportShape } = require('./report-diff');
 const { validateOneFinding } = require('./validate');
 
@@ -170,29 +170,13 @@ function scrubText(text) {
   return { text: out, substitutions };
 }
 
-// The generated_at for the anonymized report: the input's own
-// generated_at when it is a valid ISO timestamp, else the
-// newest finding created_at, else a named error — a JSON report
-// requires generated_at and the module never invents a
-// timestamp from the wall clock (the same rule as round 68's
-// pickGeneratedAt, reimplemented here because merge.js does
-// not export it).
-function pickGeneratedAt(report, findings) {
-  const input = typeof report.generated_at === 'string' && Number.isFinite(Date.parse(report.generated_at))
-    ? report.generated_at
-    : null;
-  if (input) return input;
-  const created = findings
-    .map((finding) => finding.created_at)
-    .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-  if (created.length > 0) {
-    return created.sort((x, y) => Date.parse(x) - Date.parse(y)).at(-1);
-  }
-  throw new Error(
-    'REPORT_ANONYMIZE_NO_GENERATED_AT: the report carries no generated_at and no finding carries created_at; '
-    + 'cannot produce a JSON report (generated_at is required).',
-  );
-}
+// The generated_at for the anonymized report comes from the
+// generator's shared pickGeneratedAt (round 73): the input's own
+// generated_at when valid, else the newest finding created_at.
+// The helper returns null when nothing is available; this module
+// throws its OWN named error at the call site (a JSON report
+// requires generated_at and the module never invents a timestamp
+// from the wall clock).
 
 // Anonymize one finding (deep-cloned by the caller): replace
 // target_id, session_id, and asset_id with their mapped
@@ -271,7 +255,13 @@ function anonymizeReport(report, options = {}) {
     textSubstitutions += result.textSubstitutions;
     return result.finding;
   });
-  const generatedAt = pickGeneratedAt(report, anonymized);
+  const generatedAt = pickGeneratedAt([report], anonymized);
+  if (generatedAt === null) {
+    throw new Error(
+      'REPORT_ANONYMIZE_NO_GENERATED_AT: the report carries no generated_at and no finding carries created_at; '
+      + 'cannot produce a JSON report (generated_at is required).',
+    );
+  }
   const programName = typeof report.program_name === 'string' && report.program_name.trim() !== ''
     ? report.program_name.trim()
     : 'Unnamed Program';
