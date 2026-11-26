@@ -18,6 +18,12 @@ const {
   renderReportDiffJson,
   readReportFile,
 } = require('../src/report/report-diff');
+const {
+  readReportFileForValidation,
+  validateReport,
+  renderReportValidationText,
+  renderReportValidationJson,
+} = require('../src/report/validate');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -73,6 +79,7 @@ function usage() {
     '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--template generic|immunefi|code4rena|hackerone|bugcrowd] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
+    '  sentinel report validate <report.json> [--json]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -675,7 +682,38 @@ async function runAuditCommand(args) {
   }
 }
 
+async function runReportValidate(args) {
+  // `sentinel report validate` checks a JSON report file before the
+  // operator trusts it (round 67, Phase 7): shape, per-finding
+  // strict check + rule verdict, and the report-id recomputation.
+  // --json is a boolean flag (same strip pattern as check-scope
+  // --explain/--json): strip it before parseOptions, which only
+  // accepts valued options. Read-only: nothing is written. Exit 0
+  // when the file parses and every finding validates
+  // (false_positive / needs_evidence are findings, not defects);
+  // exit 1 when any finding is an error. Shape failures throw
+  // named errors, like every other command.
+  const [filePath, ...rest] = args;
+  if (!filePath || filePath.startsWith('--')) {
+    throw new Error('report validate requires a report file: sentinel report validate <report.json> [--json]');
+  }
+  const json = rest.includes('--json');
+  parseOptions(rest.filter((argument) => argument !== '--json'), []);
+  const report = await readReportFileForValidation(path.resolve(filePath));
+  const result = validateReport(report);
+  const rendered = json ? renderReportValidationJson(result) : renderReportValidationText(result);
+  process.stdout.write(rendered);
+  process.exitCode = result.status === 'VALID' ? 0 : 1;
+}
+
 async function runReport(args) {
+  // `sentinel report validate` is a subcommand of `report`
+  // (round 67): intercept before parseOptions, which would reject
+  // 'validate' as an unknown option.
+  if (args[0] === 'validate') {
+    await runReportValidate(args.slice(1));
+    return;
+  }
   // --allow-mixed-targets is a boolean flag (same pattern as drill
   // --recover): strip it before parseOptions, which only accepts
   // valued options.

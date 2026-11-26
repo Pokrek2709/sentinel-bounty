@@ -7,6 +7,27 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report validation command (round 67, 2026-11-26)
+
+- `sentinel report validate <report.json> [--json]` checks a JSON
+  report file before the operator trusts it: shape (non-empty
+  `report_id`, `findings` array, bounded at 10,000, duplicate
+  `finding_id`s refused, symlinked input refused), per-finding
+  strict generator check (required fields, severity band, CVSS
+  vector/score agreement — a failure is an `error`) plus the
+  rule-based verdict (`valid` / `false_positive` /
+  `needs_evidence`, counted but never failing), and the report-id
+  recomputation (SHA-256 of program + sorted finding ids, the
+  same derivation as the generator; a mismatch is a warning, not
+  a failure — the file may come from an older generator
+  version). Exit 0 when the file parses and every finding
+  validates; exit 1 only on structural errors and band
+  mismatches. Text and JSON output are deterministic
+  (per-finding entries sorted by `finding_id`); validate is
+  read-only (a test proves the input file byte-identical
+  afterwards). Docs, SKILL.md (both copies, `cmp` verified),
+  and README updated.
+
 ### Streaming JSONL report export (round 66, 2026-11-26)
 
 - `sentinel report --format jsonl` renders one JSON object per
