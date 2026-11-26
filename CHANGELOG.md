@@ -7,6 +7,28 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report diff between two runs (round 64, 2026-11-26)
+
+- `sentinel report-diff <old-report.json> <new-report.json>
+  [--format markdown|json] [--out <diff.md>]` compares two JSON
+  reports from two runs: added / removed / changed findings,
+  matched by `finding_id`, compared on severity / `cvss_score` /
+  verdict (`validation_status`) / `asset_id` only. `merged_from`
+  is provenance, not substance, so a `merged_from`-only
+  difference is unchanged. Inputs are read bounded (10 MiB,
+  depth 100) with a symlink refusal; shape errors are named
+  (`REPORT_DIFF_INVALID_REPORT`, `REPORT_DIFF_INVALID_FINDING`,
+  `REPORT_DIFF_DUPLICATE_FINDING_ID`,
+  `REPORT_DIFF_SYMLINK_REFUSED`,
+  `REPORT_DIFF_TOO_MANY_FINDINGS`) and fail before any output is
+  produced. Added / removed entries are compact summaries, not
+  full findings; the diff's own `report_id` is a hash of the two
+  source report ids plus the sorted id lists, so the same pair of
+  report sets renders byte-identically in both formats. An empty
+  diff renders the counts line plus "No differences." The diff
+  does not re-validate findings and never runs a verifier;
+  `--template` is refused.
+
 ### Operator status overview (round 63, 2026-11-26)
 
 - `sentinel status [--state-dir <path>] [--skill-dir <path>]

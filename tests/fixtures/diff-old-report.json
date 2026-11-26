@@ -1,0 +1,540 @@
+{
+  "report_id": "RPT-0536be9278ec",
+  "target_id": "TGT-LAB-001",
+  "program_name": "Lab Program",
+  "generated_at": "2026-11-26T02:00:00.000Z",
+  "executive_summary": "Program Lab Program: 3 validated finding(s) — 1 critical, 0 high, 1 medium, 1 low, 0 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.",
+  "findings_summary": {
+    "critical": 1,
+    "high": 0,
+    "medium": 1,
+    "low": 1,
+    "informational": 0,
+    "total": 3
+  },
+  "findings": [
+    {
+      "asset_id": "lab-app/login",
+      "asset_url": "https://lab.example.internal/login",
+      "confidence": "confirmed",
+      "created_at": "2026-11-26T00:00:00.000Z",
+      "cvss_score": 9.8,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "cwe_id": "CWE-89",
+      "description": "The login endpoint concatenates the username parameter directly into a SQL query, allowing an unauthenticated attacker to bypass authentication and read the users table.",
+      "discovery_tool": "manual lab review",
+      "evidence": [
+        {
+          "notes": "Authenticated as user id 1 without a valid password.",
+          "request": "POST /login username=' OR 1=1 --",
+          "response": "HTTP 200 Set-Cookie: session=..."
+        }
+      ],
+      "finding_id": "FND-CRIT-001",
+      "impact": "Full authentication bypass and disclosure of all user records, including password hashes.",
+      "proof_of_concept": "POST /login username=' OR 1=1 -- password=x => HTTP 200 with session cookie for user id 1.",
+      "references": [
+        "https://cwe.mitre.org/data/definitions/89.html"
+      ],
+      "remediation": "Use parameterized queries for all database access and enforce least-privilege database credentials.",
+      "session_id": "SES-REPORT-001",
+      "severity": "critical",
+      "steps_to_reproduce": [
+        "Send a POST request to /login with username set to `' OR 1=1 --` and any password.",
+        "Observe that the response returns an authenticated session for the first user in the table.",
+        "Repeat with a UNION SELECT payload to exfiltrate rows from the users table."
+      ],
+      "target_id": "TGT-LAB-001",
+      "title": "SQL injection in login username parameter",
+      "validation_status": "validated",
+      "vulnerability_type": "SQL Injection",
+      "evidence_checklist": {
+        "classId": "sql injection",
+        "label": "SQL Injection (SQLi)",
+        "items": [
+          {
+            "item": "proof_of_concept",
+            "present": true,
+            "required": true
+          },
+          {
+            "item": "evidence",
+            "present": true,
+            "required": true
+          },
+          {
+            "item": "steps_to_reproduce",
+            "present": true,
+            "required": true
+          },
+          {
+            "item": "response_log",
+            "present": true,
+            "required": true
+          },
+          {
+            "item": "impact",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "remediation",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "cwe_id",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "cvss_vector",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "request_log",
+            "present": true,
+            "required": false
+          }
+        ]
+      }
+    },
+    {
+      "asset_id": "lab-app/profile",
+      "confidence": "confirmed",
+      "created_at": "2026-11-26T00:00:00.000Z",
+      "cvss_score": 5,
+      "description": "Unhandled exceptions on the profile page return stack traces that disclose internal file paths and framework versions.",
+      "finding_id": "FND-MED-001",
+      "impact": "An attacker learns internal paths and framework versions, aiding further attacks.",
+      "remediation": "Return a generic error page and log the stack trace server-side only.",
+      "session_id": "SES-REPORT-001",
+      "severity": "medium",
+      "steps_to_reproduce": [
+        "Request /profile with an invalid user id such as /profile?id=%%.",
+        "Observe the 500 response body contains a stack trace with internal paths."
+      ],
+      "target_id": "TGT-LAB-001",
+      "title": "Verbose error messages disclose internal paths",
+      "validation_status": "validated",
+      "vulnerability_type": "Information Disclosure",
+      "evidence_checklist": {
+        "classId": "information disclosure",
+        "label": "Information Disclosure",
+        "items": [
+          {
+            "item": "proof_of_concept",
+            "present": false,
+            "required": true
+          },
+          {
+            "item": "evidence",
+            "present": false,
+            "required": true
+          },
+          {
+            "item": "steps_to_reproduce",
+            "present": true,
+            "required": true
+          },
+          {
+            "item": "response_log",
+            "present": false,
+            "required": true
+          },
+          {
+            "item": "impact",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "remediation",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "cwe_id",
+            "present": false,
+            "required": false
+          },
+          {
+            "item": "cvss_vector",
+            "present": false,
+            "required": false
+          },
+          {
+            "item": "request_log",
+            "present": false,
+            "required": false
+          },
+          {
+            "item": "evidence_notes",
+            "present": false,
+            "required": false
+          }
+        ]
+      }
+    },
+    {
+      "asset_id": "lab-app/robots",
+      "confidence": "confirmed",
+      "created_at": "2026-11-26T00:00:00.000Z",
+      "cvss_score": 2.5,
+      "description": "The robots.txt file lists an administrative path that is not linked from the site navigation.",
+      "finding_id": "FND-LOW-001",
+      "impact": "Minor information disclosure of a path an attacker can probe directly.",
+      "remediation": "Remove sensitive paths from robots.txt or protect the path with authentication.",
+      "session_id": "SES-REPORT-001",
+      "severity": "low",
+      "steps_to_reproduce": [
+        "Request /robots.txt and note the Disallow entry for /admin/.",
+        "Request /admin/ and observe the login prompt."
+      ],
+      "target_id": "TGT-LAB-001",
+      "title": "robots.txt discloses administrative path",
+      "validation_status": "validated",
+      "vulnerability_type": "Information Disclosure",
+      "evidence_checklist": {
+        "classId": "information disclosure",
+        "label": "Information Disclosure",
+        "items": [
+          {
+            "item": "proof_of_concept",
+            "present": false,
+            "required": true
+          },
+          {
+            "item": "evidence",
+            "present": false,
+            "required": true
+          },
+          {
+            "item": "steps_to_reproduce",
+            "present": true,
+            "required": true
+          },
+          {
+            "item": "response_log",
+            "present": false,
+            "required": true
+          },
+          {
+            "item": "impact",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "remediation",
+            "present": true,
+            "required": false
+          },
+          {
+            "item": "cwe_id",
+            "present": false,
+            "required": false
+          },
+          {
+            "item": "cvss_vector",
+            "present": false,
+            "required": false
+          },
+          {
+            "item": "request_log",
+            "present": false,
+            "required": false
+          },
+          {
+            "item": "evidence_notes",
+            "present": false,
+            "required": false
+          }
+        ]
+      }
+    }
+  ],
+  "groups": [
+    {
+      "asset_id": "lab-app/login",
+      "findings_count": 1,
+      "findings_summary": {
+        "critical": 1,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "informational": 0,
+        "total": 1
+      },
+      "findings": [
+        {
+          "asset_id": "lab-app/login",
+          "asset_url": "https://lab.example.internal/login",
+          "confidence": "confirmed",
+          "created_at": "2026-11-26T00:00:00.000Z",
+          "cvss_score": 9.8,
+          "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+          "cwe_id": "CWE-89",
+          "description": "The login endpoint concatenates the username parameter directly into a SQL query, allowing an unauthenticated attacker to bypass authentication and read the users table.",
+          "discovery_tool": "manual lab review",
+          "evidence": [
+            {
+              "notes": "Authenticated as user id 1 without a valid password.",
+              "request": "POST /login username=' OR 1=1 --",
+              "response": "HTTP 200 Set-Cookie: session=..."
+            }
+          ],
+          "finding_id": "FND-CRIT-001",
+          "impact": "Full authentication bypass and disclosure of all user records, including password hashes.",
+          "proof_of_concept": "POST /login username=' OR 1=1 -- password=x => HTTP 200 with session cookie for user id 1.",
+          "references": [
+            "https://cwe.mitre.org/data/definitions/89.html"
+          ],
+          "remediation": "Use parameterized queries for all database access and enforce least-privilege database credentials.",
+          "session_id": "SES-REPORT-001",
+          "severity": "critical",
+          "steps_to_reproduce": [
+            "Send a POST request to /login with username set to `' OR 1=1 --` and any password.",
+            "Observe that the response returns an authenticated session for the first user in the table.",
+            "Repeat with a UNION SELECT payload to exfiltrate rows from the users table."
+          ],
+          "target_id": "TGT-LAB-001",
+          "title": "SQL injection in login username parameter",
+          "validation_status": "validated",
+          "vulnerability_type": "SQL Injection",
+          "evidence_checklist": {
+            "classId": "sql injection",
+            "label": "SQL Injection (SQLi)",
+            "items": [
+              {
+                "item": "proof_of_concept",
+                "present": true,
+                "required": true
+              },
+              {
+                "item": "evidence",
+                "present": true,
+                "required": true
+              },
+              {
+                "item": "steps_to_reproduce",
+                "present": true,
+                "required": true
+              },
+              {
+                "item": "response_log",
+                "present": true,
+                "required": true
+              },
+              {
+                "item": "impact",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "remediation",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "cwe_id",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "cvss_vector",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "request_log",
+                "present": true,
+                "required": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "asset_id": "lab-app/profile",
+      "findings_count": 1,
+      "findings_summary": {
+        "critical": 0,
+        "high": 0,
+        "medium": 1,
+        "low": 0,
+        "informational": 0,
+        "total": 1
+      },
+      "findings": [
+        {
+          "asset_id": "lab-app/profile",
+          "confidence": "confirmed",
+          "created_at": "2026-11-26T00:00:00.000Z",
+          "cvss_score": 5,
+          "description": "Unhandled exceptions on the profile page return stack traces that disclose internal file paths and framework versions.",
+          "finding_id": "FND-MED-001",
+          "impact": "An attacker learns internal paths and framework versions, aiding further attacks.",
+          "remediation": "Return a generic error page and log the stack trace server-side only.",
+          "session_id": "SES-REPORT-001",
+          "severity": "medium",
+          "steps_to_reproduce": [
+            "Request /profile with an invalid user id such as /profile?id=%%.",
+            "Observe the 500 response body contains a stack trace with internal paths."
+          ],
+          "target_id": "TGT-LAB-001",
+          "title": "Verbose error messages disclose internal paths",
+          "validation_status": "validated",
+          "vulnerability_type": "Information Disclosure",
+          "evidence_checklist": {
+            "classId": "information disclosure",
+            "label": "Information Disclosure",
+            "items": [
+              {
+                "item": "proof_of_concept",
+                "present": false,
+                "required": true
+              },
+              {
+                "item": "evidence",
+                "present": false,
+                "required": true
+              },
+              {
+                "item": "steps_to_reproduce",
+                "present": true,
+                "required": true
+              },
+              {
+                "item": "response_log",
+                "present": false,
+                "required": true
+              },
+              {
+                "item": "impact",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "remediation",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "cwe_id",
+                "present": false,
+                "required": false
+              },
+              {
+                "item": "cvss_vector",
+                "present": false,
+                "required": false
+              },
+              {
+                "item": "request_log",
+                "present": false,
+                "required": false
+              },
+              {
+                "item": "evidence_notes",
+                "present": false,
+                "required": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "asset_id": "lab-app/robots",
+      "findings_count": 1,
+      "findings_summary": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 1,
+        "informational": 0,
+        "total": 1
+      },
+      "findings": [
+        {
+          "asset_id": "lab-app/robots",
+          "confidence": "confirmed",
+          "created_at": "2026-11-26T00:00:00.000Z",
+          "cvss_score": 2.5,
+          "description": "The robots.txt file lists an administrative path that is not linked from the site navigation.",
+          "finding_id": "FND-LOW-001",
+          "impact": "Minor information disclosure of a path an attacker can probe directly.",
+          "remediation": "Remove sensitive paths from robots.txt or protect the path with authentication.",
+          "session_id": "SES-REPORT-001",
+          "severity": "low",
+          "steps_to_reproduce": [
+            "Request /robots.txt and note the Disallow entry for /admin/.",
+            "Request /admin/ and observe the login prompt."
+          ],
+          "target_id": "TGT-LAB-001",
+          "title": "robots.txt discloses administrative path",
+          "validation_status": "validated",
+          "vulnerability_type": "Information Disclosure",
+          "evidence_checklist": {
+            "classId": "information disclosure",
+            "label": "Information Disclosure",
+            "items": [
+              {
+                "item": "proof_of_concept",
+                "present": false,
+                "required": true
+              },
+              {
+                "item": "evidence",
+                "present": false,
+                "required": true
+              },
+              {
+                "item": "steps_to_reproduce",
+                "present": true,
+                "required": true
+              },
+              {
+                "item": "response_log",
+                "present": false,
+                "required": true
+              },
+              {
+                "item": "impact",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "remediation",
+                "present": true,
+                "required": false
+              },
+              {
+                "item": "cwe_id",
+                "present": false,
+                "required": false
+              },
+              {
+                "item": "cvss_vector",
+                "present": false,
+                "required": false
+              },
+              {
+                "item": "request_log",
+                "present": false,
+                "required": false
+              },
+              {
+                "item": "evidence_notes",
+                "present": false,
+                "required": false
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "session_id": "SES-REPORT-001"
+}

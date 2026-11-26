@@ -12,6 +12,12 @@ const { AuditLog } = require('../src/audit/audit-log');
 const { renderAuditExport, AUDIT_EXPORT_FORMATS } = require('../src/audit/audit-export');
 const { retentionPathFor, readRetentionPolicy, writeRetentionPolicy } = require('../src/audit/audit-retention');
 const { generateReport } = require('../src/report/generator');
+const {
+  diffReports,
+  renderReportDiffMarkdown,
+  renderReportDiffJson,
+  readReportFile,
+} = require('../src/report/report-diff');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -67,6 +73,7 @@ function usage() {
     '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv|summary] [--template generic|immunefi|code4rena|hackerone|bugcrowd] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv|summary] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
+    '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
@@ -710,6 +717,43 @@ async function runReport(args) {
   process.stdout.write(report);
 }
 
+async function runReportDiff(args) {
+  // `sentinel report-diff` compares two JSON reports from two runs
+  // (round 64, Phase 7): added / removed / changed findings, matched
+  // by finding_id. The two report files are positionals (the
+  // runScopeCommand pattern: destructure them first, then parse the
+  // options from the rest). A diff compares reports; it does not
+  // render one, so --template is refused explicitly instead of
+  // surfacing as a generic unknown option. Both inputs are read
+  // bounded with a symlink refusal (readReportFile); the diff is
+  // computed fully in memory first, so a bad input can never leave
+  // a half-written output file behind.
+  const [oldPath, newPath, ...optionArgs] = args;
+  if (!oldPath || !newPath || oldPath.startsWith('--') || newPath.startsWith('--')) {
+    throw new Error('report-diff requires two report files: sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]');
+  }
+  if (optionArgs.includes('--template')) {
+    throw new Error('report-diff does not take --template: a diff compares two reports, it does not render one.');
+  }
+  const options = parseOptions(optionArgs, ['--format', '--out']);
+  const format = options.format || 'markdown';
+  if (format !== 'markdown' && format !== 'json') {
+    throw new Error(`Invalid report-diff format: ${format} (expected "markdown" or "json").`);
+  }
+  const oldReport = await readReportFile(path.resolve(oldPath));
+  const newReport = await readReportFile(path.resolve(newPath));
+  const diff = diffReports(oldReport, newReport);
+  const rendered = format === 'json' ? renderReportDiffJson(diff) : renderReportDiffMarkdown(diff);
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileRefusingSymlink(outputPath, rendered, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Report diff written to ${outputPath}\n`);
+    return;
+  }
+  process.stdout.write(rendered);
+}
+
 async function runDetect(args) {
   // `sentinel detect` runs a conforming detector (round 51) over a
   // LOCAL input record and prints the findings as JSON. The input
@@ -963,6 +1007,10 @@ async function main(argv) {
   }
   if (command === 'report') {
     await runReport(args);
+    return;
+  }
+  if (command === 'report-diff') {
+    await runReportDiff(args);
     return;
   }
   if (command === 'detect') {
