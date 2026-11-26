@@ -10,6 +10,7 @@ const {
   classifyStateReadError,
   isCorruptStateError,
   hasNonDirectoryAncestor,
+  classifyEnoentPathError,
 } = require('../src/policy/storage-errors');
 
 function fakeError(code) {
@@ -66,6 +67,48 @@ test('isCorruptStateError detects unparseable or wrong-shape state', () => {
   assert.equal(isCorruptStateError(new Error('Invalid kill-switch state.')), true);
   assert.equal(isCorruptStateError(new Error('KILL_SWITCH_STATE_CORRUPT')), false);
   assert.equal(isCorruptStateError(fakeError('EACCES')), false);
+});
+
+test('classifyEnoentPathError maps a Windows-style ENOENT through a file parent to the caller path-invalid code', async (t) => {
+  // Round 85: round 83 fixed only the digest-read path. The other
+  // classifiers (state-lock, state-read, rotation-lock, audit-log)
+  // still return null for ENOENT, so on Windows — where a path
+  // through a file yields ENOENT, not ENOTDIR — they misclassify.
+  // The helper is the shared disambiguation: a synthetic ENOENT
+  // (the exact code Windows reports) plus a real file parent must
+  // yield the caller's path-invalid code, while a genuinely missing
+  // path must stay null ("missing", not "invalid").
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-storage-errors-'));
+  t.after(async () => {
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  const notADir = path.join(directory, 'notadir');
+  await fs.writeFile(notADir, 'I am a regular file, not a directory');
+  // Windows-style ENOENT under a file parent: invalid path.
+  assert.equal(
+    await classifyEnoentPathError(fakeError('ENOENT'), path.join(notADir, 'state', 'kill-switch.json'), 'KILL_SWITCH_STATE_PATH_INVALID'),
+    'KILL_SWITCH_STATE_PATH_INVALID',
+  );
+  assert.equal(
+    await classifyEnoentPathError(fakeError('ENOENT'), path.join(notADir, 'audit.jsonl'), 'AUDIT_LOG_PATH_INVALID'),
+    'AUDIT_LOG_PATH_INVALID',
+  );
+  // Genuinely missing below a real directory: still missing, not invalid.
+  assert.equal(
+    await classifyEnoentPathError(fakeError('ENOENT'), path.join(directory, 'state', 'kill-switch.json'), 'KILL_SWITCH_STATE_PATH_INVALID'),
+    null,
+  );
+  // Non-ENOENT errors are never the helper's business.
+  assert.equal(
+    await classifyEnoentPathError(fakeError('ENOTDIR'), path.join(notADir, 'state', 'kill-switch.json'), 'KILL_SWITCH_STATE_PATH_INVALID'),
+    null,
+  );
+  assert.equal(
+    await classifyEnoentPathError(fakeError('EACCES'), path.join(notADir, 'state', 'kill-switch.json'), 'KILL_SWITCH_STATE_PATH_INVALID'),
+    null,
+  );
+  assert.equal(await classifyEnoentPathError(new Error('no code'), path.join(notADir, 'x'), 'KILL_SWITCH_STATE_PATH_INVALID'), null);
+  assert.equal(await classifyEnoentPathError(null, path.join(notADir, 'x'), 'KILL_SWITCH_STATE_PATH_INVALID'), null);
 });
 
 test('hasNonDirectoryAncestor distinguishes a file parent from a genuinely missing file', async (t) => {

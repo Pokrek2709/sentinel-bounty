@@ -7,7 +7,7 @@ const path = require('node:path');
 const { runEnvironmentCheck } = require('../src/environment/checker');
 const { TargetRegistry, renderScopeExplanationText } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
-const { classifyRotationLockError, classifyTokenFileError, hasNonDirectoryAncestor } = require('../src/policy/storage-errors');
+const { classifyRotationLockError, classifyTokenFileError, hasNonDirectoryAncestor, classifyEnoentPathError } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
 const { renderAuditExport, AUDIT_EXPORT_FORMATS } = require('../src/audit/audit-export');
 const { retentionPathFor, readRetentionPolicy, writeRetentionPolicy } = require('../src/audit/audit-retention');
@@ -500,7 +500,12 @@ async function auditHealthWithStateReserve(audit, stateDirectory) {
     // Classify the stat failure the same way the state lock does: a
     // permission or path failure is not a storage-exhaustion failure.
     if (error.code === 'ENOENT') {
-      // No state file yet: fall through with the base reserve.
+      // No state file yet: fall through with the base reserve — unless
+      // a parent is a file (Windows reports that as ENOENT, not
+      // ENOTDIR), which is a path failure, not a missing file.
+      if (await hasNonDirectoryAncestor(path.join(stateDirectory, 'kill-switch.json'))) {
+        return { healthy: false, reason: 'KILL_SWITCH_STATE_PATH_INVALID', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
+      }
     } else if (['EACCES', 'EPERM'].includes(error.code)) {
       return { healthy: false, reason: 'KILL_SWITCH_STATE_PERMISSION_DENIED', reservedStateBytes: STATE_WRITE_RESERVE_BYTES };
     } else if (error.code === 'ENOTDIR') {
@@ -520,7 +525,8 @@ async function withTokenRotationLock(filePath, operation) {
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
   } catch (error) {
-    const classified = classifyRotationLockError(error);
+    const classified = classifyRotationLockError(error)
+      || await classifyEnoentPathError(error, path.dirname(filePath), 'RESET_TOKEN_ROTATION_PATH_INVALID');
     if (classified) throw new Error(classified);
     throw error;
   }
@@ -528,14 +534,16 @@ async function withTokenRotationLock(filePath, operation) {
     try {
       handle = await fs.open(lockFile, 'wx', 0o600);
     } catch (error) {
-      const classified = classifyRotationLockError(error);
+      const classified = classifyRotationLockError(error)
+        || await classifyEnoentPathError(error, lockFile, 'RESET_TOKEN_ROTATION_PATH_INVALID');
       if (classified) throw new Error(classified);
       if (error.code !== 'EEXIST' || Date.now() - started >= 5_000) throw new Error('RESET_TOKEN_ROTATION_LOCKED');
       try {
         const stat = await fs.stat(lockFile);
         if (Date.now() - stat.mtimeMs >= 60_000) await fs.unlink(lockFile);
       } catch (statError) {
-        const statClassified = classifyRotationLockError(statError);
+        const statClassified = classifyRotationLockError(statError)
+          || await classifyEnoentPathError(statError, lockFile, 'RESET_TOKEN_ROTATION_PATH_INVALID');
         if (statClassified) throw new Error(statClassified);
         if (statError.code !== 'ENOENT') throw statError;
       }
@@ -565,7 +573,8 @@ async function writeTokenMetadata(filePath, metadata) {
     renamed = true;
     await fs.chmod(filePath, 0o600);
   } catch (error) {
-    const classified = classifyRotationLockError(error);
+    const classified = classifyRotationLockError(error)
+      || await classifyEnoentPathError(error, temporary, 'RESET_TOKEN_ROTATION_PATH_INVALID');
     if (classified) throw new Error(classified);
     throw error;
   } finally {
@@ -580,7 +589,8 @@ async function removeTokenFile(filePath) {
   try {
     await fs.unlink(filePath);
   } catch (error) {
-    const classified = classifyRotationLockError(error);
+    const classified = classifyRotationLockError(error)
+      || await classifyEnoentPathError(error, filePath, 'RESET_TOKEN_ROTATION_PATH_INVALID');
     if (classified) throw new Error(classified);
     throw error;
   }

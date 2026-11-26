@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { ensurePrivateDir } = require('../policy/state-permissions');
 const { closeAndRemoveLock } = require('../policy/lock-file');
+const { classifyEnoentPathError } = require('../policy/storage-errors');
 const { readRetentionPolicyLenient } = require('./audit-retention');
 
 const MAX_RECORD_BYTES = 32 * 1024;
@@ -123,7 +124,8 @@ class AuditLog {
       // alone never chmods a directory that already exists.
       await ensurePrivateDir(path.dirname(this.#logFile));
     } catch (error) {
-      const classified = classifyAuditStorageError(error);
+      const classified = classifyAuditStorageError(error)
+        || await classifyEnoentPathError(error, path.dirname(this.#logFile), 'AUDIT_LOG_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     }
@@ -138,14 +140,16 @@ class AuditLog {
           lock = undefined;
           await fs.unlink(this.#lockFile).catch((unlinkError) => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
         }
-        const classified = classifyAuditStorageError(error);
+        const classified = classifyAuditStorageError(error)
+          || await classifyEnoentPathError(error, this.#lockFile, 'AUDIT_LOG_PATH_INVALID');
         if (classified) throw new Error(classified);
         if (error.code !== 'EEXIST' || this.#clock() - started >= this.#lockTimeoutMs) throw new Error('AUDIT_LOG_LOCKED');
         try {
           const stat = await fs.stat(this.#lockFile);
           if (this.#clock() - stat.mtimeMs >= this.#staleLockMs) await fs.unlink(this.#lockFile);
         } catch (statError) {
-          const statClassified = classifyAuditStorageError(statError);
+          const statClassified = classifyAuditStorageError(statError)
+            || await classifyEnoentPathError(statError, this.#lockFile, 'AUDIT_LOG_PATH_INVALID');
           if (statClassified) throw new Error(statClassified);
           if (statError.code !== 'ENOENT') throw statError;
         }
@@ -684,7 +688,8 @@ class AuditLog {
       }));
     } catch (error) {
       if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) throw error;
-      const classified = classifyAuditStorageError(error);
+      const classified = classifyAuditStorageError(error)
+        || await classifyEnoentPathError(error, this.#logFile, 'AUDIT_LOG_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     }
@@ -769,7 +774,8 @@ class AuditLog {
       }));
     } catch (error) {
       if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) throw error;
-      const classified = classifyAuditStorageError(error);
+      const classified = classifyAuditStorageError(error)
+        || await classifyEnoentPathError(error, this.#logFile, 'AUDIT_LOG_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     }

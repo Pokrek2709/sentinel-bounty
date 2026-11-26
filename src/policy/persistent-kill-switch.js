@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { classifyStorageError, classifyStateReadError, isCorruptStateError } = require('./storage-errors');
+const { classifyStorageError, classifyStateReadError, isCorruptStateError, classifyEnoentPathError } = require('./storage-errors');
 const { ensurePrivateDir } = require('./state-permissions');
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
@@ -106,7 +106,8 @@ class PersistentKillSwitch {
       // stayed loose forever.
       await ensurePrivateDir(path.dirname(this.#stateFile));
     } catch (error) {
-      const classified = classifyStorageError(error);
+      const classified = classifyStorageError(error)
+        || await classifyEnoentPathError(error, path.dirname(this.#stateFile), 'KILL_SWITCH_STATE_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     }
@@ -122,14 +123,16 @@ class PersistentKillSwitch {
           await fs.unlink(this.#lockFile).catch((unlinkError) => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
         }
         handle = undefined;
-        const classified = classifyStorageError(error);
+        const classified = classifyStorageError(error)
+          || await classifyEnoentPathError(error, this.#lockFile, 'KILL_SWITCH_STATE_PATH_INVALID');
         if (classified) throw new Error(classified);
         if (error.code !== 'EEXIST' || nowFrom(this.#clock) - started >= this.#lockTimeoutMs) throw new Error('KILL_SWITCH_STATE_LOCKED');
         try {
           const stat = await fs.stat(this.#lockFile);
           if (nowFrom(this.#clock) - stat.mtimeMs >= this.#staleLockMs) await fs.unlink(this.#lockFile);
         } catch (statError) {
-          const statClassified = classifyStorageError(statError);
+          const statClassified = classifyStorageError(statError)
+            || await classifyEnoentPathError(statError, this.#lockFile, 'KILL_SWITCH_STATE_PATH_INVALID');
           if (statClassified) throw new Error(statClassified);
           if (statError.code !== 'ENOENT') throw statError;
         }
@@ -154,7 +157,8 @@ class PersistentKillSwitch {
       renamed = true;
       await fs.chmod(this.#stateFile, 0o600);
     } catch (error) {
-      const classified = classifyStorageError(error);
+      const classified = classifyStorageError(error)
+        || await classifyEnoentPathError(error, temporary, 'KILL_SWITCH_STATE_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     } finally {
@@ -172,8 +176,15 @@ class PersistentKillSwitch {
       if (parsed.version !== 2) await this.#writeUnlocked(migrated);
       return migrated;
     } catch (error) {
-      if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
-      const classified = classifyStateReadError(error);
+      if (error.code === 'ENOENT') {
+        // Windows reports a path through a file as ENOENT, not
+        // ENOTDIR: a file parent is a path failure, not "no state yet".
+        const invalid = await classifyEnoentPathError(error, this.#stateFile, 'KILL_SWITCH_STATE_PATH_INVALID');
+        if (invalid) throw new Error(invalid);
+        return { version: 2, active: false, trigger: null, workers: [] };
+      }
+      const classified = classifyStateReadError(error)
+        || await classifyEnoentPathError(error, this.#stateFile, 'KILL_SWITCH_STATE_PATH_INVALID');
       if (classified) throw new Error(classified);
       if (isCorruptStateError(error)) throw new Error('KILL_SWITCH_STATE_CORRUPT');
       throw error;
@@ -189,8 +200,15 @@ class PersistentKillSwitch {
     try {
       raw = await fs.readFile(this.#stateFile, 'utf8');
     } catch (error) {
-      if (error.code === 'ENOENT') return { version: 2, active: false, trigger: null, workers: [] };
-      const classified = classifyStateReadError(error);
+      if (error.code === 'ENOENT') {
+        // Windows reports a path through a file as ENOENT, not
+        // ENOTDIR: a file parent is a path failure, not "no state yet".
+        const invalid = await classifyEnoentPathError(error, this.#stateFile, 'KILL_SWITCH_STATE_PATH_INVALID');
+        if (invalid) throw new Error(invalid);
+        return { version: 2, active: false, trigger: null, workers: [] };
+      }
+      const classified = classifyStateReadError(error)
+        || await classifyEnoentPathError(error, this.#stateFile, 'KILL_SWITCH_STATE_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     }
@@ -296,9 +314,14 @@ class PersistentKillSwitch {
       raw = await fs.readFile(this.#stateFile, 'utf8');
     } catch (error) {
       if (error.code === 'ENOENT') {
+        // Windows reports a path through a file as ENOENT, not
+        // ENOTDIR: a file parent is a path failure, not "no state yet".
+        const invalid = await classifyEnoentPathError(error, this.#stateFile, 'KILL_SWITCH_STATE_PATH_INVALID');
+        if (invalid) throw new Error(invalid);
         return this.#locklessSnapshot({ version: 2, active: false, trigger: null, workers: [] });
       }
-      const classified = classifyStateReadError(error);
+      const classified = classifyStateReadError(error)
+        || await classifyEnoentPathError(error, this.#stateFile, 'KILL_SWITCH_STATE_PATH_INVALID');
       if (classified) throw new Error(classified);
       throw error;
     }

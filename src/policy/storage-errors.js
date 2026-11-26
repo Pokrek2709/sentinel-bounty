@@ -56,6 +56,24 @@ function classifyStorageError(error) {
   return null;
 }
 
+// Windows ENOENT disambiguation, shared by every classifier call site
+// (round 85; round 83 built it only into the digest-read path).
+// On Windows a path through a file yields ENOENT, not ENOTDIR, so the
+// sync classifiers above return null for it — and callers then throw
+// the raw error, or treat the path as merely "missing". When the error
+// is ENOENT and an ancestor of filePath exists and is not a directory,
+// the path is invalid: return the caller's path-invalid code.
+// Otherwise return null: a genuinely missing path stays "missing",
+// and any non-ENOENT error is not this helper's business (its own
+// classifier already handled it). Callers consult this after their
+// sync classifier returns null, or before treating ENOENT as "missing".
+async function classifyEnoentPathError(error, filePath, pathInvalidCode) {
+  if (!error || error.code !== 'ENOENT') return null;
+  if (typeof pathInvalidCode !== 'string' || !pathInvalidCode) return null;
+  if (await hasNonDirectoryAncestor(filePath)) return pathInvalidCode;
+  return null;
+}
+
 // Rotation-lock failures use the RESET_TOKEN_ROTATION_* namespace so they
 // stay distinct from state-lock failures (RESET_TOKEN_ROTATION_LOCKED is
 // the pre-existing live-lock code).
@@ -95,4 +113,4 @@ function isCorruptStateError(error) {
   return error instanceof SyntaxError || (error instanceof Error && error.message === 'Invalid kill-switch state.');
 }
 
-module.exports = { classifyStorageError, classifyRotationLockError, classifyTokenFileError, classifyStateReadError, isCorruptStateError, hasNonDirectoryAncestor };
+module.exports = { classifyStorageError, classifyRotationLockError, classifyTokenFileError, classifyStateReadError, isCorruptStateError, hasNonDirectoryAncestor, classifyEnoentPathError };

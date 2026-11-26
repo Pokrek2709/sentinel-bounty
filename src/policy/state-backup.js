@@ -41,6 +41,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { ensurePrivateDir } = require('./state-permissions');
 const { writeFileRefusingSymlink } = require('./safe-write');
+const { hasNonDirectoryAncestor } = require('./storage-errors');
 
 const BACKUP_SCHEMA_VERSION = 1;
 const MAX_BACKUP_BYTES = 1024 * 1024;
@@ -83,7 +84,12 @@ async function backupState({ stateDir, outPath }) {
   try {
     stat = await fs.lstat(stateFile);
   } catch (error) {
-    if (error.code === 'ENOENT') throw new Error('BACKUP_STATE_MISSING');
+    if (error.code === 'ENOENT') {
+      // Windows reports a path through a file as ENOENT, not ENOTDIR:
+      // a file parent means the state file is unusable, not missing.
+      if (await hasNonDirectoryAncestor(stateFile)) throw new Error('BACKUP_STATE_INVALID');
+      throw new Error('BACKUP_STATE_MISSING');
+    }
     throw error;
   }
   if (stat.isSymbolicLink()) throw new Error('BACKUP_SYMLINK_REFUSED');
@@ -130,7 +136,12 @@ async function restoreState({ stateDir, fromPath }) {
   try {
     stat = await fs.lstat(input);
   } catch (error) {
-    if (error.code === 'ENOENT') throw new Error('BACKUP_NOT_FOUND');
+    if (error.code === 'ENOENT') {
+      // Windows reports a path through a file as ENOENT, not ENOTDIR:
+      // a file parent means the input is unusable as a backup, not absent.
+      if (await hasNonDirectoryAncestor(input)) throw new Error('BACKUP_CORRUPT');
+      throw new Error('BACKUP_NOT_FOUND');
+    }
     throw error;
   }
   if (stat.isSymbolicLink()) throw new Error('BACKUP_SYMLINK_REFUSED');

@@ -90,6 +90,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { PersistentKillSwitch } = require('./persistent-kill-switch');
+const { hasNonDirectoryAncestor } = require('./storage-errors');
 const { computeAuditRecordHash } = require('../audit/audit-log');
 const { readRetentionPolicy } = require('../audit/audit-retention');
 const { listScopeTargets, storePathFor } = require('../scope/target-store');
@@ -194,7 +195,13 @@ async function collectAudit(stateDir) {
     try {
       text = await fs.readFile(path.join(stateDir, file), 'utf8');
     } catch (error) {
-      if (error.code === 'ENOENT') continue;
+      if (error.code === 'ENOENT') {
+        // Windows reports a path through a file as ENOENT, not
+        // ENOTDIR: a file parent is a path failure, not a missing file
+        // to skip — fail closed instead of reporting zero records.
+        if (await hasNonDirectoryAncestor(path.join(stateDir, file))) fail('audit', 'AUDIT_LOG_PATH_INVALID');
+        continue;
+      }
       fail('audit', classifyAuditReadError(error));
     }
     text.split('\n').filter(Boolean).forEach((line, index) => {

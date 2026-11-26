@@ -7,6 +7,66 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### ENOENT-through-a-file: same taxonomy for every state reader (round 85, 2026-11-27)
+
+- Round 83 fixed the ENOENT-through-a-file case at one call site
+  (token-digest read). This round applies the same fix everywhere
+  a state read treats ENOENT as "missing": on Windows a path
+  through a file is reported as ENOENT, not ENOTDIR, so a
+  broken path was previously misread as "no state yet". New
+  module `src/policy/storage-errors.js` (round 85) now holds
+  `classifyStateReadError()` (token-digest + kill-switch reads),
+  `classifyTokenFileError()` (rotate/revoke-token), and the
+  shared probe `hasNonDirectoryAncestor()` — walk ancestors
+  with `lstat`; a file ancestor means the path is invalid, a
+  missing ancestor is ignored, `EACCES`/`EPERM`/`ELOOP` abort
+  the walk and return `false` (fail-closed: keep the original
+  error). The probe is a property of the path, not of the
+  error: the same ENOENT can mean "genuinely missing" on one
+  machine and "invalid path" on another.
+- Wired to every reader that assumed ENOENT means missing:
+  `PersistentKillSwitch` (load + snapshotLockless),
+  `collectAudit` (operator status), `auditStatePermissions`
+  (throws `STATE_PERMISSION_PATH_INVALID`), the install
+  verifier (CLI entrypoint, kill-switch, audit log, scope
+  config checks — a file parent now fails the check instead
+  of passing it as "nothing there yet"), `state-backup`
+  (`BACKUP_STATE_INVALID` / `BACKUP_CORRUPT`) and
+  `state-export` (`STATE_EXPORT_STATE_INVALID` instead of
+  silently returning the empty default state), and the CLI
+  itself (`bin/sentinel.js`): `auditHealthWithStateReserve`
+  now reports `KILL_SWITCH_STATE_PATH_INVALID` instead of
+  falling through as "no state file yet", and the
+  token-rotation lock / metadata / removal paths report
+  `RESET_TOKEN_ROTATION_PATH_INVALID`. Existing codes are
+  reused; no new error code was invented. `verify-install`
+  still passes 7/7.
+- One regression test added (`tests/storage-errors.test.js`):
+  synthetic Windows-style ENOENTs plus `ENOENT` with a real
+  file ancestor. The new ENOENT branches are only reachable
+  on Windows through real filesystem calls (on Linux a path
+  through a file yields ENOTDIR, which the existing branches
+  already map), so the Linux suite proves they do not change
+  genuinely-missing behavior, not that they fire — the
+  Windows run is the proof for that, same as round 83.
+  Linux suite: 802 tests (801 + 1), 798 pass, 0 fail, 4
+  skipped (win32-only); win32 simulation 786 pass, 0 fail,
+  16 skipped. The audit-log EACCES probe test now also copies
+  `storage-errors.js` into its scratch skill tree.
+- Windows run verdict for the round-84 commit `933e0e7`
+  (round 85, part 1): run 45882467549 completed
+  2026-11-26T23:31:34Z with conclusion `failure` — job `test`
+  failed, step `Run npm test` exit 1 after ~48 s. The failing
+  test name is not visible through the API (log download 403),
+  so no fix was attempted and none was guessed; the local
+  suite is green 3x on the same commit, so this is either a
+  Windows-only failure or a flake. The second consecutive
+  green run was NOT recorded — there is no second green run.
+  The evidence needed is the failing test name from the run
+  log (user's admin access, when awake). No phase movement:
+  audit found no other decision-free lab-local polish gap
+  (see the round-85 capability report for the full audit).
+
 ### First green Windows run: the round-83 fixes are confirmed (round 84, 2026-11-27)
 
 - The first `windows-test` run after round 83 (run 45881977604,
@@ -1502,17 +1562,25 @@ harden validator`).
 
 ## Known issues
 
-- **Windows CI native run: GREEN since round 84.** GitHub Actions
-  `windows-latest` now passes `npm test` — run 45881977604, head
-  `d2d1991`, 2026-11-26T19:13:08Z, conclusion `success`, the first
-  green Windows run in the project's history. It had failed on
-  every run since round 28 (53/53 before round 81, then the runs
-  for `bcc3037` and `0897b2e`); the ten run-54 failures were
-  fixed by name in round 83 after the user uploaded the run log,
-  and the next run went green. The failing test name is still
-  not retrievable from the lab without repo-admin log access
-  when a run fails — but no blind fix is needed while the run
-  stays green.
+- **Windows CI native run: RED again on the round-84 commit.**
+  GitHub Actions `windows-latest` passed `npm test` once — run
+  45881977604, head `d2d1991`, 2026-11-26T19:13:08Z, conclusion
+  `success`, the first green Windows run in the project's history
+  (round 84) — but the next run, 45882467549 for head `933e0e7`
+  (round 84's docs-only commit), completed 2026-11-26T23:31:34Z
+  with conclusion `failure`: job `test` failed, step `Run npm
+  test` exit 1 after ~48 s (setup, checkout, setup-node all
+  success). The failing test name is not retrievable from the
+  lab without repo-admin log access (log download returns 403),
+  so no fix was attempted — a blind fix is not a fix. The local
+  suite is green 3x in a row on the same commit (802 tests,
+  798 pass, 0 fail, 4 skipped) and the win32 simulation is
+  green (786 pass, 0 fail, 16 skipped), so the red run is
+  either a Windows-only failure or a flake; the evidence that
+  decides it is the failing test name from the run log, which
+  needs the user's admin access. The ten run-54 failures were
+  fixed by name in round 83 after the user uploaded the run log;
+  the same path applies here when the user is awake.
 - **Phases 0–1 cannot reach 100% by rounds.** They need Meta: an
   official manifest, quotas, native identity, and persona indexing.
   There is no public Muse skill registry — distribution is this GitHub

@@ -3,7 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { PersistentKillSwitch } = require('../policy/persistent-kill-switch');
-const { classifyStateReadError } = require('../policy/storage-errors');
+const { classifyStateReadError, hasNonDirectoryAncestor } = require('../policy/storage-errors');
 const { auditStatePermissions } = require('../policy/state-permissions');
 
 const MIN_NODE_MAJOR = 18;
@@ -40,7 +40,10 @@ async function checkCliReachable(skillDirectory) {
     if (!stat.isFile()) return fail('cli-reachable', 'CLI entrypoint bin/sentinel.js exists but is not a file.');
     return pass('cli-reachable', 'CLI entrypoint bin/sentinel.js resolves.');
   } catch (error) {
-    if (error.code === 'ENOENT') return fail('cli-reachable', 'CLI entrypoint bin/sentinel.js is missing.');
+    if (error.code === 'ENOENT') {
+      if (await hasNonDirectoryAncestor(entrypoint)) return fail('cli-reachable', 'CLI entrypoint path is invalid (a path component is not a directory).');
+      return fail('cli-reachable', 'CLI entrypoint bin/sentinel.js is missing.');
+    }
     if (['EACCES', 'EPERM'].includes(error.code)) return fail('cli-reachable', 'CLI entrypoint bin/sentinel.js is not readable (permission denied).');
     if (error.code === 'ENOTDIR') return fail('cli-reachable', 'CLI entrypoint path is invalid (a path component is not a directory).');
     return fail('cli-reachable', 'CLI entrypoint bin/sentinel.js could not be read.');
@@ -52,7 +55,10 @@ async function checkKillSwitch(stateDirectory, skillDirectory) {
   try {
     await fs.stat(stateFile);
   } catch (error) {
-    if (error.code === 'ENOENT') return pass('kill-switch', 'No kill-switch state file exists yet; kill-switch is inactive.');
+    if (error.code === 'ENOENT') {
+      if (await hasNonDirectoryAncestor(stateFile)) return fail('kill-switch', 'Kill-switch state could not be read (KILL_SWITCH_STATE_PATH_INVALID).');
+      return pass('kill-switch', 'No kill-switch state file exists yet; kill-switch is inactive.');
+    }
     return fail('kill-switch', `Kill-switch state could not be read (${classifyStateReadError(error) || 'KILL_SWITCH_STATE_UNAVAILABLE'}).`);
   }
   let snapshot;
@@ -87,7 +93,10 @@ async function checkAuditLog(stateDirectory) {
     // not write anything.
     content = await fs.readFile(logFile, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return pass('audit-log', 'No audit log exists yet; nothing to verify.');
+    if (error.code === 'ENOENT') {
+      if (await hasNonDirectoryAncestor(logFile)) return fail('audit-log', 'Audit log path is invalid (AUDIT_LOG_PATH_INVALID).');
+      return pass('audit-log', 'No audit log exists yet; nothing to verify.');
+    }
     if (['EACCES', 'EPERM'].includes(error.code)) return fail('audit-log', 'Audit log is not readable (AUDIT_LOG_PERMISSION_DENIED).');
     if (error.code === 'ENOTDIR') return fail('audit-log', 'Audit log path is invalid (AUDIT_LOG_PATH_INVALID).');
     if (['ENOSPC', 'EDQUOT'].includes(error.code)) return fail('audit-log', 'Audit log storage is unavailable (AUDIT_LOG_STORAGE_UNAVAILABLE).');
@@ -113,7 +122,7 @@ async function checkStatePermissions(stateDirectory) {
     audit = await auditStatePermissions(stateDirectory);
   } catch (error) {
     if (['EACCES', 'EPERM'].includes(error.code)) return fail('state-permissions', 'State directory is not readable (STATE_PERMISSION_DENIED).');
-    if (error.code === 'ENOTDIR') return fail('state-permissions', 'State directory path is invalid (STATE_PERMISSION_PATH_INVALID).');
+    if (error.code === 'ENOTDIR' || error.message === 'STATE_PERMISSION_PATH_INVALID') return fail('state-permissions', 'State directory path is invalid (STATE_PERMISSION_PATH_INVALID).');
     return fail('state-permissions', 'State directory permissions could not be checked (STATE_PERMISSION_UNAVAILABLE).');
   }
   if (!audit.exists) return pass('state-permissions', 'No state directory exists yet; nothing to verify.');
@@ -140,7 +149,10 @@ async function checkScopeConfig(skillDirectory) {
   try {
     content = await fs.readFile(configFile, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return fail('scope-config', 'Scope config config/environment-tools.json is missing.');
+    if (error.code === 'ENOENT') {
+      if (await hasNonDirectoryAncestor(configFile)) return fail('scope-config', 'Scope config path is invalid (a path component is not a directory).');
+      return fail('scope-config', 'Scope config config/environment-tools.json is missing.');
+    }
     if (['EACCES', 'EPERM'].includes(error.code)) return fail('scope-config', 'Scope config config/environment-tools.json is not readable (permission denied).');
     if (error.code === 'ENOTDIR') return fail('scope-config', 'Scope config path is invalid (a path component is not a directory).');
     return fail('scope-config', 'Scope config config/environment-tools.json could not be read.');

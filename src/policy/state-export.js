@@ -78,6 +78,7 @@ const path = require('node:path');
 const { AuditLog } = require('../audit/audit-log');
 const { loadScopeTargets, storePathFor } = require('../scope/target-store');
 const { isValidState } = require('./state-backup');
+const { hasNonDirectoryAncestor } = require('./storage-errors');
 
 const EXPORT_VERSION = 1;
 const STATE_FILE_NAME = 'kill-switch.json';
@@ -100,7 +101,12 @@ async function readKillSwitchState(stateDir) {
   try {
     stat = await fs.lstat(stateFile);
   } catch (error) {
-    if (error.code === 'ENOENT') return defaultKillSwitchState();
+    if (error.code === 'ENOENT') {
+      // Windows reports a path through a file as ENOENT, not ENOTDIR:
+      // a file parent means the state is unusable, not "no state yet".
+      if (await hasNonDirectoryAncestor(stateFile)) throw new Error('STATE_EXPORT_STATE_INVALID');
+      return defaultKillSwitchState();
+    }
     throw error;
   }
   if (stat.isSymbolicLink()) throw new Error('STATE_EXPORT_SYMLINK_REFUSED');

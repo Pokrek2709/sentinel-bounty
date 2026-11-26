@@ -40,6 +40,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { hasNonDirectoryAncestor } = require('./storage-errors');
 
 const REQUIRED_FILE_MODE = 0o600;
 const REQUIRED_DIR_MODE = 0o700;
@@ -103,6 +104,10 @@ async function auditStatePermissions(stateDirectory) {
     names = await fs.readdir(stateDirectory);
   } catch (error) {
     if (error.code === 'ENOENT') {
+      // Windows reports a path through a file as ENOENT, not ENOTDIR:
+      // a file parent means the path is invalid, not "not yet created".
+      // The verifier maps this message to STATE_PERMISSION_PATH_INVALID.
+      if (await hasNonDirectoryAncestor(stateDirectory)) throw new Error('STATE_PERMISSION_PATH_INVALID');
       return { stateDirectory, exists: false, checked: 0, violations: [], posixModes };
     }
     throw error;
