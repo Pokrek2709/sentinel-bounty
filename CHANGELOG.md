@@ -7,6 +7,30 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report stats command (round 74, 2026-11-26)
+
+- New command `sentinel report stats <report.json> [--json]`:
+  a compact triage summary of one JSON report — total, counts
+  by severity (generator's exported `countBySeverity`), counts
+  by rule verdict from round 67's `validateOneFinding` (valid /
+  false_positive / needs_evidence, plus an `error` bucket for
+  findings failing the strict check), counts by class (the
+  finding's `vulnerability_type`, normalized trim + lowercase,
+  missing or blank counts as `unknown`), the CVSS distribution
+  (scored vs unscored, min / max / mean over scored only, mean
+  rounded to 2 decimals), the top 5 assets by finding count
+  (count desc, ties by `asset_id`), and the generator's
+  executive summary line. Exit 0 whenever the file parses —
+  stats is a summary view, not a verdict, so even an
+  all-false-positive report or a report full of `error`
+  findings exits 0; shape failures carry `REPORT_DIFF_*`
+  codes (the round-64 shared reader); read-only, no writing.
+  22 new tests, including hand-computed goldens for a 5-finding
+  set (text + JSON) and a 6-finding set with the false-positive
+  fixture, the top-5 cap with tie-breaking, the empty report,
+  determinism across input orders, and the md/json goldens
+  unchanged.
+
 ### Shared `pickGeneratedAt` helper (round 73, 2026-11-26)
 
 - Pure refactor, no new command and no output change:

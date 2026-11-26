@@ -28,6 +28,7 @@ const { mergeReports } = require('../src/report/merge');
 const { anonymizeReport } = require('../src/report/anonymize');
 const { splitReport } = require('../src/report/split');
 const { filterReport } = require('../src/report/filter');
+const { computeReportStats, renderReportStatsText, renderReportStatsJson } = require('../src/report/stats');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -88,6 +89,7 @@ function usage() {
     '  sentinel report anonymize <report.json> [--out <anon.json>] [--salt <hex>]',
     '  sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]',
     '  sentinel report filter <report.json> [--severity <level>] [--verdict <rule-verdict>] [--out <filtered.json>]',
+    '  sentinel report stats <report.json> [--json]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -905,6 +907,31 @@ async function runReportFilter(args) {
   process.stderr.write(`filtered ${summary.kept} of ${summary.total} findings (${predicates.join(', ')})\n`);
 }
 
+async function runReportStats(args) {
+  // `sentinel report stats` prints a compact triage summary of one
+  // JSON report file (round 74, Phase 7): total, counts by
+  // severity / rule verdict / class, the CVSS distribution, and
+  // the top 5 assets — plus the generator's executive summary
+  // line. --json is a boolean flag (same strip pattern as
+  // check-scope --explain/--json): strip it before parseOptions,
+  // which only accepts valued options. Read-only: nothing is
+  // written. Exit 0 whenever the file parses — stats is a summary
+  // view, not a verdict, so even an all-false-positive report or
+  // a report full of `error` findings exits 0. Shape failures
+  // throw named errors, like every other command.
+  const [filePath, ...rest] = args;
+  if (!filePath || filePath.startsWith('--')) {
+    throw new Error('report stats requires a report file: sentinel report stats <report.json> [--json]');
+  }
+  const json = rest.includes('--json');
+  parseOptions(rest.filter((argument) => argument !== '--json'), []);
+  const report = await readReportFile(path.resolve(filePath));
+  const stats = computeReportStats(report);
+  const rendered = json ? renderReportStatsJson(stats) : renderReportStatsText(stats);
+  process.stdout.write(rendered);
+  process.exitCode = 0;
+}
+
 async function runReport(args) {
   // `sentinel report validate` is a subcommand of `report`
   // (round 67): intercept before parseOptions, which would reject
@@ -935,6 +962,12 @@ async function runReport(args) {
   // (round 71): same intercept, same reason.
   if (args[0] === 'filter') {
     await runReportFilter(args.slice(1));
+    return;
+  }
+  // `sentinel report stats` is a subcommand of `report` too
+  // (round 74): same intercept, same reason.
+  if (args[0] === 'stats') {
+    await runReportStats(args.slice(1));
     return;
   }
   // --allow-mixed-targets is a boolean flag (same pattern as drill
