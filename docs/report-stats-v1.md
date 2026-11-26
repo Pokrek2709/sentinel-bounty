@@ -26,6 +26,17 @@ both formats.
   (`program_name`, else `Unnamed Program`).
 - `total` — the number of findings in the file's `findings`
   array. Every finding counts, including `error` verdicts.
+- `invalid_severity` — the count of findings with a severity
+  outside the schema (invalid string or missing field): `total`
+  minus the sum of the severity buckets. It is exactly the gap
+  between the summary's number and `total` (round 77 — this
+  closes the divergence documented in round 74's F5, where the
+  two numbers sat next to each other with no explanation).
+  The field is present only when it is greater than zero, in
+  both formats, so generator-produced output stays
+  byte-identical. Every such finding also lands in the `error`
+  verdict bucket (the strict check rejects an invalid or
+  missing severity).
 - `by_severity` — counts per severity from the generator's
   exported `countBySeverity`. A finding with a severity outside
   the schema is counted in `total` but in no severity bucket
@@ -72,12 +83,28 @@ Top assets:
 ...
 ```
 
+When findings with an invalid severity exist, the Total line
+reconciles the summary's number with the total visibly:
+
+```text
+Total: <total> findings (<counted> counted in summary, <invalid> invalid severity)
+```
+
+where `<counted>` is the summary's number (the sum of the
+severity buckets) and `<invalid>` is `invalid_severity`. The
+two always add up to `<total>` — the reconciliation is
+arithmetic, not prose. When there are no invalid-severity
+findings the line is the plain form above, so
+generator-produced output is byte-identical with or without
+the reconciliation.
+
 An empty report renders every count at zero, `Class: none`,
 `CVSS: 0 scored, 0 unscored; no scored findings`, and
 `Top assets: none` — it is not an error.
 
 `--json` renders the stats object itself, pretty-printed, with
 the fixed key order `report_id`, `summary`, `total`,
+`invalid_severity` (only when greater than zero),
 `by_severity`, `by_verdict`, `by_class`, `cvss`, `top_assets`.
 
 ## Exit code and errors

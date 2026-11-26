@@ -44,6 +44,106 @@ const LOW = ALL[2];
 const HIGH = { ...clone(MED), finding_id: 'FND-HIGH-001', severity: 'high', cvss_score: 7.0 };
 const INFO = { ...clone(LOW), finding_id: 'FND-INFO-001', severity: 'informational', cvss_score: 0.0 };
 const FIVE = [CRIT, HIGH, MED, LOW, INFO];
+// Round 77: hand-edited findings with an invalid severity and a
+// missing severity (both clones of LOW, so the only numbers that
+// move are the ones the severity validity touches). The strict
+// check rejects both, so both are `error` verdicts — but they
+// are still counted in `total` and in no severity bucket, which
+// is exactly the summary/total gap this round reconciles.
+const BANANA = { ...clone(LOW), finding_id: 'FND-BANANA-001', severity: 'banana' };
+const NOSEV = { ...clone(LOW), finding_id: 'FND-NOSEV-001' };
+delete NOSEV.severity;
+const SEVEN = [...FIVE, BANANA, NOSEV];
+// Hand-computed stats for the SEVEN set: total 7, but the
+// summary counts only the 5 valid-severity findings, so
+// invalid_severity is 2; verdict error 2; class information
+// disclosure 6 (LOW, INFO, HIGH, MED + the two clones — HIGH
+// and MED are information disclosure too, as in FIVE);
+// cvss 7 scored (24.3 + 2.5 + 2.5 = 29.3, mean 4.19);
+// top assets robots 4 (LOW, INFO + the two clones).
+const EXPECTED_SEVEN_STATS = {
+  report_id: 'RPT-000000000000',
+  summary: 'Program Lab Program: 5 validated finding(s) — 1 critical, 1 high, 1 medium, 1 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.',
+  total: 7,
+  invalid_severity: 2,
+  by_severity: { critical: 1, high: 1, medium: 1, low: 1, informational: 1 },
+  by_verdict: { valid: 1, false_positive: 0, needs_evidence: 4, error: 2 },
+  by_class: [
+    { class: 'information disclosure', count: 6 },
+    { class: 'sql injection', count: 1 },
+  ],
+  cvss: { scored: 7, unscored: 0, min: 0, max: 9.8, mean: 4.19 },
+  top_assets: [
+    { asset_id: 'lab-app/robots', count: 4 },
+    { asset_id: 'lab-app/profile', count: 2 },
+    { asset_id: 'lab-app/login', count: 1 },
+  ],
+};
+
+const EXPECTED_SEVEN_TEXT = `Report Stats — RPT-000000000000
+Program Lab Program: 5 validated finding(s) — 1 critical, 1 high, 1 medium, 1 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.
+Total: 7 findings (5 counted in summary, 2 invalid severity)
+Severity: critical 1, high 1, medium 1, low 1, informational 1
+Verdict: valid 1, false_positive 0, needs_evidence 4, error 2
+Class: information disclosure 6, sql injection 1
+CVSS: 7 scored, 0 unscored; min 0, max 9.8, mean 4.19
+Top assets:
+- lab-app/robots: 4
+- lab-app/profile: 2
+- lab-app/login: 1
+`;
+
+const EXPECTED_SEVEN_JSON = `{
+  "report_id": "RPT-000000000000",
+  "summary": "Program Lab Program: 5 validated finding(s) — 1 critical, 1 high, 1 medium, 1 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.",
+  "total": 7,
+  "invalid_severity": 2,
+  "by_severity": {
+    "critical": 1,
+    "high": 1,
+    "medium": 1,
+    "low": 1,
+    "informational": 1
+  },
+  "by_verdict": {
+    "valid": 1,
+    "false_positive": 0,
+    "needs_evidence": 4,
+    "error": 2
+  },
+  "by_class": [
+    {
+      "class": "information disclosure",
+      "count": 6
+    },
+    {
+      "class": "sql injection",
+      "count": 1
+    }
+  ],
+  "cvss": {
+    "scored": 7,
+    "unscored": 0,
+    "min": 0,
+    "max": 9.8,
+    "mean": 4.19
+  },
+  "top_assets": [
+    {
+      "asset_id": "lab-app/robots",
+      "count": 4
+    },
+    {
+      "asset_id": "lab-app/profile",
+      "count": 2
+    },
+    {
+      "asset_id": "lab-app/login",
+      "count": 1
+    }
+  ]
+}
+`;
 // Rule verdicts in the FIVE set: CRIT is valid; HIGH, MED, LOW,
 // INFO are needs_evidence (all carry validation_status
 // "validated" — the workflow state, which is NOT the verdict).
@@ -243,6 +343,42 @@ test('a band-mismatch finding counts as an error verdict and is still included i
   assert.deepEqual(stats.by_verdict, { valid: 1, false_positive: 0, needs_evidence: 0, error: 1 });
   // The severity count still counts the declared severity.
   assert.deepEqual(stats.by_severity, { critical: 2, high: 0, medium: 0, low: 0, informational: 0 });
+});
+
+// Round 77: the F5 divergence from round 74 — the summary counts
+// only valid-severity findings (5) while the total counts every
+// finding (7). Before this round the two numbers sat next to
+// each other with no explanation; now they reconcile visibly:
+// `invalid_severity` names the gap, in the stats object, the
+// text, and the JSON. The numbers below are hand-computed (see
+// the EXPECTED_SEVEN_* constants) and were verified against the
+// implementation before the tests were written.
+test('invalid or missing severity findings reconcile the summary and the total', () => {
+  const stats = computeReportStats(literalReport(SEVEN));
+  assert.deepEqual(stats, EXPECTED_SEVEN_STATS);
+  // The summary's number (5) plus invalid_severity (2) equals
+  // the total (7) — the reconciliation is arithmetic, not prose.
+  assert.equal(stats.total - (stats.invalid_severity || 0), 5);
+  assert.equal(renderReportStatsText(stats), EXPECTED_SEVEN_TEXT);
+  assert.equal(renderReportStatsJson(stats), EXPECTED_SEVEN_JSON);
+});
+
+test('the reconciled stats are deterministic across input orders', () => {
+  const forward = computeReportStats(literalReport(SEVEN));
+  const shuffled = computeReportStats(literalReport([NOSEV, INFO, BANANA, LOW, CRIT, HIGH, MED]));
+  assert.deepEqual(shuffled, forward);
+  assert.equal(renderReportStatsText(shuffled), renderReportStatsText(forward));
+  assert.equal(renderReportStatsJson(shuffled), renderReportStatsJson(forward));
+});
+
+test('CLI report stats names the gap in text and carries invalid_severity in --json', async (t) => {
+  const dir = await makeTempDir(t, 'sentinel-stats-');
+  const filePath = path.join(dir, 'seven.json');
+  fs.writeFileSync(filePath, JSON.stringify(literalReport(SEVEN), null, 2));
+  const { stdout: text } = await execFileAsync(process.execPath, [CLI, 'report', 'stats', filePath], { cwd: dir });
+  assert.equal(text, EXPECTED_SEVEN_TEXT);
+  const { stdout: json } = await execFileAsync(process.execPath, [CLI, 'report', 'stats', filePath, '--json'], { cwd: dir });
+  assert.deepEqual(JSON.parse(json), EXPECTED_SEVEN_STATS);
 });
 
 test('a blank class counts as unknown and a finding without an asset is excluded from top assets but kept in the total', () => {

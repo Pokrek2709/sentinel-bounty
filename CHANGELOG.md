@@ -7,6 +7,23 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report stats reconciliation (round 77, 2026-11-26)
+
+- `sentinel report stats` now reconciles the executive
+  summary's number with `total` on hand-edited files: the
+  summary counts only findings with a valid severity, while
+  `total` counts every finding, so the two could diverge
+  with no explanation (round 74 F5). The gap is now named
+  `invalid_severity` (findings with an invalid or missing
+  severity — also in the `error` verdict bucket) and carried
+  in both renderers, but only when greater than zero: the
+  text Total line reads `Total: N findings (M counted in
+  summary, K invalid severity)`, and `--json` gains the
+  `invalid_severity` key after `total`. Generator-produced
+  output is byte-identical (no key, no parenthetical when
+  the gap is zero). No other command changed; the
+  generator's md/json goldens are unchanged.
+
 ### Docs cross-reference audit (round 76, 2026-11-26)
 
 - Docs-only round: audited every documentation cross-reference

@@ -57,6 +57,24 @@
 // total does not mean the target is clean, only that the report
 // is small.
 //
+// Reconciliation (round 77): the summary line comes from the
+// generator's `executiveSummary`, which counts only findings
+// with a VALID severity (`countBySeverity(...).total`), while
+// `total` counts every finding in the file. On a
+// generator-produced file the two agree, but on a hand-edited
+// file they can diverge — a finding with an invalid or missing
+// severity is counted in `total` and in no severity bucket.
+// Stats reconciles the two numbers visibly instead of hiding
+// the gap: `invalid_severity` is the count of findings the
+// summary does not count (findings.length minus the severity
+// counts' total), and it is carried in both renderers — but
+// ONLY when it is greater than zero, so generator-produced
+// outputs stay byte-identical. Every such finding also lands in
+// the `error` verdict bucket (the strict check rejects an
+// invalid or missing severity), so nothing is hidden twice
+// over; the reconciliation line just names the gap the summary
+// and the total would otherwise show.
+//
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
 
@@ -102,6 +120,10 @@ function classOf(finding) {
 // throws instead of returning stats). Returns the stats object:
 // {
 //   report_id, summary, total,
+//   invalid_severity,  // ONLY when > 0: findings with an invalid
+//                      // or missing severity — counted in `total`
+//                      // and in no severity bucket, and not in
+//                      // the summary's number (round 77)
 //   by_severity: { critical, high, medium, low, informational },
 //   by_verdict: { valid, false_positive, needs_evidence, error },
 //   by_class: [{ class, count }]  // count desc, class asc
@@ -115,6 +137,12 @@ function computeReportStats(report) {
   const severityCounts = countBySeverity(findings);
   const bySeverity = {};
   for (const severity of SEVERITY_VALUES) bySeverity[severity] = severityCounts[severity];
+  // Round 77: the summary counts only findings with a valid
+  // severity (severityCounts.total); `total` counts every
+  // finding. The gap is named, not hidden — but the key is
+  // present only when the gap exists, so generator-produced
+  // outputs stay byte-identical.
+  const invalidSeverity = findings.length - severityCounts.total;
   const byVerdict = {};
   for (const verdict of VERDICT_VALUES) byVerdict[verdict] = 0;
   const classCounts = new Map();
@@ -148,22 +176,27 @@ function computeReportStats(report) {
     .map(([assetId, count]) => ({ asset_id: assetId, count }))
     .sort((a, b) => b.count - a.count || compareStrings(a.asset_id, b.asset_id))
     .slice(0, TOP_ASSETS);
-  return {
+  // Key order is fixed: invalid_severity sits right after total
+  // when present (round 77), and is omitted entirely when zero
+  // so generator-produced stats stay byte-identical.
+  const stats = {
     report_id: report.report_id,
     summary: executiveSummary(severityCounts, programOf(report)),
     total: findings.length,
-    by_severity: bySeverity,
-    by_verdict: byVerdict,
-    by_class: byClass,
-    cvss: {
-      scored,
-      unscored,
-      min,
-      max,
-      mean: scored === 0 ? null : round2(sum / scored),
-    },
-    top_assets: topAssets,
   };
+  if (invalidSeverity > 0) stats.invalid_severity = invalidSeverity;
+  stats.by_severity = bySeverity;
+  stats.by_verdict = byVerdict;
+  stats.by_class = byClass;
+  stats.cvss = {
+    scored,
+    unscored,
+    min,
+    max,
+    mean: scored === 0 ? null : round2(sum / scored),
+  };
+  stats.top_assets = topAssets;
+  return stats;
 }
 
 // Render the stats as text (the default): the header line, the
@@ -173,7 +206,17 @@ function renderReportStatsText(stats) {
   const lines = [];
   lines.push(`Report Stats — ${stats.report_id}`);
   lines.push(stats.summary);
-  lines.push(`Total: ${stats.total} finding${stats.total === 1 ? '' : 's'}`);
+  // Round 77: when findings exist that the summary does not
+  // count (invalid severity), the Total line says so visibly —
+  // the parenthetical reconciles the summary's number with the
+  // total. When there are none, the line is unchanged, so
+  // generator-produced output stays byte-identical.
+  if (stats.invalid_severity > 0) {
+    const counted = stats.total - stats.invalid_severity;
+    lines.push(`Total: ${stats.total} finding${stats.total === 1 ? '' : 's'} (${counted} counted in summary, ${stats.invalid_severity} invalid severity)`);
+  } else {
+    lines.push(`Total: ${stats.total} finding${stats.total === 1 ? '' : 's'}`);
+  }
   const severity = stats.by_severity;
   lines.push(`Severity: ${SEVERITY_VALUES.map((value) => `${value} ${severity[value]}`).join(', ')}`);
   const verdict = stats.by_verdict;
@@ -199,9 +242,9 @@ function renderReportStatsText(stats) {
 
 // Render the stats as JSON: the stats object itself,
 // pretty-printed. The key order is fixed (report_id, summary,
-// total, by_severity, by_verdict, by_class, cvss, top_assets)
-// and every list is sorted, so the same report stats to
-// byte-identical output.
+// total, invalid_severity when present, by_severity,
+// by_verdict, by_class, cvss, top_assets) and every list is
+// sorted, so the same report stats to byte-identical output.
 function renderReportStatsJson(stats) {
   return `${JSON.stringify(stats, null, 2)}\n`;
 }
