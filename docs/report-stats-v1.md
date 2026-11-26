@@ -37,10 +37,37 @@ both formats.
   byte-identical. Every such finding also lands in the `error`
   verdict bucket (the strict check rejects an invalid or
   missing severity).
+- `error_findings` — the count of findings whose rule verdict
+  is `error` (they failed the strict generator check: missing
+  required field, invalid severity, severity/CVSS band
+  mismatch, or a bad vector/score). They are counted in
+  `total` and in the verdict counts, but they contribute to NO
+  breakdown: no severity bucket, no CVSS distribution, no
+  class count, no top-asset count — their declared values are
+  not trusted (round 79 — this closes the pollution
+  documented in round 74's F5, where an error finding with a
+  declared Critical severity and a 9.8 score inflated the
+  critical count and the CVSS mean). The field is present only
+  when it is greater than zero, in both formats, so
+  generator-produced output stays byte-identical. Interaction
+  with `invalid_severity`: the two count different things and
+  are independent, not a partition — `invalid_severity` counts
+  findings with an invalid or missing severity regardless of
+  verdict, `error_findings` counts verdict-`error` findings
+  regardless of severity validity. Every invalid-severity
+  finding is `error`, so `invalid_severity` is always a subset
+  of `error_findings`; `error_findings` can be larger (an error
+  finding with a valid declared severity, e.g. a band
+  mismatch). A finding that is both counts toward both. The
+  severity buckets sum to `total` minus `error_findings`
+  (every non-error finding has a valid severity).
 - `by_severity` — counts per severity from the generator's
-  exported `countBySeverity`. A finding with a severity outside
+  exported `countBySeverity`, computed over the NON-ERROR
+  findings only (round 79). A finding with a severity outside
   the schema is counted in `total` but in no severity bucket
-  (and is an `error` verdict — see below).
+  (and is an `error` verdict — see below); an `error` finding
+  with a valid declared severity is likewise in no bucket —
+  its declared severity is not trusted.
 - `by_verdict` — counts per RULE verdict from round 67's
   `validateOneFinding`: `valid`, `false_positive`,
   `needs_evidence`, plus a fourth bucket, `error`, for findings
@@ -70,17 +97,26 @@ both formats.
   and stays its own class. This closes the raw-string
   limitation from round 74's F5 (two spellings of one class
   were counted separately). Ordered by count descending, ties
-  by class name ascending.
-- `cvss` — `scored` (findings whose `cvss_score` is a finite
-  number), `unscored` (all others), and `min` / `max` / `mean`
-  over the scored findings only; the mean is rounded to 2
-  decimals. With no scored findings all three are null. Stats
-  never re-scores: it reads the file's `cvss_score` as-is.
+  by class name ascending. `error` findings are not counted
+  in any class (round 79). One consequence: the `unknown`
+  class is unreachable through stats — any finding that would
+  map to it (a missing or blank `vulnerability_type`) is an
+  `error` finding, because the type is a required schema
+  field; `classOf` still returns `unknown` for direct callers.
+- `cvss` — `scored` (NON-ERROR findings whose `cvss_score` is
+  a finite number), `unscored` (all other non-error findings),
+  and `min` / `max` / `mean` over the scored findings only;
+  the mean is rounded to 2 decimals. With no scored findings
+  all three are null. Stats never re-scores: it reads the
+  file's `cvss_score` as-is. `error` findings contribute
+  nothing here (round 79) — a declared 9.8 or an out-of-range
+  11 on a defective finding must not move the mean.
 - `top_assets` — the 5 assets with the most findings, ordered
   by count descending, ties by `asset_id` string order.
   Findings with no usable `asset_id` are excluded from this
   ranking (documented — the ranking is not a partition of
-  `total`).
+  `total`). `error` findings are not counted in the ranking
+  (round 79).
 
 ## Output
 
@@ -114,6 +150,21 @@ findings the line is the plain form above, so
 generator-produced output is byte-identical with or without
 the reconciliation.
 
+When `error` findings exist, a line of its own names them,
+right after the Total line:
+
+```text
+Error findings: <error> (not counted in severity, CVSS, class, or top assets)
+```
+
+It appears only when the count is greater than zero, so
+generator-produced output is byte-identical with or without
+it. Note the summary line above it still counts the errors'
+DECLARED severities (the generator's wording — it is not
+changed here), so on a hand-edited file the summary can name
+more criticals than the Severity line below shows; the Error
+findings line is the explanation for that gap.
+
 An empty report renders every count at zero, `Class: none`,
 `CVSS: 0 scored, 0 unscored; no scored findings`, and
 `Top assets: none` — it is not an error.
@@ -121,6 +172,7 @@ An empty report renders every count at zero, `Class: none`,
 `--json` renders the stats object itself, pretty-printed, with
 the fixed key order `report_id`, `summary`, `total`,
 `invalid_severity` (only when greater than zero),
+`error_findings` (only when greater than zero),
 `by_severity`, `by_verdict`, `by_class`, `cvss`, `top_assets`.
 
 ## Exit code and errors
@@ -142,4 +194,8 @@ that a low total means the target is clean — a low total only
 means the report is small. The `error` verdict bucket counts
 structural defects; it does not fail the command, and it does
 not repair them — that is `report validate`'s (round 67) job
-to report and the operator's job to fix.
+to report and the operator's job to fix. What the bucket
+does change is the breakdowns: an `error` finding's declared
+values are excluded from the severity, CVSS, class, and
+top-asset counts (round 79), and the exclusion is named by
+`error_findings` rather than hidden.

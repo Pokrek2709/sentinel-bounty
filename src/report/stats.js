@@ -86,6 +86,40 @@
 // over; the reconciliation line just names the gap the summary
 // and the total would otherwise show.
 //
+// Error findings (round 79): a finding whose rule verdict is
+// `error` failed the generator's strict check, so its DECLARED
+// values are not trusted — a hand-edited file can declare any
+// severity or CVSS score, and letting those declarations into
+// the triage numbers would pollute them (round 74's F5: an
+// error finding with a declared Critical severity and a 9.8
+// score used to inflate the critical count and the CVSS mean).
+// Error findings are therefore counted in `total` and in the
+// verdict counts (as before — they are findings, not nothing),
+// but they contribute to NO breakdown: no severity bucket, no
+// CVSS distribution, no class count, no top-asset count. They
+// are named instead by `error_findings`, carried in both
+// renderers but ONLY when greater than zero, so
+// generator-produced outputs stay byte-identical.
+//
+// Interaction of the two named gaps (round 79): `invalid_severity`
+// counts findings with an invalid or missing severity,
+// regardless of verdict; `error_findings` counts findings with
+// verdict `error`, regardless of severity validity. Every
+// invalid-severity finding is `error` (the strict check rejects
+// an invalid or missing severity), so invalid_severity is always
+// a subset of error_findings — but error_findings can be larger
+// (an error finding with a valid declared severity, e.g. a band
+// mismatch). The two numbers are independent facts, not a
+// partition: a finding that is both counts toward both. The
+// severity buckets sum to total minus error_findings (every
+// non-error finding has a valid severity, so none is skipped),
+// and the summary's number is findings.length minus
+// invalid_severity (the generator's summary counts declared
+// valid severity, error findings included — its wording is the
+// generator's and is not changed here, so on a hand-edited
+// file the summary can name more criticals than the Severity
+// line shows; the Error findings line explains why).
+//
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
 
@@ -144,6 +178,10 @@ function classOf(finding) {
 //                      // or missing severity — counted in `total`
 //                      // and in no severity bucket, and not in
 //                      // the summary's number (round 77)
+//   error_findings,    // ONLY when > 0: findings with verdict
+//                      // `error` — counted in `total` and in the
+//                      // verdict counts, but in NO breakdown
+//                      // (round 79)
 //   by_severity: { critical, high, medium, low, informational },
 //   by_verdict: { valid, false_positive, needs_evidence, error },
 //   by_class: [{ class, count }]  // count desc, class asc
@@ -154,9 +192,21 @@ function classOf(finding) {
 // any file order stats to byte-identical output.
 function computeReportStats(report) {
   const findings = report.findings;
+  // Round 79: the verdict is computed once per finding and kept
+  // — an `error` finding's declared values are not trusted, so
+  // the breakdowns below run over the non-error findings only.
+  // The verdict counts themselves run over ALL findings.
+  const verdicts = findings.map((finding) => validateOneFinding(finding).status);
+  const errorFindings = verdicts.filter((status) => status === 'error').length;
+  const nonError = findings.filter((_, index) => verdicts[index] !== 'error');
+  // The summary line and invalid_severity keep their round-77
+  // definitions over ALL findings (the generator's summary
+  // counts declared valid severity, error findings included —
+  // its wording is not changed here).
   const severityCounts = countBySeverity(findings);
   const bySeverity = {};
-  for (const severity of SEVERITY_VALUES) bySeverity[severity] = severityCounts[severity];
+  const nonErrorSeverity = countBySeverity(nonError);
+  for (const severity of SEVERITY_VALUES) bySeverity[severity] = nonErrorSeverity[severity];
   // Round 77: the summary counts only findings with a valid
   // severity (severityCounts.total); `total` counts every
   // finding. The gap is named, not hidden — but the key is
@@ -165,6 +215,7 @@ function computeReportStats(report) {
   const invalidSeverity = findings.length - severityCounts.total;
   const byVerdict = {};
   for (const verdict of VERDICT_VALUES) byVerdict[verdict] = 0;
+  for (const status of verdicts) byVerdict[status] += 1;
   const classCounts = new Map();
   const assetCounts = new Map();
   let scored = 0;
@@ -172,8 +223,10 @@ function computeReportStats(report) {
   let min = null;
   let max = null;
   let sum = 0;
-  for (const finding of findings) {
-    byVerdict[validateOneFinding(finding).status] += 1;
+  // Round 79: only non-error findings feed the breakdowns — an
+  // error finding's declared severity, CVSS score, class, and
+  // asset are untrusted and must not pollute the triage numbers.
+  for (const finding of nonError) {
     const cls = classOf(finding);
     classCounts.set(cls, (classCounts.get(cls) || 0) + 1);
     if (typeof finding.asset_id === 'string' && finding.asset_id.trim() !== '') {
@@ -197,14 +250,16 @@ function computeReportStats(report) {
     .sort((a, b) => b.count - a.count || compareStrings(a.asset_id, b.asset_id))
     .slice(0, TOP_ASSETS);
   // Key order is fixed: invalid_severity sits right after total
-  // when present (round 77), and is omitted entirely when zero
-  // so generator-produced stats stay byte-identical.
+  // when present (round 77), then error_findings (round 79);
+  // both are omitted entirely when zero so generator-produced
+  // stats stay byte-identical.
   const stats = {
     report_id: report.report_id,
     summary: executiveSummary(severityCounts, programOf(report)),
     total: findings.length,
   };
   if (invalidSeverity > 0) stats.invalid_severity = invalidSeverity;
+  if (errorFindings > 0) stats.error_findings = errorFindings;
   stats.by_severity = bySeverity;
   stats.by_verdict = byVerdict;
   stats.by_class = byClass;
@@ -237,6 +292,14 @@ function renderReportStatsText(stats) {
   } else {
     lines.push(`Total: ${stats.total} finding${stats.total === 1 ? '' : 's'}`);
   }
+  // Round 79: error findings are named on their own line — they
+  // are counted in `total` and in the verdict counts, but they
+  // contribute to no breakdown below (their declared values are
+  // untrusted). The line appears only when the count is greater
+  // than zero, so generator-produced output stays byte-identical.
+  if (stats.error_findings > 0) {
+    lines.push(`Error findings: ${stats.error_findings} (not counted in severity, CVSS, class, or top assets)`);
+  }
   const severity = stats.by_severity;
   lines.push(`Severity: ${SEVERITY_VALUES.map((value) => `${value} ${severity[value]}`).join(', ')}`);
   const verdict = stats.by_verdict;
@@ -262,9 +325,10 @@ function renderReportStatsText(stats) {
 
 // Render the stats as JSON: the stats object itself,
 // pretty-printed. The key order is fixed (report_id, summary,
-// total, invalid_severity when present, by_severity,
-// by_verdict, by_class, cvss, top_assets) and every list is
-// sorted, so the same report stats to byte-identical output.
+// total, invalid_severity when present, error_findings when
+// present, by_severity, by_verdict, by_class, cvss, top_assets)
+// and every list is sorted, so the same report stats to
+// byte-identical output.
 function renderReportStatsJson(stats) {
   return `${JSON.stringify(stats, null, 2)}\n`;
 }

@@ -7,6 +7,40 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report stats error findings (round 79, 2026-11-26)
+
+- `sentinel report stats` now excludes findings with verdict
+  `error` from every breakdown: their declared severity,
+  CVSS score, class, and asset are not trusted, so they
+  contribute to no severity bucket, no CVSS distribution, no
+  class count, and no top-asset count. They are still counted
+  in `total` and in the verdict counts, and are named by a new
+  `error_findings` line in text (`Error findings: N (not
+  counted in severity, CVSS, class, or top assets)`) and key
+  in `--json` — present only when greater than zero, so
+  generator-produced output stays byte-identical. Interaction
+  with round 77's `invalid_severity`: the two are independent,
+  not a partition — `invalid_severity` counts
+  invalid/missing-severity findings regardless of verdict,
+  `error_findings` counts verdict-`error` findings regardless
+  of severity validity; every invalid-severity finding is
+  `error`, so `invalid_severity` is always a subset of
+  `error_findings`. The severity buckets sum to `total` minus
+  `error_findings`. This closes the last breakdown-pollution
+  item from round 74's F5. One consequence: the `unknown`
+  class is unreachable through stats (any finding that would
+  map to it is an `error` finding); `classOf` still returns
+  `unknown` for direct callers. The summary line is unchanged
+  (the generator's wording counts declared valid severity,
+  error findings included) — on a hand-edited file it can name
+  more criticals than the Severity line shows, and the Error
+  findings line explains why. Two pre-existing tests were
+  updated for the deliberate behavior change (the
+  band-mismatch test, which used to pin the declared severity
+  being counted, and the blank-type/missing-asset test, whose
+  fixtures are `error` findings); generator-produced goldens
+  (FIVE, empty, FIVE+FP, md/json) are unchanged.
+
 ### Report stats class resolution (round 78, 2026-11-26)
 
 - `sentinel report stats` now resolves each finding's class

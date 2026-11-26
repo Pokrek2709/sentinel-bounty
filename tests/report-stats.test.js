@@ -56,26 +56,29 @@ delete NOSEV.severity;
 const SEVEN = [...FIVE, BANANA, NOSEV];
 // Hand-computed stats for the SEVEN set: total 7, but the
 // summary counts only the 5 valid-severity findings, so
-// invalid_severity is 2; verdict error 2; class information
-// disclosure 6 (LOW, INFO, HIGH, MED + the two clones — HIGH
-// and MED are information disclosure too, as in FIVE);
-// cvss 7 scored (24.3 + 2.5 + 2.5 = 29.3, mean 4.19);
-// top assets robots 4 (LOW, INFO + the two clones).
+// invalid_severity is 2; verdict error 2 — and (round 79) both
+// error findings are excluded from every breakdown, so class
+// information disclosure is 4 (HIGH, MED, LOW, INFO only — the
+// two clones are `error` and contribute nothing), cvss 5 scored
+// (24.3, mean 4.86), top assets robots 2 (LOW, INFO only).
+// The summary line is unchanged (the generator's wording counts
+// declared valid severity); `error_findings` is 2.
 const EXPECTED_SEVEN_STATS = {
   report_id: 'RPT-000000000000',
   summary: 'Program Lab Program: 5 validated finding(s) — 1 critical, 1 high, 1 medium, 1 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.',
   total: 7,
   invalid_severity: 2,
+  error_findings: 2,
   by_severity: { critical: 1, high: 1, medium: 1, low: 1, informational: 1 },
   by_verdict: { valid: 1, false_positive: 0, needs_evidence: 4, error: 2 },
   by_class: [
-    { class: 'information disclosure', count: 6 },
+    { class: 'information disclosure', count: 4 },
     { class: 'sql injection', count: 1 },
   ],
-  cvss: { scored: 7, unscored: 0, min: 0, max: 9.8, mean: 4.19 },
+  cvss: { scored: 5, unscored: 0, min: 0, max: 9.8, mean: 4.86 },
   top_assets: [
-    { asset_id: 'lab-app/robots', count: 4 },
     { asset_id: 'lab-app/profile', count: 2 },
+    { asset_id: 'lab-app/robots', count: 2 },
     { asset_id: 'lab-app/login', count: 1 },
   ],
 };
@@ -83,13 +86,14 @@ const EXPECTED_SEVEN_STATS = {
 const EXPECTED_SEVEN_TEXT = `Report Stats — RPT-000000000000
 Program Lab Program: 5 validated finding(s) — 1 critical, 1 high, 1 medium, 1 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.
 Total: 7 findings (5 counted in summary, 2 invalid severity)
+Error findings: 2 (not counted in severity, CVSS, class, or top assets)
 Severity: critical 1, high 1, medium 1, low 1, informational 1
 Verdict: valid 1, false_positive 0, needs_evidence 4, error 2
-Class: information disclosure 6, sql injection 1
-CVSS: 7 scored, 0 unscored; min 0, max 9.8, mean 4.19
+Class: information disclosure 4, sql injection 1
+CVSS: 5 scored, 0 unscored; min 0, max 9.8, mean 4.86
 Top assets:
-- lab-app/robots: 4
 - lab-app/profile: 2
+- lab-app/robots: 2
 - lab-app/login: 1
 `;
 
@@ -98,6 +102,7 @@ const EXPECTED_SEVEN_JSON = `{
   "summary": "Program Lab Program: 5 validated finding(s) — 1 critical, 1 high, 1 medium, 1 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.",
   "total": 7,
   "invalid_severity": 2,
+  "error_findings": 2,
   "by_severity": {
     "critical": 1,
     "high": 1,
@@ -114,7 +119,7 @@ const EXPECTED_SEVEN_JSON = `{
   "by_class": [
     {
       "class": "information disclosure",
-      "count": 6
+      "count": 4
     },
     {
       "class": "sql injection",
@@ -122,19 +127,19 @@ const EXPECTED_SEVEN_JSON = `{
     }
   ],
   "cvss": {
-    "scored": 7,
+    "scored": 5,
     "unscored": 0,
     "min": 0,
     "max": 9.8,
-    "mean": 4.19
+    "mean": 4.86
   },
   "top_assets": [
     {
-      "asset_id": "lab-app/robots",
-      "count": 4
+      "asset_id": "lab-app/profile",
+      "count": 2
     },
     {
-      "asset_id": "lab-app/profile",
+      "asset_id": "lab-app/robots",
       "count": 2
     },
     {
@@ -147,6 +152,109 @@ const EXPECTED_SEVEN_JSON = `{
 // Rule verdicts in the FIVE set: CRIT is valid; HIGH, MED, LOW,
 // INFO are needs_evidence (all carry validation_status
 // "validated" — the workflow state, which is NOT the verdict).
+// Round 79: two more `error` findings, both with a VALID
+// declared severity — so they are NOT invalid_severity, and
+// their declared values are exactly the pollution this round
+// removes. ERR1 is a band mismatch (critical severity, 2.5
+// score — the same shape as the band test below); ERR2 declares
+// a cvss_score of 11, outside the 0–10 range. Both verdicts
+// were verified against validateOneFinding by probe before the
+// test was written. Hand-computed stats for NINE = FIVE + the
+// two errors: total 7, error_findings 2, no invalid_severity
+// key; the breakdowns are the FIVE numbers (the errors
+// contribute nothing); the summary line still counts the
+// errors' DECLARED severities (2 critical, 2 low — the
+// generator's wording, not changed here), which is exactly
+// why the Error findings line exists: it explains why the
+// Severity line below shows fewer criticals and lows than the
+// summary names.
+const ERR1 = { ...clone(LOW), finding_id: 'FND-ERR1-001', severity: 'critical' };
+const ERR2 = { ...clone(LOW), finding_id: 'FND-ERR2-001', severity: 'low', cvss_score: 11 };
+const NINE = [...FIVE, ERR1, ERR2];
+const EXPECTED_NINE_STATS = {
+  report_id: 'RPT-000000000000',
+  summary: 'Program Lab Program: 7 validated finding(s) — 2 critical, 1 high, 1 medium, 2 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.',
+  total: 7,
+  error_findings: 2,
+  by_severity: { critical: 1, high: 1, medium: 1, low: 1, informational: 1 },
+  by_verdict: { valid: 1, false_positive: 0, needs_evidence: 4, error: 2 },
+  by_class: [
+    { class: 'information disclosure', count: 4 },
+    { class: 'sql injection', count: 1 },
+  ],
+  cvss: { scored: 5, unscored: 0, min: 0, max: 9.8, mean: 4.86 },
+  top_assets: [
+    { asset_id: 'lab-app/profile', count: 2 },
+    { asset_id: 'lab-app/robots', count: 2 },
+    { asset_id: 'lab-app/login', count: 1 },
+  ],
+};
+
+const EXPECTED_NINE_TEXT = `Report Stats — RPT-000000000000
+Program Lab Program: 7 validated finding(s) — 2 critical, 1 high, 1 medium, 2 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.
+Total: 7 findings
+Error findings: 2 (not counted in severity, CVSS, class, or top assets)
+Severity: critical 1, high 1, medium 1, low 1, informational 1
+Verdict: valid 1, false_positive 0, needs_evidence 4, error 2
+Class: information disclosure 4, sql injection 1
+CVSS: 5 scored, 0 unscored; min 0, max 9.8, mean 4.86
+Top assets:
+- lab-app/profile: 2
+- lab-app/robots: 2
+- lab-app/login: 1
+`;
+
+const EXPECTED_NINE_JSON = `{
+  "report_id": "RPT-000000000000",
+  "summary": "Program Lab Program: 7 validated finding(s) — 2 critical, 1 high, 1 medium, 2 low, 1 informational. Highest severity: critical. All findings in this report were validated against the finding schema before rendering.",
+  "total": 7,
+  "error_findings": 2,
+  "by_severity": {
+    "critical": 1,
+    "high": 1,
+    "medium": 1,
+    "low": 1,
+    "informational": 1
+  },
+  "by_verdict": {
+    "valid": 1,
+    "false_positive": 0,
+    "needs_evidence": 4,
+    "error": 2
+  },
+  "by_class": [
+    {
+      "class": "information disclosure",
+      "count": 4
+    },
+    {
+      "class": "sql injection",
+      "count": 1
+    }
+  ],
+  "cvss": {
+    "scored": 5,
+    "unscored": 0,
+    "min": 0,
+    "max": 9.8,
+    "mean": 4.86
+  },
+  "top_assets": [
+    {
+      "asset_id": "lab-app/profile",
+      "count": 2
+    },
+    {
+      "asset_id": "lab-app/robots",
+      "count": 2
+    },
+    {
+      "asset_id": "lab-app/login",
+      "count": 1
+    }
+  ]
+}
+`;
 const FP = loadFixture('false-positive.json');
 const PROGRAM = 'Lab Program';
 const GENERATED_AT = '2026-11-26T02:00:00.000Z';
@@ -379,13 +487,24 @@ test('an unscored finding counts as unscored and leaves min/max/mean to the scor
 
 test('a band-mismatch finding counts as an error verdict and is still included in the total', () => {
   // Critical severity with a 2.5 score: the strict check throws,
-  // so validateOneFinding returns status 'error'.
+  // so validateOneFinding returns status 'error'. Round 79: the
+  // finding is still counted in `total` and in the verdict
+  // counts, but its DECLARED values contribute to no breakdown
+  // — the severity count, CVSS, class, and top assets are
+  // computed over the non-error findings only. (Before round 79
+  // this test pinned the opposite: the declared critical was
+  // counted in by_severity. That was the round-74 F5 pollution
+  // this round removes.)
   const band = { ...clone(LOW), finding_id: 'FND-BAND-001', severity: 'critical' };
   const stats = computeReportStats(literalReport([CRIT, band]));
   assert.equal(stats.total, 2);
+  assert.equal(stats.error_findings, 1);
+  assert.equal(stats.invalid_severity, undefined);
   assert.deepEqual(stats.by_verdict, { valid: 1, false_positive: 0, needs_evidence: 0, error: 1 });
-  // The severity count still counts the declared severity.
-  assert.deepEqual(stats.by_severity, { critical: 2, high: 0, medium: 0, low: 0, informational: 0 });
+  assert.deepEqual(stats.by_severity, { critical: 1, high: 0, medium: 0, low: 0, informational: 0 });
+  assert.deepEqual(stats.by_class, [{ class: 'sql injection', count: 1 }]);
+  assert.deepEqual(stats.cvss, { scored: 1, unscored: 0, min: 9.8, max: 9.8, mean: 9.8 });
+  assert.deepEqual(stats.top_assets, [{ asset_id: 'lab-app/login', count: 1 }]);
 });
 
 // Round 77: the F5 divergence from round 74 — the summary counts
@@ -402,8 +521,55 @@ test('invalid or missing severity findings reconcile the summary and the total',
   // The summary's number (5) plus invalid_severity (2) equals
   // the total (7) — the reconciliation is arithmetic, not prose.
   assert.equal(stats.total - (stats.invalid_severity || 0), 5);
+  // Round 79 interaction: both invalid-severity findings are
+  // also `error` (the strict check rejects an invalid or
+  // missing severity), so invalid_severity is a subset of
+  // error_findings here (2 <= 2); and the severity buckets sum
+  // to total minus error_findings (7 - 2 = 5), because every
+  // non-error finding has a valid severity.
+  assert.ok(stats.invalid_severity <= stats.error_findings);
+  const bucketSum = Object.values(stats.by_severity).reduce((a, b) => a + b, 0);
+  assert.equal(stats.total - stats.error_findings, bucketSum);
   assert.equal(renderReportStatsText(stats), EXPECTED_SEVEN_TEXT);
   assert.equal(renderReportStatsJson(stats), EXPECTED_SEVEN_JSON);
+});
+
+// Round 79: error findings with a VALID declared severity —
+// their declared critical/low and scores must not pollute the
+// breakdowns, and they are not invalid_severity (the two gaps
+// are independent: error_findings counts verdict `error`
+// regardless of severity validity). The summary still counts
+// their declared severities (2 critical, 2 low), which is why
+// the Error findings line exists — it explains the gap between
+// the summary's numbers and the Severity line below it.
+test('error findings with valid declared severity are excluded from every breakdown', () => {
+  const stats = computeReportStats(literalReport(NINE));
+  assert.deepEqual(stats, EXPECTED_NINE_STATS);
+  assert.equal(stats.invalid_severity, undefined);
+  assert.equal(stats.error_findings, 2);
+  // The summary counts 7 (declared severities, errors
+  // included); the severity buckets sum to 5 (errors excluded).
+  assert.equal(stats.total - stats.error_findings, 5);
+  assert.equal(renderReportStatsText(stats), EXPECTED_NINE_TEXT);
+  assert.equal(renderReportStatsJson(stats), EXPECTED_NINE_JSON);
+});
+
+test('the error-excluded stats are deterministic across input orders', () => {
+  const forward = computeReportStats(literalReport(NINE));
+  const shuffled = computeReportStats(literalReport([ERR2, INFO, ERR1, LOW, CRIT, HIGH, MED]));
+  assert.deepEqual(shuffled, forward);
+  assert.equal(renderReportStatsText(shuffled), renderReportStatsText(forward));
+  assert.equal(renderReportStatsJson(shuffled), renderReportStatsJson(forward));
+});
+
+test('CLI report stats names error findings in text and carries error_findings in --json', async (t) => {
+  const dir = await makeTempDir(t, 'sentinel-stats-');
+  const filePath = path.join(dir, 'nine.json');
+  fs.writeFileSync(filePath, JSON.stringify(literalReport(NINE), null, 2));
+  const { stdout: text } = await execFileAsync(process.execPath, [CLI, 'report', 'stats', filePath], { cwd: dir });
+  assert.equal(text, EXPECTED_NINE_TEXT);
+  const { stdout: json } = await execFileAsync(process.execPath, [CLI, 'report', 'stats', filePath, '--json'], { cwd: dir });
+  assert.deepEqual(JSON.parse(json), EXPECTED_NINE_STATS);
 });
 
 test('the reconciled stats are deterministic across input orders', () => {
@@ -424,24 +590,31 @@ test('CLI report stats names the gap in text and carries invalid_severity in --j
   assert.deepEqual(JSON.parse(json), EXPECTED_SEVEN_STATS);
 });
 
-test('a blank class counts as unknown and a finding without an asset is excluded from top assets but kept in the total', () => {
+test('error findings with a blank type or a missing asset contribute nothing to class or top assets but stay in the total', () => {
+  // Round 79: both fixtures are `error` findings — a blank
+  // `vulnerability_type` and a missing `asset_id` are both
+  // missing required schema fields (isMissing treats a blank
+  // string as missing), so the strict check rejects them. Before
+  // round 79 this test pinned the opposite: their declared
+  // values fed the class and top-asset counts (blank type ->
+  // 'unknown', missing asset -> excluded from top assets only).
+  // Now they contribute to NO breakdown — `total` and the
+  // verdict counts still include them, and `error_findings` is
+  // 2. The 'unknown' mapping itself is still covered by the
+  // classOf unit test above; through computeReportStats it is
+  // unreachable, because any finding that would map to it is
+  // an error finding.
   const blankType = { ...clone(LOW), finding_id: 'FND-BLANKTYPE-001', vulnerability_type: '   ' };
   const noAsset = { ...clone(LOW), finding_id: 'FND-NOASSET-001' };
   delete noAsset.asset_id;
   const stats = computeReportStats(literalReport([CRIT, blankType, noAsset]));
   assert.equal(stats.total, 3);
-  // CRIT is 'sql injection', blankType is 'unknown', noAsset keeps
-  // LOW's 'information disclosure' — all count 1, so the order is
-  // class-name ascending.
-  assert.deepEqual(stats.by_class, [
-    { class: 'information disclosure', count: 1 },
-    { class: 'sql injection', count: 1 },
-    { class: 'unknown', count: 1 },
-  ]);
-  assert.deepEqual(stats.top_assets, [
-    { asset_id: 'lab-app/login', count: 1 },
-    { asset_id: 'lab-app/robots', count: 1 },
-  ]);
+  assert.equal(stats.error_findings, 2);
+  assert.deepEqual(stats.by_verdict, { valid: 1, false_positive: 0, needs_evidence: 0, error: 2 });
+  assert.deepEqual(stats.by_severity, { critical: 1, high: 0, medium: 0, low: 0, informational: 0 });
+  assert.deepEqual(stats.by_class, [{ class: 'sql injection', count: 1 }]);
+  assert.deepEqual(stats.cvss, { scored: 1, unscored: 0, min: 9.8, max: 9.8, mean: 9.8 });
+  assert.deepEqual(stats.top_assets, [{ asset_id: 'lab-app/login', count: 1 }]);
 });
 
 test('top assets caps at 5, dropping the lowest count, ties broken by asset_id', () => {
@@ -530,6 +703,8 @@ test('CLI report stats exits 0 on a report with an error finding — stats never
   const { stdout } = await execFileAsync(process.execPath, [CLI, 'report', 'stats', filePath], { cwd: dir });
   assert.match(stdout, /Total: 2 findings\n/);
   assert.match(stdout, /Verdict: valid 1, false_positive 0, needs_evidence 0, error 1/);
+  // Round 79: the error finding is named on its own line.
+  assert.match(stdout, /Error findings: 1 \(not counted in severity, CVSS, class, or top assets\)\n/);
 });
 
 test('CLI report stats on a malformed input fails with a named error', async (t) => {
