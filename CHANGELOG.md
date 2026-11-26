@@ -7,6 +7,35 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Docs cross-reference audit (round 76, 2026-11-26)
+
+- Docs-only round: audited every documentation cross-reference
+  and fixed the drift found — 7 doc links missing from the
+  SKILL.md report-paragraph See-list (`reporting-v1`,
+  `report-templates-v1`, `report-filter-v1`, `report-stats-v1`,
+  `report-helpers-export-v1`, `report-generated-at-helper-v1`,
+  `cvss-vector-v1`), 2 from the detect-paragraph See
+  (`detection-stub-v1`, `validation-v1`), 2 from the
+  scope-paragraph See (`scope-manager-v1`,
+  `scope-explain-v1`), 5 from the foundation paragraph
+  (`request-governor-v1`, `approval-gate-v1`,
+  `controlled-wrapper-v1`, `kill-switch-v1`,
+  `persistent-kill-switch-v1`), and 10 usage lines missing
+  from the SKILL.md command code block (`drill`,
+  `verify-install`, `report-diff`, and the 7 `report`
+  subcommands) plus the stale `sentinel report` lines, which
+  lacked `[--allow-mixed-targets] [--verifier stub|<path>]`.
+  The code block now lists exactly the 32 CLI help usage
+  lines. No command behavior or output changed. New guard
+  test `tests/docs-crossref.test.js` (8 tests) pins the
+  cross-references: docs index completeness, README-to-index
+  link, report docs in SKILL.md, report subcommands in
+  SKILL.md, code block vs CLI help, resolvable doc
+  references, real flags in docs usage spans, and a
+  SKILL.md-anchor-or-allowlist rule for every doc (14 docs
+  deliberately unanchored, with reasons). Full audit in
+  `docs/report-docs-audit-v1.md`.
+
 ### Report render command (round 75, 2026-11-26)
 
 - New command `sentinel report render <report.json>
