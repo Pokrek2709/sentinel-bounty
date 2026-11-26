@@ -1,7 +1,8 @@
-// Per-class evidence checklists (round 40): the validator resolves a
-// finding's vulnerability_type to one of eight classes in
-// knowledge/evidence-checklists.json and enforces that class's required
-// evidence items; unknown types fall back to the generic checklist.
+// Per-class evidence checklists (round 40, extended in round 57): the
+// validator resolves a finding's vulnerability_type to one of twelve
+// classes in knowledge/evidence-checklists.json and enforces that
+// class's required evidence items; unknown types fall back to the
+// generic checklist.
 //
 // Fixtures only; no scanner, no network, no live target.
 'use strict';
@@ -28,7 +29,7 @@ function clone(finding) {
   return JSON.parse(JSON.stringify(finding));
 }
 
-// The eight classes, each with its fully-evidenced fixture. XSS reuses
+// The twelve classes, each with its fully-evidenced fixture. XSS reuses
 // the round-31 confirmed-full fixture (Stored Cross-Site Scripting).
 const CLASS_FIXTURES = [
   ['cross-site scripting', 'confirmed-full'],
@@ -39,6 +40,10 @@ const CLASS_FIXTURES = [
   ['cross-site request forgery', 'class-csrf-full'],
   ['reentrancy', 'class-reentrancy-full'],
   ['information disclosure', 'class-infodisclosure-full'],
+  ['xml external entity', 'class-xxe-full'],
+  ['insecure deserialization', 'class-deserialization-full'],
+  ['path traversal', 'class-pathtraversal-full'],
+  ['business logic flaw', 'class-businesslogic-full'],
 ];
 
 // The class-specific required item each class adds beyond the generic
@@ -53,12 +58,16 @@ const CLASS_EXTRA = {
   'cross-site request forgery': ['request_log', 'request'],
   reentrancy: ['evidence_notes', 'notes'],
   'information disclosure': ['response_log', 'response'],
+  'xml external entity': ['response_log', 'response'],
+  'insecure deserialization': ['evidence_notes', 'notes'],
+  'path traversal': ['response_log', 'response'],
+  'business logic flaw': ['evidence_notes', 'notes'],
 };
 
-test('spec loads with eight classes and the generic fallback', () => {
+test('spec loads with twelve classes and the generic fallback', () => {
   const spec = loadEvidenceChecklists();
   assert.equal(spec.version, 1);
-  assert.equal(spec.classes.length, 8);
+  assert.equal(spec.classes.length, 12);
   assert.deepEqual(spec.generic.required, ['proof_of_concept', 'evidence', 'steps_to_reproduce']);
   assert.deepEqual(spec.generic.recommended, ['impact', 'remediation', 'cwe_id', 'cvss_vector']);
   assert.deepEqual(
@@ -72,6 +81,10 @@ test('spec loads with eight classes and the generic fallback', () => {
       'cross-site request forgery',
       'reentrancy',
       'information disclosure',
+      'xml external entity',
+      'insecure deserialization',
+      'path traversal',
+      'business logic flaw',
     ],
   );
   for (const entry of spec.classes) {
@@ -93,6 +106,16 @@ test('class resolution normalizes case, spacing, and substrings', () => {
   assert.equal(resolveEvidenceClass('CSRF').id, 'cross-site request forgery');
   assert.equal(resolveEvidenceClass('Re-Entrancy').id, 'reentrancy');
   assert.equal(resolveEvidenceClass('infoleak').id, 'information disclosure');
+  assert.equal(resolveEvidenceClass('XXE').id, 'xml external entity');
+  assert.equal(resolveEvidenceClass('XML External Entity Injection').id, 'xml external entity');
+  assert.equal(resolveEvidenceClass('Insecure Deserialization').id, 'insecure deserialization');
+  assert.equal(resolveEvidenceClass('Unsafe Deserialization').id, 'insecure deserialization');
+  assert.equal(resolveEvidenceClass('Path Traversal').id, 'path traversal');
+  assert.equal(resolveEvidenceClass('Directory Traversal').id, 'path traversal');
+  assert.equal(resolveEvidenceClass('traversal').id, 'path traversal');
+  assert.equal(resolveEvidenceClass('Business Logic Flaw').id, 'business logic flaw');
+  assert.equal(resolveEvidenceClass('Business-Logic Bypass').id, 'business logic flaw');
+  assert.equal(resolveEvidenceClass('logic flaw').id, 'business logic flaw');
   assert.equal(resolveEvidenceClass('Open Redirect'), null);
   assert.equal(resolveEvidenceClass('Missing Authentication'), null);
   assert.equal(resolveEvidenceClass(''), null);
@@ -127,6 +150,20 @@ test('every class fixture fails when its class-specific item is stripped', () =>
   }
 });
 
+test('new classes do not steal matches from the existing eight', () => {
+  // File order is precedence: a type containing both an old alias and a
+  // new alias still resolves to the old class.
+  assert.equal(resolveEvidenceClass('SQL Injection').id, 'sql injection');
+  assert.equal(resolveEvidenceClass('Stored Cross-Site Scripting').id, 'cross-site scripting');
+  assert.equal(resolveEvidenceClass('SSRF via XML').id, 'server-side request forgery');
+  assert.equal(resolveEvidenceClass('SQL Injection via path traversal').id, 'sql injection');
+  // And the new classes win only when no old alias is present.
+  assert.equal(resolveEvidenceClass('Traversal in File Download').id, 'path traversal');
+  assert.equal(resolveEvidenceClass('XXE in upload').id, 'xml external entity');
+  assert.equal(resolveEvidenceClass('Deserialization gadget chain').id, 'insecure deserialization');
+  assert.equal(resolveEvidenceClass('Coupon stacking logic flaw').id, 'business logic flaw');
+});
+
 test('SSRF requires both the request and the response', () => {
   const finding = clone(loadFixture('class-ssrf-full'));
   for (const entry of finding.evidence) delete entry.response;
@@ -134,6 +171,24 @@ test('SSRF requires both the request and the response', () => {
   assert.equal(result.verdict, 'needs_evidence');
   assert.ok(result.reasons.includes('missing response_log (required for server-side request forgery)'));
   assert.ok(!result.reasons.includes('missing request_log (required for server-side request forgery)'));
+});
+
+test('XXE requires both the request and the response', () => {
+  const finding = clone(loadFixture('class-xxe-full'));
+  for (const entry of finding.evidence) delete entry.response;
+  const result = validateFinding(finding);
+  assert.equal(result.verdict, 'needs_evidence');
+  assert.ok(result.reasons.includes('missing response_log (required for xml external entity)'));
+  assert.ok(!result.reasons.includes('missing request_log (required for xml external entity)'));
+});
+
+test('path traversal requires both the request and the response', () => {
+  const finding = clone(loadFixture('class-pathtraversal-full'));
+  for (const entry of finding.evidence) delete entry.request;
+  const result = validateFinding(finding);
+  assert.equal(result.verdict, 'needs_evidence');
+  assert.ok(result.reasons.includes('missing request_log (required for path traversal)'));
+  assert.ok(!result.reasons.includes('missing response_log (required for path traversal)'));
 });
 
 test('a missing evidence array reports only missing evidence, not its derived items', () => {
@@ -250,4 +305,31 @@ test('generator names the generic fallback in Markdown for an unmatched class', 
   const report = generateReport([loadFixture('potential-full')], { programName: 'Lab Program', generatedAt: '2026-11-26T02:00:00.000Z' });
   assert.match(report, /Class: Generic \(no class match\) — the vulnerability type matched no class, so the generic checklist applies/);
   assert.match(report, /- \[x\] proof_of_concept \(required\)/);
+});
+
+test('generator renders the four new classes in Markdown and JSON', () => {
+  const NEW_CLASSES = [
+    ['class-xxe-full', 'XML External Entity (XXE)', ['request_log', 'response_log']],
+    ['class-deserialization-full', 'Insecure Deserialization', ['evidence_notes']],
+    ['class-pathtraversal-full', 'Path Traversal', ['request_log', 'response_log']],
+    ['class-businesslogic-full', 'Business Logic Flaw', ['evidence_notes']],
+  ];
+  for (const [fixtureName, label, extraRequired] of NEW_CLASSES) {
+    const finding = loadFixture(fixtureName);
+    const options = { programName: 'Lab Program', generatedAt: '2026-11-26T02:00:00.000Z' };
+    const markdown = generateReport([finding], options);
+    assert.match(markdown, new RegExp(`Class: ${label.replace(/[()]/g, '\\$&')}`), `${fixtureName} Markdown names its class`);
+    for (const item of extraRequired) {
+      assert.match(markdown, new RegExp(`- \\[x\\] ${item} \\(required\\)`), `${fixtureName} Markdown marks ${item} required and present`);
+    }
+    const parsed = JSON.parse(generateReport([finding], { ...options, format: 'json' }));
+    const checklist = parsed.findings[0].evidence_checklist;
+    assert.equal(checklist.label, label, `${fixtureName} JSON label`);
+    for (const item of extraRequired) {
+      const entry = checklist.items.find((row) => row.item === item);
+      assert.ok(entry, `${fixtureName} JSON carries ${item}`);
+      assert.equal(entry.present, true, `${fixtureName} JSON ${item} present`);
+      assert.equal(entry.required, true, `${fixtureName} JSON ${item} required`);
+    }
+  }
 });

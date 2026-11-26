@@ -1,13 +1,13 @@
 # Per-class evidence checklists v1
 
 `src/analysis/validator.js` resolves a finding's `vulnerability_type`
-to one of eight classes in `knowledge/evidence-checklists.json` and
+to one of twelve classes in `knowledge/evidence-checklists.json` and
 enforces that class's required evidence items. The generic checklist
 is the round-31/32 fallback: it is what every finding gets when its
 type matches no class. All verification is local, over fixtures only;
 no model call, no network, no live target.
 
-## The eight classes
+## The twelve classes
 
 | class id | label | extra required item(s) beyond the generic three | why |
 | --- | --- | --- | --- |
@@ -19,6 +19,16 @@ no model call, no network, no live target.
 | `cross-site request forgery` | Cross-Site Request Forgery (CSRF) | `request_log` | The forged request itself is the proof; the response is secondary. |
 | `reentrancy` | Reentrancy | `evidence_notes` | The call sequence / transaction trace, recorded in evidence notes — the schema has no dedicated trace field. |
 | `information disclosure` | Information Disclosure | `response_log` | The disclosed data must appear in a recorded response. |
+| `xml external entity` | XML External Entity (XXE) | `request_log`, `response_log` | The malicious XML payload and the response showing the entity was resolved. |
+| `insecure deserialization` | Insecure Deserialization | `evidence_notes` | The crafted serialized payload and the observed object-state change, recorded in evidence notes — the schema has no dedicated payload/state field. |
+| `path traversal` | Path Traversal | `request_log`, `response_log` | The traversal payload and the file content returned. |
+| `business logic flaw` | Business Logic Flaw | `evidence_notes` | The legitimate-vs-abused flow comparison, recorded in evidence notes — no single request or response proves a logic flaw. |
+
+Round 57 added the last four rows (XXE, insecure deserialization,
+path traversal, business logic flaw). The matching, verdict, and
+loading rules below are unchanged; the new classes follow the round-40
+pattern exactly (required items + recommended items + `match`
+aliases + a `why`).
 
 Every class also requires the generic three: `proof_of_concept`,
 `evidence`, `steps_to_reproduce`. Recommended items (checked and
@@ -117,7 +127,7 @@ by making the ratings lazy (see the capability report).
   a 404 still counts as present. Judging whether evidence actually
   proves the finding is an AI-model verdict (Phase 6, needs a
   decision), not a checklist.
-- Eight classes only. Web/API classes dominate the list; smart
+- Twelve classes only. Web/API classes dominate the list; smart
   contracts get one class (`reentrancy`). Adding a class is a
   knowledge-file edit plus one full + one missing-item fixture — no
   code change, unless the class needs a new item predicate.

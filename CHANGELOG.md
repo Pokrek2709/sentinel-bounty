@@ -7,6 +7,27 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Four more per-class evidence checklists (round 57, 2026-11-26)
+
+- `knowledge/evidence-checklists.json` now defines twelve
+  vulnerability classes (was eight): XXE (`xml external entity`,
+  aliases `xml external entity` / `xxe`, extra required
+  `request_log` + `response_log`), insecure deserialization
+  (aliases `insecure deserialization` / `deserialization`, extra
+  required `evidence_notes`), path traversal (aliases `path
+  traversal` / `directory traversal` / `traversal`, extra required
+  `request_log` + `response_log`), and business logic flaw
+  (aliases `business logic flaw` / `business logic` / `logic
+  flaw` / `business-logic`, extra required `evidence_notes`).
+  Each follows the round-40 pattern exactly (required items +
+  recommended items + `match` aliases + a `why`); no validator
+  code changed — the new classes are a knowledge-file edit, four
+  fixtures, and tests. File order is precedence, so a type
+  containing both an old alias and a new alias still resolves to
+  the old class (proven: `SQL Injection via path traversal` stays
+  SQL injection, `SSRF via XML` stays SSRF). 4 new tests in
+  `tests/evidence-checklists.test.js`, suite 472 → 476.
+
 ### Verifiable audit export (round 56, 2026-11-26)
 
 - `sentinel audit export [--state-dir <path>] [--out <file>]
