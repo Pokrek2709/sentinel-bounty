@@ -7,6 +7,43 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report anonymize command (round 69, 2026-11-26)
+
+- `sentinel report anonymize <report.json>
+  [--out <anon.json>] [--salt <hex>]` strips internal
+  identifiers from a JSON report so it can be shared:
+  `target_id`, `session_id`, and every finding's `asset_id`
+  map to deterministic `anon-<sha256(salt + ':' +
+  original).slice(0, 12)>` values (default salt is the
+  fixed public constant `sentinel-report-anonymize-v1`; a
+  provided salt must be hex, 8–64 chars, and is never
+  printed anywhere — not in the output, the summary line,
+  or an error message), and internal hostnames/IPs in
+  `description` and evidence `notes` are scrubbed (IPv4
+  dotted quads -> `anon-ip`, hostnames ending
+  `.local`/`.internal` -> `anon-host`, nothing else).
+  Severity, CVSS, verdict, checklist, `ai_verdict`,
+  `finding_id`s, and finding order are preserved; the
+  output is re-rendered by `generateReport` itself, so the
+  `report_id` is unchanged by design (it derives from
+  `program_name` + finding ids, which anonymization
+  preserves) and the output passes `report validate`
+  cleanly with `report_id_matches: true`; it carries
+  `anonymized: true` plus an `anonymization` metadata
+  block (`salt_source`, `patterns`, never the salt). The
+  anonymized JSON goes to stdout (pipeable) or `--out`
+  (mode 0600), with the one-line summary (`anonymized N
+  findings (I identifiers replaced, S text
+  substitutions)`) on stderr. This is de-identification
+  for sharing, NOT cryptographic redaction — anyone
+  holding the original report and the salt can reverse
+  the mapping — and `asset_url`, `request`/`response`
+  logs, `title`, `impact`, `remediation`,
+  `steps_to_reproduce`, `proof_of_concept`, and
+  `references` are NOT scrubbed (the `asset_url` gap is a
+  known limitation, pinned by a test). Docs, SKILL.md
+  (both copies, `cmp` verified), and README updated.
+
 ### Report merge command (round 68, 2026-11-26)
 
 - `sentinel report merge <a-report.json> <b-report.json>

@@ -25,6 +25,7 @@ const {
   renderReportValidationJson,
 } = require('../src/report/validate');
 const { mergeReports } = require('../src/report/merge');
+const { anonymizeReport } = require('../src/report/anonymize');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -82,6 +83,7 @@ function usage() {
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report validate <report.json> [--json]',
     '  sentinel report merge <a-report.json> <b-report.json> [--out <merged.json>]',
+    '  sentinel report anonymize <report.json> [--out <anon.json>] [--salt <hex>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -740,6 +742,39 @@ async function runReportMerge(args) {
   process.stderr.write(`merged ${summary.total} findings from ${summary.fromA} + ${summary.fromB} (${summary.shared} shared, 0 conflicts)\n`);
 }
 
+async function runReportAnonymize(args) {
+  // `sentinel report anonymize` strips internal identifiers
+  // from a JSON report so it can be shared (round 69, Phase
+  // 7): target_id, session_id, and asset_id map to
+  // deterministic `anon-<sha256>` values, and internal
+  // hostnames/IPs in `description` and evidence `notes` are
+  // scrubbed. The input file is never modified. The
+  // anonymized JSON goes to stdout (pipeable) or --out
+  // (safe-write, mode 0600); the one-line summary always
+  // goes to stderr, so stdout stays a clean report. The salt
+  // is never printed anywhere: not in the output, not in
+  // the summary, and not in an error message. The command is
+  // computed fully in memory first, so a bad input can never
+  // leave a half-written file behind.
+  const [filePath, ...optionArgs] = args;
+  if (!filePath || filePath.startsWith('--')) {
+    throw new Error('report anonymize requires a report file: sentinel report anonymize <report.json> [--out <anon.json>] [--salt <hex>]');
+  }
+  const options = parseOptions(optionArgs, ['--out', '--salt']);
+  const report = await readReportFile(path.resolve(filePath));
+  const anonymized = anonymizeReport(report, { salt: options.salt });
+  const summary = anonymized.summary;
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileRefusingSymlink(outputPath, anonymized.report, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Anonymized report written to ${outputPath}\n`);
+  } else {
+    process.stdout.write(anonymized.report);
+  }
+  process.stderr.write(`anonymized ${summary.total} findings (${summary.identifiers_replaced} identifiers replaced, ${summary.text_substitutions} text substitutions)\n`);
+}
+
 async function runReport(args) {
   // `sentinel report validate` is a subcommand of `report`
   // (round 67): intercept before parseOptions, which would reject
@@ -752,6 +787,12 @@ async function runReport(args) {
   // (round 68): same intercept, same reason.
   if (args[0] === 'merge') {
     await runReportMerge(args.slice(1));
+    return;
+  }
+  // `sentinel report anonymize` is a subcommand of `report`
+  // too (round 69): same intercept, same reason.
+  if (args[0] === 'anonymize') {
+    await runReportAnonymize(args.slice(1));
     return;
   }
   // --allow-mixed-targets is a boolean flag (same pattern as drill
