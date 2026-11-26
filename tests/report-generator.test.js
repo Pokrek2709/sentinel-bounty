@@ -66,6 +66,88 @@ test('generateReport with no explicit generated_at never invents a wall-clock ti
   assert.match(report, /2026-11-26T00:00:00\.000Z/);
 });
 
+// Round 80: generateReport's generated_at fallback now calls the shared
+// pickGeneratedAt helper (no source reports) instead of its own lexical
+// .sort() over created_at. The goldens below were pinned on the old code
+// first and must stay byte-identical after the refactor for every input
+// where the two orderings agree; the divergence tests pin the new
+// (chronological, Date.parse) behavior for inputs where they disagree.
+test('golden (round 80): generateReport without generated_at is byte-identical to the pre-refactor output', () => {
+  const crypto = require('node:crypto');
+  const md = generateReport(findingsArray(), { programName: 'Lab Program' });
+  const json = generateReport(findingsArray(), { programName: 'Lab Program', format: 'json' });
+  assert.equal(
+    crypto.createHash('sha256').update(md).digest('hex'),
+    '51f63f283a48c26bae5afadb8d87f84b05d00f6b09c8aa9c7a70d22db987c6fa',
+  );
+  assert.equal(
+    crypto.createHash('sha256').update(json).digest('hex'),
+    '5aaf4f7382dec3608c4279fa585579acaa807d580f086cde2c31a48ca9fd18e6',
+  );
+});
+
+// The Generated: line of a Markdown report for findings whose created_at
+// values are exactly the given list (valid findings cloned from the
+// critical fixture, so only created_at varies).
+function generatedAtOf(createdValues) {
+  const findings = createdValues.map((value) => {
+    const finding = critical();
+    finding.created_at = value;
+    return finding;
+  });
+  const report = generateReport(findings, { programName: 'Lab Program' });
+  return report.split('\n').find((line) => line.startsWith('Generated:')).replace('Generated: ', '');
+}
+
+test('fallback (round 80): mixed timezone offsets pick the chronologically newest created_at', () => {
+  // 2026-01-01T23:00:00-02:00 is 2026-01-02T01:00:00Z — newer than
+  // 2026-01-02T00:30:00Z — but lexically smaller ('01' < '02' in the
+  // day field), so the old lexical .sort() picked the older instant.
+  assert.equal(
+    generatedAtOf(['2026-01-01T23:00:00-02:00', '2026-01-02T00:30:00Z']),
+    '2026-01-01T23:00:00-02:00',
+  );
+});
+
+test('fallback (round 80): non-padded dates pick the chronologically newest created_at', () => {
+  // '2026-1-1' is lexically larger than '2026-01-02T00:00:00Z'
+  // ('1' > '0' after '2026-'), so the old lexical .sort() picked
+  // Jan 1 over Jan 2.
+  assert.equal(generatedAtOf(['2026-1-1', '2026-01-02T00:00:00Z']), '2026-01-02T00:00:00Z');
+});
+
+test('fallback (round 80): same instant in two representations keeps input order (stable sort)', () => {
+  // Both strings denote 2026-01-01T00:00:00Z. Date.parse ties sort
+  // stably, so the last in input order wins; the old lexical sort
+  // always picked the '+02:00' form regardless of input order.
+  assert.equal(
+    generatedAtOf(['2026-01-01T02:00:00+02:00', '2026-01-01T00:00:00Z']),
+    '2026-01-01T00:00:00Z',
+  );
+  assert.equal(
+    generatedAtOf(['2026-01-01T00:00:00Z', '2026-01-01T02:00:00+02:00']),
+    '2026-01-01T02:00:00+02:00',
+  );
+});
+
+test('fallback (round 80): unparseable created_at values are ignored', () => {
+  assert.equal(generatedAtOf(['banana', '2026-01-02T00:00:00Z']), '2026-01-02T00:00:00Z');
+  const onlyGarbage = critical();
+  onlyGarbage.created_at = 'banana';
+  const report = generateReport([onlyGarbage], { programName: 'Lab Program' });
+  assert.match(report, /Generated: Not specified/);
+});
+
+test('fallback (round 80): same input renders byte-identically twice', () => {
+  const first = critical();
+  first.created_at = '2026-01-01T23:00:00-02:00';
+  const second = critical();
+  second.created_at = '2026-01-02T00:30:00Z';
+  const one = generateReport([first, second], { programName: 'Lab Program' });
+  const two = generateReport([first, second], { programName: 'Lab Program' });
+  assert.equal(one, two);
+});
+
 test('severity/score mismatch fails with a clear error', () => {
   const finding = critical();
   finding.severity = 'high'; // cvss 9.8 maps to critical

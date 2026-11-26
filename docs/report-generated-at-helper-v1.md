@@ -54,16 +54,37 @@ the same codes.
 
 ## What was deliberately NOT unified
 
-- `generateReport`'s own fallback (newest finding `created_at`
-  when `options.generatedAt` is absent) stays as-is: it takes an
-  options object, not source reports, so it is a different input
-  shape, and it sorts with a plain lexicographic `.sort()`
-  (equivalent for valid ISO strings, but not the same code
-  path). Unifying it would change the generator's own
-  behavior contract for no benefit.
 - `deriveExpectedReportId` (round 67) stays an independent
   re-implementation: validate must check the generator, not
   call it (round 72's audit, unchanged).
+
+## Round 80: the generator fallback is now unified too
+
+The bullet above used to list `generateReport`'s own fallback
+(newest finding `created_at` when `options.generatedAt` is
+absent) as deliberately not unified. Round 80 closed it:
+`generateReport` now calls `pickGeneratedAt([], reported)` —
+an empty reports array is the findings-only entry point, and
+the helper's doc comment says so. The "equivalent for valid
+ISO strings" claim from round 73 turned out to be wrong on
+probe: a lexical `.sort()` and a `Date.parse` sort disagree
+whenever the strings are not all in the same shape — mixed
+timezone offsets (`2026-01-01T23:00:00-02:00` is
+2026-01-02T01:00:00Z but sorts lexically before
+`2026-01-02T00:30:00Z`), non-padded dates (`2026-1-1` sorts
+lexically after `2026-01-02T00:00:00Z`), and two
+representations of the same instant (lexical order picks by
+string shape; `Date.parse` ties sort stably, so input order
+wins). `validateFinding` never checks `created_at`'s format
+(it is not a required field), so such values genuinely reach
+the fallback — the helper's `Date.parse` filter was already
+the only guard. The new behavior is the chronological one in
+all three cases; for same-format ISO inputs the output is
+byte-identical (pinned by sha256 goldens in
+`tests/report-generator.test.js`, written on the old code
+first). The fallback still returns null when nothing is
+available, so the JSON "requires a generated_at" error is
+unchanged.
 
 ## Tests
 

@@ -7,6 +7,31 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report generated_at fallback unified (round 80, 2026-11-26)
+
+- `generateReport`'s own `generated_at` fallback (newest finding
+  `created_at` when `options.generatedAt` is absent) now calls
+  the shared `pickGeneratedAt` helper with an empty reports
+  array (`pickGeneratedAt([], findings)`) instead of its own
+  lexical `.sort()` over `created_at`. The round-73 claim that
+  the two orderings were "equivalent for valid ISO strings"
+  was wrong on probe: a lexical sort and a `Date.parse` sort
+  disagree on mixed timezone offsets (`2026-01-01T23:00:00-02:00`
+  is 2026-01-02T01:00:00Z but sorts lexically before
+  `2026-01-02T00:30:00Z`), non-padded dates (`2026-1-1`
+  sorts lexically after `2026-01-02T00:00:00Z`), and two
+  representations of the same instant (lexical order picks by
+  string shape; `Date.parse` ties sort stably, so input order
+  wins). `validateFinding` never checks `created_at`'s format
+  (it is not a required field), so such values genuinely
+  reach the fallback. The new behavior is the chronological
+  one in all three cases; for same-format ISO inputs the
+  output is byte-identical (sha256 goldens pinned on the
+  pre-refactor code). This closes the last polish item from
+  round 73's F5; the only remaining open item from the
+  report rounds is the `asset_url` scrub decision, which
+  needs the user.
+
 ### Report stats error findings (round 79, 2026-11-26)
 
 - `sentinel report stats` now excludes findings with verdict

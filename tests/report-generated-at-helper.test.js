@@ -219,6 +219,21 @@ test('helper: no generated_at anywhere — newest created_at', () => {
   assert.equal(pickGeneratedAt([{}], findings), '2026-11-26T03:30:00.000Z');
 });
 
+test('helper (round 80): empty reports array is the findings-only entry point (generateReport fallback)', () => {
+  // generateReport calls pickGeneratedAt([], findings): no source
+  // reports, derive from findings only. The sort is chronological
+  // (Date.parse), not lexical: 2026-01-01T23:00:00-02:00 is
+  // 2026-01-02T01:00:00Z, newer than 2026-01-02T00:30:00Z, even
+  // though it sorts lexically smaller.
+  assert.equal(
+    pickGeneratedAt([], [
+      { created_at: '2026-01-01T23:00:00-02:00' },
+      { created_at: '2026-01-02T00:30:00Z' },
+    ]),
+    '2026-01-01T23:00:00-02:00',
+  );
+});
+
 test('helper: returns null when no timestamp exists anywhere', () => {
   assert.equal(pickGeneratedAt([{}], [{}, { created_at: null }]), null);
   assert.equal(pickGeneratedAt([], []), null);

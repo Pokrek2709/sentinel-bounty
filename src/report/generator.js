@@ -310,7 +310,9 @@ function countBySeverity(findings) {
 // as their own copy (same selection, different named error on the
 // empty case); the helper returns null when nothing is available
 // and each caller throws its OWN named error, so no error code
-// changed in the unification. A non-string or unparseable value is
+// changed in the unification. generateReport's own generated_at
+// fallback also calls it with an empty reports array (round 80), so
+// there is no second copy of the selection left in src/. A non-string or unparseable value is
 // ignored, never treated as a timestamp.
 function pickGeneratedAt(reports, findings) {
   const candidates = reports
@@ -1053,10 +1055,15 @@ function generateReport(findings, options = {}) {
     throw new Error(`Invalid generated_at: ${generatedAt} (expected an ISO 8601 timestamp).`);
   }
   if (!generatedAt) {
-    const created = reported
-      .map((finding) => finding.created_at)
-      .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)));
-    if (created.length > 0) generatedAt = created.sort().at(-1);
+    // The fallback is the shared pickGeneratedAt helper with no source
+    // reports (round 80): derive from the findings only. The helper
+    // sorts chronologically (Date.parse), not lexically — the old
+    // inline `.sort()` picked the wrong instant for mixed timezone
+    // offsets and non-padded dates (see tests/report-generator.test.js
+    // "fallback (round 80)"), and picked by string shape rather than
+    // input order for two representations of the same instant. A null
+    // result leaves generatedAt unset, exactly as before.
+    generatedAt = pickGeneratedAt([], reported);
   }
   const counts = countBySeverity(reported);
   const summary = executiveSummary(counts, programName);
