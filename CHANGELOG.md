@@ -7,6 +7,30 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Portable state export (round 58, 2026-11-26)
+
+- `sentinel state export [--state-dir <path>] [--out <file>]`
+  produces one portable JSON envelope of the whole operator
+  state — kill-switch state + scope targets + audit summary —
+  with a SHA-256 `contentHash` over the canonical `contents`
+  only (the timestamp is excluded, so the same state always
+  yields the same hash). The kill-switch state is exported as
+  stored (`{ version, active, trigger, workers }`); the state
+  file carries no token value or reset-token digest, and a test
+  asserts by construction that no exported key matches
+  `token|secret|password|api-key`. The audit summary carries
+  counts and timestamps from round 56's per-record verification,
+  not the full log (which already has its own export). Missing
+  state/store/log export as the empty state; a corrupt state
+  file fails with `STATE_EXPORT_STATE_INVALID`, a symlinked
+  state file or output with `STATE_EXPORT_SYMLINK_REFUSED`, and
+  a damaged scope store fails the whole export rather than
+  dropping a target. A broken audit chain still exports with
+  exit 0 (`chainVerified: false`). EXPORT ONLY — no `state
+  import` exists; importing foreign state is an open user
+  decision. 14 new tests in `tests/state-export.test.js`, suite
+  476 → 490.
+
 ### Four more per-class evidence checklists (round 57, 2026-11-26)
 
 - `knowledge/evidence-checklists.json` now defines twelve

@@ -15,6 +15,7 @@ const { runVerifyInstall, checkStatePermissions } = require('../src/install/veri
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
 const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/state-backup');
+const { collectStateExport, renderStateExport } = require('../src/policy/state-export');
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
@@ -58,6 +59,7 @@ function usage() {
     '  sentinel audit export [--state-dir <path>] [--out <file>] [--format json|jsonl]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
+    '  sentinel state export [--state-dir <path>] [--out <file>]',
     '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv] [--template generic|immunefi|code4rena] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
@@ -735,6 +737,56 @@ async function runRestore(args) {
   }
 }
 
+async function runStateCommand(args) {
+  // `state export` (round 58): one portable document of the whole
+  // operator state — kill-switch state + scope targets + audit
+  // summary — for migration or off-machine inspection. EXPORT ONLY:
+  // there is no `state import`; importing foreign state would need a
+  // trust decision that stays with the user. The envelope is rendered
+  // fully in memory first, so a collection failure can never leave a
+  // half-written export behind. A broken audit chain is NOT a
+  // refusal: the summary reports it (chainVerified: false with the
+  // per-status counts), exactly as `audit export` shows broken
+  // records instead of refusing. The command is read-only and works
+  // while the kill-switch is armed.
+  const [action, ...actionArgs] = args;
+  if (action !== 'export') throw new Error('state requires an action: export.');
+  const options = parseOptions(actionArgs, ['--state-dir', '--out']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  try {
+    const contents = await collectStateExport({ stateDir: stateDirectory, skillDirectory: path.resolve(__dirname, '..') });
+    const rendered = renderStateExport(contents);
+    if (options.out) {
+      const outputPath = path.resolve(options.out);
+      try {
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await writeFileRefusingSymlink(outputPath, rendered, { encoding: 'utf8', mode: 0o600 });
+      } catch (error) {
+        if (/symbolic link/i.test(error.message)) throw new Error('STATE_EXPORT_SYMLINK_REFUSED');
+        throw error;
+      }
+      process.stdout.write(`State export written to ${outputPath}\n`);
+      return;
+    }
+    process.stdout.write(rendered);
+  } catch (error) {
+    if (typeof error.message === 'string'
+      && (error.message.startsWith('STATE_EXPORT_')
+        || error.message.startsWith('SCOPE_STORE_')
+        || error.message.startsWith('SCOPE_TARGET_'))) {
+      process.stdout.write(`${JSON.stringify({ exported: false, reason: error.message }, null, 2)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    if (['AUDIT_LOG_LOCKED', 'AUDIT_LOG_PERMISSION_DENIED', 'AUDIT_LOG_STORAGE_UNAVAILABLE', 'AUDIT_LOG_PATH_INVALID'].includes(error.message)) {
+      process.stdout.write(`${JSON.stringify({ exported: false, reason: error.message }, null, 2)}\n`);
+      process.exitCode = 4;
+      return;
+    }
+    throw error;
+  }
+}
+
 async function runDrillCommand(args) {
   // --recover is a boolean flag, not a valued option: strip it before
   // parseOptions (which requires a value for every permitted option).
@@ -803,6 +855,10 @@ async function main(argv) {
   }
   if (command === 'restore') {
     await runRestore(args);
+    return;
+  }
+  if (command === 'state') {
+    await runStateCommand(args);
     return;
   }
   if (command === 'drill') {
