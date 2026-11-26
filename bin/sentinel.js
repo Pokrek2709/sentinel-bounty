@@ -27,6 +27,7 @@ const {
 const { mergeReports } = require('../src/report/merge');
 const { anonymizeReport } = require('../src/report/anonymize');
 const { splitReport } = require('../src/report/split');
+const { filterReport } = require('../src/report/filter');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -86,6 +87,7 @@ function usage() {
     '  sentinel report merge <a-report.json> <b-report.json> [--out <merged.json>]',
     '  sentinel report anonymize <report.json> [--out <anon.json>] [--salt <hex>]',
     '  sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]',
+    '  sentinel report filter <report.json> [--severity <level>] [--verdict <rule-verdict>] [--out <filtered.json>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -867,6 +869,42 @@ async function runReportSplit(args) {
   process.stdout.write(`${written.join('\n')}\n`);
 }
 
+async function runReportFilter(args) {
+  // `sentinel report filter` keeps a threshold subset of one JSON
+  // report (round 71, Phase 7): --severity keeps findings at or
+  // above that severity, --verdict keeps findings whose RULE
+  // verdict (round 67's validateOneFinding — valid /
+  // false_positive / needs_evidence, NOT the stored
+  // validation_status workflow state) equals the given value.
+  // At least one predicate is required; both AND together. The
+  // filtered JSON goes to stdout (pipeable) or --out (safe-write,
+  // mode 0600); the one-line summary always goes to stderr, so
+  // stdout stays a clean report. The filter is computed fully in
+  // memory first, so a bad input can never leave a half-written
+  // file behind. An empty result is a valid empty report, not an
+  // error.
+  const [filePath, ...optionArgs] = args;
+  if (!filePath || filePath.startsWith('--')) {
+    throw new Error('report filter requires a report file: sentinel report filter <report.json> [--severity <level>] [--verdict <rule-verdict>] [--out <filtered.json>]');
+  }
+  const options = parseOptions(optionArgs, ['--severity', '--verdict', '--out']);
+  const report = await readReportFile(path.resolve(filePath));
+  const filtered = filterReport(report, { severity: options.severity, verdict: options.verdict });
+  const summary = filtered.summary;
+  const predicates = [];
+  if (summary.severity !== null) predicates.push(`severity >= ${summary.severity}`);
+  if (summary.verdict !== null) predicates.push(`verdict ${summary.verdict}`);
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileRefusingSymlink(outputPath, filtered.report, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Filtered report written to ${outputPath}\n`);
+  } else {
+    process.stdout.write(filtered.report);
+  }
+  process.stderr.write(`filtered ${summary.kept} of ${summary.total} findings (${predicates.join(', ')})\n`);
+}
+
 async function runReport(args) {
   // `sentinel report validate` is a subcommand of `report`
   // (round 67): intercept before parseOptions, which would reject
@@ -891,6 +929,12 @@ async function runReport(args) {
   // (round 70): same intercept, same reason.
   if (args[0] === 'split') {
     await runReportSplit(args.slice(1));
+    return;
+  }
+  // `sentinel report filter` is a subcommand of `report` too
+  // (round 71): same intercept, same reason.
+  if (args[0] === 'filter') {
+    await runReportFilter(args.slice(1));
     return;
   }
   // --allow-mixed-targets is a boolean flag (same pattern as drill

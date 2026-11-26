@@ -7,6 +7,35 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report filter command (round 71, 2026-11-26)
+
+- `sentinel report filter <report.json> [--severity
+  <level>] [--verdict <rule-verdict>] [--out
+  <filtered.json>]` keeps a threshold subset of one JSON
+  report as one valid round-31 JSON report — `--severity`
+  keeps findings at or above that level (matched
+  case-insensitively), `--verdict` keeps findings whose
+  RULE verdict from round 67's `validateOneFinding` (valid
+  / false_positive / needs_evidence) equals the given
+  value, NOT the stored `validation_status` workflow state
+  (which would keep everything or nothing on
+  generator-produced reports); at least one predicate is
+  required (`REPORT_FILTER_NO_PREDICATE`), both AND
+  together. The output is rendered by `generateReport`
+  itself with its own recomputed report id (the generator's
+  own derivation for the kept subset) and a `filter`
+  metadata block (`from_report_id`, plus only the predicates
+  given), and each output passes `report validate` cleanly
+  with `report_id_matches: true`. An empty result is a
+  valid empty report (total 0), not an error — built
+  following `renderJson`'s shape since `generateReport`
+  refuses an empty finding set for JSON. The filtered JSON
+  goes to stdout (pipeable) or `--out` (mode 0600) with the
+  one-line summary (`filtered K of N findings (severity >=
+  high, verdict valid)`) on stderr. The input file is never
+  modified. Docs, SKILL.md (both copies, `cmp` verified),
+  and README updated.
+
 ### Report split command (round 70, 2026-11-26)
 
 - `sentinel report split <report.json> --by
