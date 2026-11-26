@@ -7,6 +7,33 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report split command (round 70, 2026-11-26)
+
+- `sentinel report split <report.json> --by
+  severity|verdict --out-dir <dir> [--force]` splits one
+  JSON report into one valid round-31 JSON report per
+  non-empty group — one file per severity (critical / high
+  / medium / low / informational) or per rule verdict
+  (valid / false_positive / needs_evidence, from round
+  67's `validateOneFinding`, NOT the stored
+  `validation_status` workflow state, which carries
+  detected / needs_review / validated / false_positive /
+  duplicate / rejected and would put every
+  generator-produced finding in one "validated" group).
+  Each file is named `<report-id>-<group>.json` with its
+  own recomputed report id (the generator's own
+  derivation for that subset) and a `split` metadata
+  block (`from_report_id`, `group_by`, `group`), and each
+  passes `report validate` cleanly. Empty groups are not
+  written. `--out-dir` is created mode 0700, refused when
+  non-empty unless `--force` (which only overwrites the
+  files this split writes), and refused inside the skill
+  directory or the state directory. stdout lists only the
+  written paths, one per line; the per-group summary
+  lines go to stderr. The input file is never modified.
+  Docs, SKILL.md (both copies, `cmp` verified), and
+  README updated.
+
 ### Report anonymize command (round 69, 2026-11-26)
 
 - `sentinel report anonymize <report.json>

@@ -26,6 +26,7 @@ const {
 } = require('../src/report/validate');
 const { mergeReports } = require('../src/report/merge');
 const { anonymizeReport } = require('../src/report/anonymize');
+const { splitReport } = require('../src/report/split');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -84,6 +85,7 @@ function usage() {
     '  sentinel report validate <report.json> [--json]',
     '  sentinel report merge <a-report.json> <b-report.json> [--out <merged.json>]',
     '  sentinel report anonymize <report.json> [--out <anon.json>] [--salt <hex>]',
+    '  sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -115,6 +117,27 @@ function pathOutsideSkill(candidate) {
   const resolved = path.resolve(candidate);
   const relative = path.relative(skillDirectory, resolved);
   if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return null;
+  return resolved;
+}
+
+// Refuse a candidate path inside the skill directory or the state
+// directory (round 70, `report split --out-dir`): the same
+// path.relative inside-check as pathOutsideSkill above, applied
+// to both roots (the skill dir, where a stray write could
+// corrupt the installed skill, and the state dir, where it could
+// corrupt kill-switch/audit state). Returns the resolved path
+// when it is outside both, else null. Like pathOutsideSkill
+// this is a lexical check on the resolved path: a symlinked
+// parent directory is the operator's own path (the safe-write
+// philosophy — see src/policy/safe-write.js), so it is not
+// chased here.
+function pathOutsideSkillAndState(candidate) {
+  const roots = [path.resolve(__dirname, '..'), path.resolve(DEFAULT_STATE_DIRECTORY)];
+  const resolved = path.resolve(candidate);
+  for (const root of roots) {
+    const relative = path.relative(root, resolved);
+    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return null;
+  }
   return resolved;
 }
 
@@ -775,6 +798,75 @@ async function runReportAnonymize(args) {
   process.stderr.write(`anonymized ${summary.total} findings (${summary.identifiers_replaced} identifiers replaced, ${summary.text_substitutions} text substitutions)\n`);
 }
 
+async function prepareSplitOutDir(outDir, force) {
+  // Prepare the --out-dir for `report split`: create it (mode
+  // 0700, parents included) when missing; refuse to write into
+  // an existing non-empty directory unless --force is passed.
+  // An existing path that is not a directory is refused outright.
+  // --force only overwrites the files this split writes — other
+  // files already in the directory are left alone (documented
+  // in docs/report-split-v1.md).
+  let stat = null;
+  try {
+    stat = await fs.lstat(outDir);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (stat && !stat.isDirectory()) {
+    throw new Error(`REPORT_SPLIT_OUT_DIR_NOT_A_DIRECTORY: --out-dir ${outDir} exists and is not a directory.`);
+  }
+  if (!stat) {
+    await fs.mkdir(outDir, { recursive: true, mode: 0o700 });
+  }
+  const entries = await fs.readdir(outDir);
+  if (entries.length > 0 && !force) {
+    throw new Error(
+      `REPORT_SPLIT_OUT_DIR_NOT_EMPTY: --out-dir ${outDir} is not empty (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}); `
+      + 'pass --force to write into it.',
+    );
+  }
+}
+
+async function runReportSplit(args) {
+  // `sentinel report split` splits one JSON report into one JSON
+  // report per severity or per rule verdict (round 70, Phase 7):
+  // one file per non-empty group in --out-dir, each a valid
+  // round-31 JSON report with its own recomputed report id.
+  // --by and --out-dir are both required; --force is a boolean
+  // flag (same strip pattern as check-scope --explain/--json).
+  // The split is computed fully in memory first, so a bad input
+  // can never create the directory or leave a half-written file
+  // behind. stdout carries only the written file paths, one per
+  // line (pipeable); the per-group summary lines go to stderr.
+  const [filePath, ...optionArgs] = args;
+  if (!filePath || filePath.startsWith('--')) {
+    throw new Error('report split requires a report file: sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]');
+  }
+  const force = optionArgs.includes('--force');
+  const options = parseOptions(optionArgs.filter((argument) => argument !== '--force'), ['--by', '--out-dir']);
+  if (!options.by) {
+    throw new Error('report split requires --by severity|verdict: sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]');
+  }
+  if (!options.outDir) {
+    throw new Error('report split requires --out-dir <dir>: sentinel report split <report.json> --by severity|verdict --out-dir <dir> [--force]');
+  }
+  const report = await readReportFile(path.resolve(filePath));
+  const split = splitReport(report, { groupBy: options.by });
+  const outDir = path.resolve(options.outDir);
+  if (pathOutsideSkillAndState(outDir) === null) {
+    throw new Error('REPORT_SPLIT_OUT_DIR_FORBIDDEN: --out-dir must be outside the skill directory and the state directory.');
+  }
+  await prepareSplitOutDir(outDir, force);
+  const written = [];
+  for (const file of split.files) {
+    const outputPath = path.join(outDir, file.fileName);
+    await writeFileRefusingSymlink(outputPath, file.report, { encoding: 'utf8', mode: 0o600 });
+    written.push(outputPath);
+    process.stderr.write(`${file.group}: ${file.count} finding${file.count === 1 ? '' : 's'} -> ${outputPath}\n`);
+  }
+  process.stdout.write(`${written.join('\n')}\n`);
+}
+
 async function runReport(args) {
   // `sentinel report validate` is a subcommand of `report`
   // (round 67): intercept before parseOptions, which would reject
@@ -793,6 +885,12 @@ async function runReport(args) {
   // too (round 69): same intercept, same reason.
   if (args[0] === 'anonymize') {
     await runReportAnonymize(args.slice(1));
+    return;
+  }
+  // `sentinel report split` is a subcommand of `report` too
+  // (round 70): same intercept, same reason.
+  if (args[0] === 'split') {
+    await runReportSplit(args.slice(1));
     return;
   }
   // --allow-mixed-targets is a boolean flag (same pattern as drill
