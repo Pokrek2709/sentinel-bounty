@@ -49,12 +49,28 @@ both formats.
   stored `validation_status` workflow state — round 70 proved
   grouping by that field is useless, since every
   generator-produced finding carries `validated`.
-- `by_class` — counts per finding class, where the class is the
-  finding's `vulnerability_type` field (the schema's name for
-  it), normalized the same way the validator normalizes it
-  (trim + lowercase). A finding with a missing or blank
-  `vulnerability_type` counts under `unknown`. Ordered by count
-  descending, ties by class name ascending.
+- `by_class` — counts per finding class, where the class is
+  the finding's `vulnerability_type` field (the schema's name
+  for it) resolved through the validator's evidence-class
+  resolution (`resolveEvidenceClass` in
+  `src/analysis/validator.js`, round 78): the type string is
+  matched equals-or-contains against each class's match list
+  in `knowledge/evidence-checklists.json`, first match in file
+  order wins, and the count carries the class's canonical id —
+  so `SQLi`, `Blind SQL Injection`, and `SQL Injection` all
+  count as `sql injection`, and `auth bypass via JWT` counts as
+  `authentication bypass` (the auth-bypass class precedes the
+  JWT class in file order). The resolution needs no evidence —
+  it matches the type string alone. When no class matches, the
+  class is the normalized raw string (trim + lowercase, as
+  before); a finding with a missing or blank
+  `vulnerability_type` counts under `unknown`. One documented
+  gap: the matcher does not normalize hyphens, so
+  `sql-injection` matches neither `sql injection` nor `sqli`
+  and stays its own class. This closes the raw-string
+  limitation from round 74's F5 (two spellings of one class
+  were counted separately). Ordered by count descending, ties
+  by class name ascending.
 - `cvss` — `scored` (findings whose `cvss_score` is a finite
   number), `unscored` (all others), and `min` / `max` / `mean`
   over the scored findings only; the mean is rounded to 2

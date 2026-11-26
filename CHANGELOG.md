@@ -7,6 +7,28 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report stats class resolution (round 78, 2026-11-26)
+
+- `sentinel report stats` now resolves each finding's class
+  through the validator's evidence-class resolution
+  (`resolveEvidenceClass` over
+  `knowledge/evidence-checklists.json`, 15 classes): aliases
+  and prefixed spellings of one class merge into its
+  canonical id — `SQLi` and `Blind SQL Injection` count as
+  `sql injection`, `auth bypass via JWT` counts as
+  `authentication bypass` by file-order precedence — while a
+  spelling no class matches falls back to the normalized raw
+  string and a missing or blank type still counts as
+  `unknown`. The resolution needs no evidence (it matches the
+  type string alone). This closes the raw-string limitation
+  from round 74's F5. No existing golden moved
+  (generator-produced fixtures spell their classes in full,
+  which already equals the canonical id); the generator's
+  md/json goldens are unchanged. One documented gap: the
+  matcher does not normalize hyphens, so `sql-injection`
+  matches neither `sql injection` nor `sqli` and stays its
+  own class.
+
 ### Report stats reconciliation (round 77, 2026-11-26)
 
 - `sentinel report stats` now reconciles the executive

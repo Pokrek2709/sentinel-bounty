@@ -29,9 +29,20 @@
 // — it is counted, and the exit code stays 0.
 //
 // Class is the finding's `vulnerability_type` field (the schema's
-// name for it), normalized the same way the validator normalizes
-// it (trim + lowercase); a finding with no usable
-// `vulnerability_type` counts under `unknown`. Classes are
+// name for it), resolved through the validator's evidence-class
+// resolution (round 78): `resolveEvidenceClass` maps the type
+// string to its canonical class id (equals-or-contains against
+// the class's match list, first match in file order wins), so
+// 'SQLi', 'Blind SQL Injection', and 'SQL Injection' all count
+// as 'sql injection', and 'auth bypass via JWT' counts as
+// 'authentication bypass' (file order beats the later JWT
+// class). The resolution needs no evidence — it matches the
+// type string alone. When no class matches, the class is the
+// normalized raw string (trim + lowercase, as before); a
+// finding with no usable `vulnerability_type` counts under
+// `unknown`. One documented gap: the matcher does not
+// normalize hyphens, so 'sql-injection' matches neither 'sql
+// injection' nor 'sqli' and stays its own class. Classes are
 // ordered by count descending, ties by class name ascending, so
 // the output is deterministic for any input order.
 //
@@ -81,6 +92,7 @@
 const { countBySeverity, executiveSummary } = require('./generator');
 const { readReportFile } = require('./report-diff');
 const { validateOneFinding } = require('./validate');
+const { resolveEvidenceClass } = require('../analysis/validator');
 const { programOf } = require('./merge');
 
 // Verdict buckets in the order they render (the three rule
@@ -107,12 +119,20 @@ function round2(value) {
   return Number(value.toFixed(2));
 }
 
-// The finding's class: `vulnerability_type`, normalized the same
-// way the validator normalizes it (trim + lowercase). Missing or
-// blank counts under `unknown`.
+// The finding's class: resolved through the validator's
+// evidence-class resolution (round 78) — the canonical class id
+// for the finding's `vulnerability_type`. The resolution needs
+// no evidence (it matches the type string alone, so stats never
+// requires evidence to classify); when no class matches, or the
+// knowledge file failed to load (the resolver then returns
+// null), fall back to the normalized raw string (trim +
+// lowercase, as before). Missing or blank counts under
+// `unknown`.
 function classOf(finding) {
   const raw = finding.vulnerability_type == null ? '' : String(finding.vulnerability_type).trim().toLowerCase();
-  return raw === '' ? 'unknown' : raw;
+  if (raw === '') return 'unknown';
+  const entry = resolveEvidenceClass(finding.vulnerability_type);
+  return entry ? entry.id : raw;
 }
 
 // Compute the stats of a parsed report object (report_id +

@@ -323,6 +323,49 @@ test('classOf normalizes the class and maps a missing or blank type to unknown',
   assert.equal(classOf({}), 'unknown');
 });
 
+// Round 78: the class is resolved through the validator's
+// evidence-class resolution, not the raw string — aliases and
+// prefixed spellings of one class merge into its canonical id,
+// while a spelling no class matches falls back to the
+// normalized raw string. The spellings below were verified
+// against resolveEvidenceClass by probe before the test was
+// written (see the round report): 'SQLi' and 'Blind SQL
+// Injection' resolve, 'sql-injection' does not (the matcher
+// does not normalize hyphens), and 'auth bypass via JWT'
+// resolves to 'authentication bypass' by file-order precedence
+// (the auth-bypass class precedes the JWT class).
+test('classOf resolves aliases and prefixed spellings to the canonical class id', () => {
+  assert.equal(classOf({ vulnerability_type: 'SQLi' }), 'sql injection');
+  assert.equal(classOf({ vulnerability_type: 'Blind SQL Injection' }), 'sql injection');
+  assert.equal(classOf({ vulnerability_type: 'XSS' }), 'cross-site scripting');
+  assert.equal(classOf({ vulnerability_type: 'Stored Cross-Site Scripting' }), 'cross-site scripting');
+  assert.equal(classOf({ vulnerability_type: 'auth bypass via JWT' }), 'authentication bypass');
+  assert.equal(classOf({ vulnerability_type: 'JWT' }), 'json web token weakness');
+  assert.equal(classOf({ vulnerability_type: 'SSRF' }), 'server-side request forgery');
+  assert.equal(classOf({ vulnerability_type: 'sql-injection' }), 'sql-injection');
+  assert.equal(classOf({ vulnerability_type: 'Missing Authentication' }), 'missing authentication');
+  assert.equal(classOf({ vulnerability_type: 42 }), '42');
+});
+
+test('three spellings of one class count as one canonical class', () => {
+  // CRIT is 'SQL Injection'; the clones spell the same class two
+  // other ways. All three carry CRIT's evidence, so all three
+  // stay `valid` — only the class counting moves.
+  const sqli = { ...clone(CRIT), finding_id: 'FND-SQLI-001', vulnerability_type: 'SQLi' };
+  const blind = { ...clone(CRIT), finding_id: 'FND-BLIND-001', vulnerability_type: 'Blind SQL Injection' };
+  const stats = computeReportStats(literalReport([CRIT, sqli, blind]));
+  assert.equal(stats.total, 3);
+  assert.deepEqual(stats.by_class, [{ class: 'sql injection', count: 3 }]);
+  assert.deepEqual(stats.by_verdict, { valid: 3, false_positive: 0, needs_evidence: 0, error: 0 });
+  assert.deepEqual(stats.cvss, { scored: 3, unscored: 0, min: 9.8, max: 9.8, mean: 9.8 });
+  assert.deepEqual(stats.top_assets, [{ asset_id: 'lab-app/login', count: 3 }]);
+  assert.match(renderReportStatsText(stats), /Class: sql injection 3\n/);
+  assert.deepEqual(JSON.parse(renderReportStatsJson(stats)).by_class, [{ class: 'sql injection', count: 3 }]);
+  // Determinism: the merged class is order-independent.
+  const shuffled = computeReportStats(literalReport([blind, CRIT, sqli]));
+  assert.deepEqual(shuffled, stats);
+});
+
 test('an unscored finding counts as unscored and leaves min/max/mean to the scored ones', () => {
   // No cvss_score and no cvss_vector: the strict check passes
   // (needs_evidence), so only the CVSS counting changes.
