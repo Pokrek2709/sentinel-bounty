@@ -7,6 +7,26 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### HackerOne report template (round 59, 2026-11-26)
+
+- `sentinel report --template hackerone` renders one validated
+  finding into HackerOne's section layout (Vulnerability
+  Description, Steps to Reproduce, Impact, Recommended Fix,
+  Supporting Material), mirroring round 35's Immunefi/Code4rena
+  pattern. No code change was needed: the template is data only,
+  a new JSON file in `knowledge/report-templates/`, loaded and
+  shape-validated by the existing `src/report/templates.js`.
+  A finding without `proof_of_concept` fails with a named error
+  (required for "Steps to Reproduce"); JSON output adds
+  `"template": "hackerone"`. Honest limit: the section order and
+  names follow HackerOne's standard report structure as commonly
+  documented and were derived offline — the layout has NOT been
+  verified against the live platform's submission form, so check
+  it before sending a real submission (documented in
+  `docs/report-templates-v1.md` and the template's own
+  description). Immunefi/Code4rena outputs are byte-identical
+  (golden hashes unmoved). Suite 490 → 493 tests.
+
 ### Portable state export (round 58, 2026-11-26)
 
 - `sentinel state export [--state-dir <path>] [--out <file>]`

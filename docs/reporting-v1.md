@@ -140,7 +140,7 @@ refusing the link would add no security.
 
 ## Platform templates
 
-`sentinel report --finding <finding.json> --template immunefi|code4rena`
+`sentinel report --finding <finding.json> --template immunefi|code4rena|hackerone`
 renders one finding into the section layout a platform expects (one
 finding per report; `--findings` with a template fails cleanly). The
 templates are data files in `knowledge/report-templates/`, loaded at

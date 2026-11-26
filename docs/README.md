@@ -46,7 +46,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [report-csv-v1](report-csv-v1.md) — Flat CSV report export (`--format csv`, one row per finding plus a header row, RFC 4180 escaping, hostile values verbatim as inert text, formula injection is a spreadsheet-consumer risk); for implementers and users exporting findings to spreadsheets and triage tooling.
 - [report-grouping-v1](report-grouping-v1.md) — Findings grouped by `asset_id` in reports (group order, within-group severity order, JSON `groups` shape, template exclusion); for implementers and users rendering multi-finding reports.
 - [report-mixed-targets-v1](report-mixed-targets-v1.md) — Mixed-target reports refused by default (`REPORT_MIXED_TARGETS_REFUSED`), opt-in with `--allow-mixed-targets` (group by target, then asset; full target list in the header of all three formats); for implementers and users rendering multi-target reports.
-- [report-templates-v1](report-templates-v1.md) — Platform report templates (`--template immunefi|code4rena`, data files in `knowledge/report-templates/`); for users submitting to Immunefi, Code4rena, or Cantina.
+- [report-templates-v1](report-templates-v1.md) — Platform report templates (`--template immunefi|code4rena|hackerone`, data files in `knowledge/report-templates/`); for users submitting to Immunefi, Code4rena, Cantina, or HackerOne (HackerOne layout not platform-verified).
 
 ## Muse capability evidence (user-supplied lab reports)
 
