@@ -20,6 +20,7 @@ const { generateReport } = require('../src/report/generator');
 const { mergeReports, canonicalFindingString, firstDifferingField } = require('../src/report/merge');
 const { validateReport } = require('../src/report/validate');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -249,7 +250,7 @@ test('CLI: --out writes mode 0600 and stdout carries only the confirmation', asy
   const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, 'report', 'merge', aPath, bPath, '--out', outPath]);
   assert.equal(stdout, `Merged report written to ${outPath}\n`);
   assert.equal(stderr, 'merged 3 findings from 2 + 2 (1 shared, 0 conflicts)\n');
-  assert.equal(fs.statSync(outPath).mode & 0o777, 0o600);
+  assertPrivateModeSync(outPath, 0o600);
   const parsed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
   assert.equal(parsed.report_id, 'RPT-0536be9278ec');
 });

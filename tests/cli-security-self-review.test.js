@@ -25,6 +25,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateMode } = require('./helpers/private-mode');
 const { promisify } = require('node:util');
 
 const execFileAsync = promisify(execFile);
@@ -72,7 +73,7 @@ test('safe-write: writes a new file with mode 0600 and overwrites a regular file
   const target = path.join(dir, 'out.md');
   await writeFileRefusingSymlink(target, 'one');
   assert.equal(await fs.readFile(target, 'utf8'), 'one');
-  assert.equal((await fs.stat(target)).mode & 0o777, 0o600);
+  await assertPrivateMode(target, 0o600);
   await writeFileRefusingSymlink(target, 'two');
   assert.equal(await fs.readFile(target, 'utf8'), 'two');
 });
@@ -82,7 +83,15 @@ test('safe-write: refuses a symlink and leaves the link target untouched', async
   const target = path.join(dir, 'target.md');
   const link = path.join(dir, 'link.md');
   await fs.writeFile(target, 'ORIGINAL');
-  await fs.symlink(target, link);
+  // Round 81: symlink creation needs privileges that are not
+  // guaranteed on every platform (Windows runners included) —
+  // same guard as backup-restore.test.js: skip, do not fail.
+  try {
+    await fs.symlink(target, link);
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.code || error.message}`);
+    return;
+  }
   await assert.rejects(writeFileRefusingSymlink(link, 'evil'), /Refusing to write through a symbolic link/);
   assert.equal(await fs.readFile(target, 'utf8'), 'ORIGINAL');
   assert.equal((await fs.lstat(link)).isSymbolicLink(), true);
@@ -212,7 +221,15 @@ test('security: CLI report --out refuses a planted symlink, target untouched', a
   const target = path.join(dir, 'target.md');
   const link = path.join(dir, 'link.md');
   await fs.writeFile(target, 'ORIGINAL');
-  await fs.symlink(target, link);
+  // Round 81: symlink creation needs privileges that are not
+  // guaranteed on every platform (Windows runners included) —
+  // same guard as backup-restore.test.js: skip, do not fail.
+  try {
+    await fs.symlink(target, link);
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.code || error.message}`);
+    return;
+  }
   const res = await runCli(['report', '--finding', FIXTURE, '--generated-at', GEN, '--out', link]);
   assert.notEqual(res.code, 0);
   assert.match(res.stderr, /Refusing to write through a symbolic link/);
@@ -224,7 +241,15 @@ test('security: CLI check-env --output refuses a planted symlink, target untouch
   const target = path.join(dir, 'target.json');
   const link = path.join(dir, 'link.json');
   await fs.writeFile(target, 'ORIGINAL');
-  await fs.symlink(target, link);
+  // Round 81: symlink creation needs privileges that are not
+  // guaranteed on every platform (Windows runners included) —
+  // same guard as backup-restore.test.js: skip, do not fail.
+  try {
+    await fs.symlink(target, link);
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.code || error.message}`);
+    return;
+  }
   const res = await runCli(['check-env', '--output', link, '--probe-dir', path.join(dir, 'probe')]);
   assert.notEqual(res.code, 0);
   assert.match(res.stderr, /Refusing to write through a symbolic link/);

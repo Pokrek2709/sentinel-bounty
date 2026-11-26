@@ -1,0 +1,7 @@
+# Pin LF line endings on every checkout, including Windows.
+# Round 81: the suite reads repo files and compares their content
+# (docs cross-references, SKILL.md code blocks, fixture text).
+# A CRLF checkout on Windows would put a trailing \r on every
+# line those comparisons see. LF is also what the source itself
+# assumes. This does not change any file's content on Linux.
+* text=auto eol=lf

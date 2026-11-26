@@ -83,6 +83,34 @@ instead. Throwing the raw `EPERM` here regressed the round-27
 EACCES probes (they run as `nobody` against a root-owned `0555`
 directory). Any other chmod failure still propagates.
 
+## Windows (round 81)
+
+POSIX mode bits do not exist on Windows. Node reports every
+regular file as `0666` and every directory as `0777` there, and
+`fs.chmod` is a no-op except for the read-only bit — so the
+`0600`/`0700` standard is both unstatable and unenforceable on
+that platform, and asserting it in tests failed the
+`windows-test` workflow on all 53 runs since round 28. The fix:
+
+- `posixModesApply()` in `src/policy/state-permissions.js` is
+  the single place that knows this (`platform !== 'win32'`).
+- The audit skips mode checks on Windows (`posixModes: false`
+  in the result) but still refuses symlinks and special files.
+- Repair therefore has no mode violation to tighten on Windows
+  and never reports a repair it did not perform (a `chmod` there
+  would be a no-op).
+- `verify-install` passes the state-permissions check for a
+  normal Windows state directory; its PASS message says POSIX
+  modes do not apply there instead of claiming `0600`/`0700`.
+- Tests assert modes through `tests/helpers/private-mode.js`,
+  which enforces exact bits on POSIX and checks existence +
+  entry kind on Windows. The mode-behavior tests in
+  `tests/state-permissions.test.js` are skipped on Windows;
+  `tests/windows-platform.test.js` pins the Windows behavior
+  (skipped on POSIX — it is verified by the Windows CI run).
+- The privacy guarantee on Windows is the OS ACL, which Node
+  cannot observe. That is documented here, not hidden.
+
 ## Known limitations (honest)
 
 - Permissions are a local-OS control. They do not protect against

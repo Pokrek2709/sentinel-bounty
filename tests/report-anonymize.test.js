@@ -28,6 +28,7 @@ const {
 } = require('../src/report/anonymize');
 const { validateReport } = require('../src/report/validate');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -316,7 +317,7 @@ test('CLI: --out writes mode 0600 and stdout carries only the confirmation', asy
   const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, 'report', 'anonymize', inPath, '--out', outPath]);
   assert.equal(stdout, `Anonymized report written to ${outPath}\n`);
   assert.equal(stderr, 'anonymized 3 findings (9 identifiers replaced, 0 text substitutions)\n');
-  assert.equal(fs.statSync(outPath).mode & 0o777, 0o600);
+  assertPrivateModeSync(outPath, 0o600);
   const parsed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
   assert.equal(parsed.anonymized, true);
   assert.equal(parsed.report_id, 'RPT-0536be9278ec');

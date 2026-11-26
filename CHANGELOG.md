@@ -7,6 +7,54 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Windows CI failure investigated and fixed (round 81, 2026-11-27)
+
+- The `windows-test` workflow failed on all 53 runs since round
+  28, always in the `npm test` step. The cause: the suite
+  asserted POSIX permission bits (`stat().mode & 0o777 ===
+  0o600` for files, `0o700` for directories) in ~20 places,
+  and the whole round-45 permission layer encodes them
+  end to end. On Windows those bits do not exist — Node
+  reports every file as `0666` and every directory as `0777`,
+  and `fs.chmod` is a no-op except for the read-only bit —
+  so the assertions could never pass there. No other certain
+  cause was found: POSIX shell commands, `mount`/`umount`,
+  and the nobody probes were already skipped or
+  platform-aware on `win32`, and no test concatenates paths
+  with `'/'`.
+- `src/policy/state-permissions.js` now knows the platform
+  boundary in one place: `posixModesApply()` (`platform !==
+  'win32'`). The audit skips mode checks on Windows
+  (`posixModes: false` in the result) but still refuses
+  symlinks and special files; repair therefore never reports
+  a tightening it did not perform; `verify-install` passes
+  the state-permissions check for a normal Windows state
+  directory (its PASS message says POSIX modes do not apply
+  there). The privacy guarantee on Windows is the OS ACL,
+  which Node cannot observe — documented in
+  `docs/state-permissions-v1.md`, not hidden.
+- Tests assert modes through the new
+  `tests/helpers/private-mode.js` (exact bits on POSIX;
+  existence + entry kind on Windows). The mode-behavior
+  tests in `tests/state-permissions.test.js` are skipped on
+  Windows; `tests/windows-platform.test.js` pins the Windows
+  behavior (skipped on POSIX — verified by the Windows CI
+  run itself). Symlink-creation sites in four test files now
+  skip instead of failing when the platform refuses to create
+  a symlink (the `backup-restore.test.js` precedent). A new
+  `.gitattributes` pins LF endings on checkout (defense
+  against CRLF; the docs tests trim lines, so this is
+  hardening, not a proven cause). SKILL.md gains one
+  sentence noting the Windows exception to the permission
+  standard.
+- Honest limit: the exact failing test names on Windows were
+  never readable from the lab (log download needs admin
+  access), and there is no local Windows machine — the fix
+  rests on documented Node behavior plus the 53/53 failure
+  record, not on a reproduced Windows run. If the Windows
+  run still fails after this round, the log will name the
+  next cause.
+
 ### Report generated_at fallback unified (round 80, 2026-11-26)
 
 - `generateReport`'s own `generated_at` fallback (newest finding

@@ -37,6 +37,15 @@ async function invokeCli(args) {
   }
 }
 
+// Round 81 (Windows): the tests skipped below assert POSIX permission
+// bits end to end (audit reports 0644/0755, repair 0660 -> 0600,
+// verify-install FAIL -> PASS). On Windows those bits do not exist —
+// Node reports files 0666 and directories 0777, chmod is a no-op —
+// so the audit skips mode checks there by design and these tests
+// cannot pass on that platform. They still run on POSIX, where the
+// standard is enforced. Windows behavior is covered instead by
+// tests/windows-platform.test.js (audit/repair/verify-install on
+// win32, skipped here on POSIX).
 async function makeSkillRoot(directory) {
   await fs.mkdir(path.join(directory, 'bin'), { recursive: true });
   await fs.mkdir(path.join(directory, 'config'), { recursive: true });
@@ -46,7 +55,7 @@ async function makeSkillRoot(directory) {
   await fs.writeFile(path.join(directory, 'skills', 'sentinel-bounty', 'SKILL.md'), '# Sentinel Bounty\n', { mode: 0o600 });
 }
 
-test('audit reports a loose file with its actual mode', async (t) => {
+test('audit reports a loose file with its actual mode', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   const loose = path.join(dir, 'kill-switch.json');
   await fs.writeFile(loose, '{}');
@@ -64,7 +73,7 @@ test('audit reports a loose file with its actual mode', async (t) => {
   assert.equal(audit.violations[0].expectedMode, '0o0600');
 });
 
-test('audit reports a loose directory, including a nested one', async (t) => {
+test('audit reports a loose directory, including a nested one', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o755);
   const sub = path.join(dir, 'drill');
@@ -80,7 +89,7 @@ test('audit reports a loose directory, including a nested one', async (t) => {
   assert.ok(audit.violations.some((v) => v.path === sub && v.actualMode === '0o0755'));
 });
 
-test('audit passes clean modes and reports a missing directory', async (t) => {
+test('audit passes clean modes and reports a missing directory', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o700);
   await fs.writeFile(path.join(dir, 'kill-switch.json'), '{}', { mode: 0o600 });
@@ -93,7 +102,7 @@ test('audit passes clean modes and reports a missing directory', async (t) => {
   assert.deepEqual(missing.violations, []);
 });
 
-test('audit flags a symlink and never follows it', async (t) => {
+test('audit flags a symlink and never follows it', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   const outside = await makeTempDir(t, 'r45-perms-');
   const target = path.join(outside, 'secret.txt');
@@ -109,7 +118,7 @@ test('audit flags a symlink and never follows it', async (t) => {
   assert.equal(await modeOf(target), 0o644);
 });
 
-test('repair tightens files and directories and reports from/to modes', async (t) => {
+test('repair tightens files and directories and reports from/to modes', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o755);
   const loose = path.join(dir, 'budget.json');
@@ -128,7 +137,7 @@ test('repair tightens files and directories and reports from/to modes', async (t
   assert.deepEqual(again.refused, []);
 });
 
-test('repair refuses a symlink and leaves its target alone', async (t) => {
+test('repair refuses a symlink and leaves its target alone', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   const outside = await makeTempDir(t, 'r45-perms-');
   const target = path.join(outside, 'secret.txt');
@@ -145,7 +154,7 @@ test('repair refuses a symlink and leaves its target alone', async (t) => {
   assert.equal((await fs.lstat(link)).isSymbolicLink(), true);
 });
 
-test('ensurePrivateDir chmods a directory that already exists', async (t) => {
+test('ensurePrivateDir chmods a directory that already exists', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   await fs.chmod(dir, 0o755);
   const sub = path.join(dir, 'state');
@@ -157,7 +166,7 @@ test('ensurePrivateDir chmods a directory that already exists', async (t) => {
   assert.equal(await modeOf(dir), 0o755);
 });
 
-test('fresh writes are 0600/0700 even under umask 022', async (t) => {
+test('fresh writes are 0600/0700 even under umask 022', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   const stateDir = path.join(dir, 'state');
   const script = `
@@ -188,7 +197,7 @@ test('fresh writes are 0600/0700 even under umask 022', async (t) => {
   assert.equal(modes['.'], '700');
 });
 
-test('verify-install state-permissions check fails loose, passes after repair', async (t) => {
+test('verify-install state-permissions check fails loose, passes after repair', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   const skill = path.join(dir, 'skill');
   const state = path.join(dir, 'state');
@@ -209,7 +218,7 @@ test('verify-install state-permissions check fails loose, passes after repair', 
   assert.equal(rerun.checks.find((c) => c.id === 'state-permissions').status, 'PASS');
 });
 
-test('CLI verify-install --fix tightens loose state and exits 0; without --fix it exits 1', async (t) => {
+test('CLI verify-install --fix tightens loose state and exits 0; without --fix it exits 1', { skip: process.platform === 'win32' }, async (t) => {
   const dir = await makeTempDir(t, 'r45-perms-');
   const skill = path.join(dir, 'skill');
   const state = path.join(dir, 'state');

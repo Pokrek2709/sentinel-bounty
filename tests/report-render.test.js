@@ -19,6 +19,7 @@ const { promisify } = require('node:util');
 const { generateReport } = require('../src/report/generator');
 const { renderReport, RENDER_FORMATS } = require('../src/report/render');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -260,7 +261,7 @@ test('CLI report render --out writes mode 0600, reports the path, and leaves the
   assert.equal(stdout, `Rendered report written to ${outPath}\n`);
   assert.equal(stderr, `rendered 5 findings as markdown from ${FIVE_REPORT_ID}\n`);
   assert.equal(fs.readFileSync(outPath, 'utf8'), direct(FIVE, 'markdown'));
-  assert.equal(fs.statSync(outPath).mode & 0o777, 0o600);
+  assertPrivateModeSync(outPath, 0o600);
   const after = fs.statSync(filePath);
   assert.equal(fs.readFileSync(filePath, 'utf8'), input);
   assert.equal(after.mtimeMs, before.mtimeMs);

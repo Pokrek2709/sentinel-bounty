@@ -22,6 +22,7 @@ const { generateReport, countBySeverity, executiveSummary } = require('../src/re
 const { filterReport } = require('../src/report/filter');
 const { validateReport, deriveExpectedReportId } = require('../src/report/validate');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -342,7 +343,7 @@ test('CLI: --out writes mode 0600, stdout names the file, and the input is untou
   const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, 'report', 'filter', inPath, '--verdict', 'valid', '--out', outPath]);
   assert.equal(stdout, `Filtered report written to ${outPath}\n`);
   assert.equal(stderr, 'filtered 1 of 5 findings (verdict valid)\n');
-  assert.equal(fs.statSync(outPath).mode & 0o777, 0o600);
+  assertPrivateModeSync(outPath, 0o600);
   assert.deepEqual(JSON.parse(fs.readFileSync(outPath, 'utf8')).findings.map((f) => f.finding_id), ['FND-CRIT-001']);
   const after = fs.statSync(inPath);
   assert.equal(fs.readFileSync(inPath, 'utf8'), input);

@@ -12,6 +12,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateMode } = require('./helpers/private-mode');
 const { computeAuditRecordHash, GENESIS_PREV_HASH } = require('../src/audit/audit-log');
 const {
   collectStateExport,
@@ -246,7 +247,7 @@ test('CLI: state export prints the envelope on stdout and --out writes the same 
   // Same state, so the same content hash — only the timestamp differs.
   assert.equal(writtenEnvelope.contentHash, envelope.contentHash);
   assert.deepEqual(writtenEnvelope.contents, envelope.contents);
-  assert.equal((await fs.stat(outPath)).mode & 0o777, 0o600);
+  await assertPrivateMode(outPath, 0o600);
 });
 
 test('CLI: a broken audit chain still exports with exit 0 and chainVerified false', async (t) => {

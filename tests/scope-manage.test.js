@@ -15,6 +15,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { promisify } = require('node:util');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateMode } = require('./helpers/private-mode');
 const {
   ScopeStoreError,
   loadScopeTargets,
@@ -86,8 +87,8 @@ test('scope add stores the target, audits it, and check-scope --store resolves i
   assert.equal(stored.schema_version, 1);
   assert.equal(stored.targets.length, 1);
   assert.equal(stored.targets[0].target_id, 'local-lab');
-  assert.equal((await fs.stat(storePath)).mode & 0o777, 0o600);
-  assert.equal((await fs.stat(stateDirectory)).mode & 0o777, 0o700);
+  await assertPrivateMode(storePath, 0o600);
+  await assertPrivateMode(stateDirectory, 0o700);
   const events = await auditEvents(stateDirectory);
   assert.equal(events.filter((event) => event.event === 'SCOPE_TARGET_ADDED').length, 1);
   assert.equal(events.find((event) => event.event === 'SCOPE_TARGET_ADDED').details.targetId, 'local-lab');

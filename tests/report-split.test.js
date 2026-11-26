@@ -21,6 +21,7 @@ const { generateReport } = require('../src/report/generator');
 const { splitReport } = require('../src/report/split');
 const { validateReport, deriveExpectedReportId } = require('../src/report/validate');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -264,7 +265,7 @@ test('CLI: stdout lists only the written paths, summaries go to stderr', async (
   ].join('\n'));
   for (const line of lines) {
     assert.equal(JSON.parse(fs.readFileSync(line, 'utf8')).split.group_by, 'severity');
-    assert.equal(fs.statSync(line).mode & 0o777, 0o600);
+    assertPrivateModeSync(line, 0o600);
   }
 });
 
@@ -274,8 +275,8 @@ test('CLI: --out-dir is created with mode 0700', async (t) => {
   const outDir = path.join(dir, 'nested', 'out');
   fs.writeFileSync(inPath, generateReport(ALL, { programName: PROGRAM, generatedAt: GENERATED_AT, format: 'json' }));
   await execFileAsync(process.execPath, [CLI, 'report', 'split', inPath, '--by', 'severity', '--out-dir', outDir]);
-  assert.equal(fs.statSync(outDir).mode & 0o777, 0o700);
-  assert.equal(fs.statSync(path.join(dir, 'nested')).mode & 0o777, 0o700);
+  assertPrivateModeSync(outDir, 0o700);
+  assertPrivateModeSync(path.join(dir, 'nested'), 0o700);
 });
 
 test('CLI: split twice into two dirs gives byte-identical files', async (t) => {

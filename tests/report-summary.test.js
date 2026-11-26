@@ -19,6 +19,7 @@ const { promisify } = require('node:util');
 const { generateReport } = require('../src/report/generator');
 const { renderSummary, countByVerdict, TOP_FINDINGS_LIMIT } = require('../src/report/summary');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -267,7 +268,7 @@ test('CLI report --format summary --out writes a plain-text file with mode 0600'
   assert.match(stdout, /Report written to/);
   const summary = fs.readFileSync(output, 'utf8');
   assert.equal(summary, EXPECTED_SUMMARY);
-  assert.equal(fs.statSync(output).mode & 0o777, 0o600, 'report file is private');
+  assertPrivateModeSync(output, 0o600, 'report file is private');
 });
 
 test('CLI report --format summary prints to stdout without --out', async () => {

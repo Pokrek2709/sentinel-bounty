@@ -20,6 +20,7 @@ const { promisify } = require('node:util');
 const { generateReport } = require('../src/report/generator');
 const { renderJsonl } = require('../src/report/jsonl');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -232,7 +233,7 @@ test('CLI report --format jsonl --out writes a JSONL file with mode 0600', async
   const lines = jsonl.trimEnd().split('\n');
   assert.equal(lines[0], EXPECTED_SUMMARY_LINE);
   assert.equal(lines.length, 4);
-  assert.equal(fs.statSync(output).mode & 0o777, 0o600, 'report file is private');
+  assertPrivateModeSync(output, 0o600, 'report file is private');
 });
 
 test('CLI report --format jsonl prints to stdout without --out', async () => {

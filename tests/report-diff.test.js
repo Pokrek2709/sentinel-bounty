@@ -21,6 +21,7 @@ const {
   readReportFile,
 } = require('../src/report/report-diff');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -258,7 +259,7 @@ test('CLI report-diff --out writes mode 0600 with the same content as stdout', a
   const { stdout } = await execFileAsync(process.execPath, [CLI, 'report-diff', oldPath, newPath, '--out', outPath]);
   assert.ok(stdout.includes('written to'), 'writes a confirmation line');
   assert.equal(fs.readFileSync(outPath, 'utf8'), EXPECTED_DIFF_MARKDOWN);
-  assert.equal(fs.statSync(outPath).mode & 0o777, 0o600);
+  assertPrivateModeSync(outPath, 0o600);
 });
 
 test('CLI report-diff refuses --template cleanly', async () => {

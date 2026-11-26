@@ -135,9 +135,22 @@ test('loadVerifier refuses a symlinked verifier file and a symlinked parent dire
   const outside = await makeTempDir(t, 'sentinel-ai-verdict-outside-');
   try {
     fs.copyFileSync(path.join(__dirname, 'fixtures', 'ai-verifier-class.js'), path.join(outside, 'ai-verifier-class.js'));
-    fs.symlinkSync(path.join(__dirname, 'fixtures', 'ai-verifier-class.js'), linkPath);
+    // Round 81: symlink creation needs privileges that are not
+    // guaranteed on every platform (Windows runners included) —
+    // same guard as backup-restore.test.js: skip, do not fail.
+    try {
+      fs.symlinkSync(path.join(__dirname, 'fixtures', 'ai-verifier-class.js'), linkPath);
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.code || error.message}`);
+      return;
+    }
     assert.throws(() => loadVerifier('tests/fixtures/ai-verifier-link.js'), /AI_VERDICT_SYMLINK_REFUSED/);
-    fs.symlinkSync(outside, linkDir);
+    try {
+      fs.symlinkSync(outside, linkDir);
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.code || error.message}`);
+      return;
+    }
     assert.throws(() => loadVerifier('tests/fixtures/ai-verifier-linkdir/ai-verifier-class.js'), /AI_VERDICT_SYMLINK_REFUSED/);
   } finally {
     fs.rmSync(linkPath, { force: true });

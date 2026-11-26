@@ -16,6 +16,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { promisify } = require('node:util');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateMode } = require('./helpers/private-mode');
 const { AuditLog } = require('../src/audit/audit-log');
 const { renderAuditExport } = require('../src/audit/audit-export');
 const {
@@ -96,13 +97,21 @@ test('retention policy file round-trips, absent reads null, symlink refused, mod
   const written = await writeRetentionPolicy(stateDirectory, { schema_version: 1, max_archives: 2 });
   assert.deepEqual(written, { schema_version: 1, max_archives: 2, max_records: null });
   assert.deepEqual(await readRetentionPolicy(stateDirectory), written);
-  assert.equal((await fs.stat(retentionPathFor(stateDirectory))).mode & 0o777, 0o600);
+  await assertPrivateMode(retentionPathFor(stateDirectory), 0o600);
   // A symlink at the policy path is refused on read and on write.
   const linkDirectory = path.join(directory, 'state-link');
   await fs.mkdir(linkDirectory, { recursive: true });
   const target = path.join(linkDirectory, 'target.json');
   await fs.writeFile(target, '{"schema_version":1,"max_archives":1}\n');
-  await fs.symlink(target, retentionPathFor(linkDirectory));
+  // Round 81: symlink creation needs privileges that are not
+  // guaranteed on every platform (Windows runners included) —
+  // same guard as backup-restore.test.js: skip, do not fail.
+  try {
+    await fs.symlink(target, retentionPathFor(linkDirectory));
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.code || error.message}`);
+    return;
+  }
   await assert.rejects(readRetentionPolicy(linkDirectory), (error) => error.code === 'AUDIT_RETENTION_SYMLINK_REFUSED');
   await assert.rejects(writeRetentionPolicy(linkDirectory, { schema_version: 1, max_archives: 1 }), (error) => error.code === 'AUDIT_RETENTION_SYMLINK_REFUSED');
   // A corrupt file fails loudly on the strict read, but the lenient

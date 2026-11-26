@@ -24,12 +24,34 @@
 // user who deliberately loosens them afterwards, or against an
 // attacker who can rewrite the whole state directory — the audit
 // hash chain (round 43) is the tamper-evidence layer for that.
+//
+// Windows (round 81): POSIX mode bits do not exist on Windows.
+// Node reports every regular file as 0666 and every directory as
+// 0777 there, and `fs.chmod` is a no-op except for the read-only
+// bit — so a 0600/0700 standard is unstatable AND unenforceable
+// on that platform. `posixModesApply()` is the single place that
+// knows this: the audit skips mode checks on Windows (symlink and
+// special-file checks still apply), repair therefore has no mode
+// violation to "fix" (it must never report a repair it did not
+// perform), and `verify-install` passes the state-permissions
+// check for a normal Windows state directory instead of failing
+// it forever. The privacy guarantee on Windows is the OS ACL,
+// which Node cannot observe — documented, not hidden.
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const REQUIRED_FILE_MODE = 0o600;
 const REQUIRED_DIR_MODE = 0o700;
+
+// POSIX mode bits apply on every platform except Windows, where
+// they do not exist (see the header comment). Pure function of a
+// platform string so tests can pin the branching without a
+// Windows machine: posixModesApply('win32') is false,
+// posixModesApply('linux') and posixModesApply('darwin') are true.
+function posixModesApply(platform = process.platform) {
+  return platform !== 'win32';
+}
 
 // Modes are compared on the permission bits only (0o7777 keeps the
 // setuid/setgid/sticky bits visible in reports: a 2770 directory is
@@ -61,21 +83,27 @@ async function walkStateDirectory(stateDirectory, onEntry) {
 }
 
 // Read-only audit. Returns { stateDirectory, exists, checked,
-// violations }. A violation is { path, kind, actualMode,
-// expectedMode }: kind 'file' | 'directory' | 'symlink'. For a
-// symlink expectedMode is null — the expectation is "not a symlink".
-// Never follows a symlink. Throws on unreadable directories other
-// than a missing state directory.
+// violations, posixModes }. A violation is { path, kind,
+// actualMode, expectedMode }: kind 'file' | 'directory' |
+// 'symlink'. For a symlink expectedMode is null — the expectation
+// is "not a symlink". `posixModes` records whether POSIX mode
+// bits were even checked: false on Windows, where mode checks are
+// skipped (round 81 — files report 0666 and directories 0777
+// there, so every entry would otherwise be a permanent false
+// violation). Symlink and special-file checks still apply on
+// every platform. Never follows a symlink. Throws on unreadable
+// directories other than a missing state directory.
 async function auditStatePermissions(stateDirectory) {
   if (typeof stateDirectory !== 'string' || !path.isAbsolute(stateDirectory)) {
     throw new TypeError('stateDirectory must be an absolute path.');
   }
+  const posixModes = posixModesApply();
   let names;
   try {
     names = await fs.readdir(stateDirectory);
   } catch (error) {
     if (error.code === 'ENOENT') {
-      return { stateDirectory, exists: false, checked: 0, violations: [] };
+      return { stateDirectory, exists: false, checked: 0, violations: [], posixModes };
     }
     throw error;
   }
@@ -93,7 +121,7 @@ async function auditStatePermissions(stateDirectory) {
       return;
     }
     if (stat.isDirectory()) {
-      if (isTooPermissive(stat.mode & MODE_MASK, REQUIRED_DIR_MODE)) {
+      if (posixModes && isTooPermissive(stat.mode & MODE_MASK, REQUIRED_DIR_MODE)) {
         violations.push({
           path: full,
           kind: 'directory',
@@ -104,7 +132,7 @@ async function auditStatePermissions(stateDirectory) {
       return;
     }
     if (stat.isFile()) {
-      if (isTooPermissive(stat.mode & MODE_MASK, REQUIRED_FILE_MODE)) {
+      if (posixModes && isTooPermissive(stat.mode & MODE_MASK, REQUIRED_FILE_MODE)) {
         violations.push({
           path: full,
           kind: 'file',
@@ -134,7 +162,7 @@ async function auditStatePermissions(stateDirectory) {
     await checkEntry(full, stat);
     if (stat.isDirectory() && !stat.isSymbolicLink()) await walkStateDirectory(full, checkEntry);
   }
-  return { stateDirectory, exists: true, checked, violations };
+  return { stateDirectory, exists: true, checked, violations, posixModes };
 }
 
 // Repair: tighten every violating file to 0600 and every violating
@@ -142,6 +170,10 @@ async function auditStatePermissions(stateDirectory) {
 // directory, never follows a symlink (symlinks and other special
 // files are reported in `refused`, never chmodded — chmod through
 // a symlink would change the target). Returns { repaired, refused }.
+// On Windows the audit reports no mode violations (round 81), so
+// repair has no mode to tighten and never claims one — a chmod
+// there would be a no-op, and reporting it as repaired would be
+// a lie.
 async function repairStatePermissions(stateDirectory) {
   const audit = await auditStatePermissions(stateDirectory);
   const repaired = [];
@@ -191,6 +223,7 @@ module.exports = {
   REQUIRED_FILE_MODE,
   REQUIRED_DIR_MODE,
   formatMode,
+  posixModesApply,
   auditStatePermissions,
   repairStatePermissions,
   ensurePrivateDir,

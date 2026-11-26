@@ -20,6 +20,7 @@ const test = require('node:test');
 const { promisify } = require('node:util');
 const { generateReport, escapeCsvField, CSV_COLUMNS } = require('../src/report/generator');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateModeSync } = require('./helpers/private-mode');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -264,7 +265,7 @@ test('CLI report --format csv --out writes a flat file with mode 0600', async (t
   const csv = fs.readFileSync(output, 'utf8');
   assert.ok(csv.startsWith(`${EXPECTED_HEADER}\n`), 'header row first');
   assert.ok(csv.includes('FND-CRIT-001,TGT-LAB-001,lab-app/login,critical,9.8'), 'critical row present');
-  assert.equal(fs.statSync(output).mode & 0o777, 0o600, 'report file is private');
+  assertPrivateModeSync(output, 0o600, 'report file is private');
 });
 
 test('CLI report --format csv with an empty findings file writes the header only', async (t) => {

@@ -118,6 +118,12 @@ async function checkStatePermissions(stateDirectory) {
   }
   if (!audit.exists) return pass('state-permissions', 'No state directory exists yet; nothing to verify.');
   if (audit.violations.length === 0) {
+    // Round 81: on Windows POSIX mode bits do not exist, so the
+    // audit checks symlinks and special files only — the PASS
+    // message must not claim 0600/0700 were verified there.
+    if (audit.posixModes === false) {
+      return pass('state-permissions', `State directory permissions checked (${audit.checked} entr${audit.checked === 1 ? 'y' : 'ies'} checked: POSIX modes do not apply on Windows; no symlinks or special files).`);
+    }
     return pass('state-permissions', `State directory permissions are private (${audit.checked} entr${audit.checked === 1 ? 'y' : 'ies'} checked: files 0600, directories 0700, no symlinks).`);
   }
   const detail = audit.violations.map((violation) => {

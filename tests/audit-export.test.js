@@ -6,6 +6,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
 const { makeTempDir } = require('./helpers/temp-dir');
+const { assertPrivateMode } = require('./helpers/private-mode');
 const { AuditLog, computeAuditRecordHash, GENESIS_PREV_HASH } = require('../src/audit/audit-log');
 const { renderAuditExport } = require('../src/audit/audit-export');
 
@@ -293,7 +294,7 @@ test('cli audit export: json to stdout exits 0; --out writes mode 0600 byte-iden
     assert.equal(fileRun.code, 0);
     assert.match(fileRun.stdout, /Audit export written to /);
     assert.equal(await fs.readFile(outPath, 'utf8'), stdoutRun.stdout);
-    assert.equal((await fs.stat(outPath)).mode & 0o777, 0o600);
+    await assertPrivateMode(outPath, 0o600);
     // `audit verify` on the same log is unchanged by the refactor.
     const verify = await runCli(['audit', 'verify'], stateDir);
     assert.equal(verify.code, 0);
@@ -352,7 +353,15 @@ test('cli audit export: unknown format exits 1 without touching the log; symlink
     const target = path.join(directory, 'target.txt');
     await fs.writeFile(target, 'do not overwrite\n');
     const link = path.join(directory, 'export.json');
-    await fs.symlink(target, link);
+    // Round 81: symlink creation needs privileges that are not
+    // guaranteed on every platform (Windows runners included) —
+    // same guard as backup-restore.test.js: skip, do not fail.
+    try {
+      await fs.symlink(target, link);
+    } catch (error) {
+      t.skip(`symlink unavailable: ${error.code || error.message}`);
+      return;
+    }
     const refused = await runCli(['audit', 'export', '--out', link], stateDir);
     assert.equal(refused.code, 1);
     assert.match(refused.stderr, /Refusing to write through a symbolic link/);
