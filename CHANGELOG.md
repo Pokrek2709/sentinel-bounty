@@ -7,6 +7,31 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Report merge command (round 68, 2026-11-26)
+
+- `sentinel report merge <a-report.json> <b-report.json>
+  [--out <merged.json>]` combines two JSON reports into one
+  valid round-31 JSON report: identical findings (after
+  canonicalization — keys sorted recursively, `merged_from`
+  sorted as an id set) kept once, disjoint findings unioned, a
+  same-id finding with different content fails with
+  `REPORT_MERGE_CONFLICTING_FINDING` naming the id and the
+  first differing field, both inputs must agree on
+  `program_name` (`REPORT_MERGE_PROGRAM_MISMATCH`), differing
+  targets merge as `target_ids` + `mixed_targets: true` (the
+  round-49 convention; the merge itself is the opt-in), and
+  every finding is checked with round 67's strict-check path
+  (`REPORT_MERGE_INVALID_FINDING`). The merged report is
+  rendered by `generateReport` itself (its report id is the
+  generator's own derivation; a test pins the merged output
+  byte-identical to a direct render of the same set);
+  `generated_at` is the newer input value, else the newest
+  finding `created_at`, else `REPORT_MERGE_NO_GENERATED_AT`.
+  The merged JSON goes to stdout (pipeable) or `--out` (mode
+  0600); the one-line summary (`merged N findings from A + B
+  (X shared, 0 conflicts)`) goes to stderr. Docs, SKILL.md
+  (both copies, `cmp` verified), and README updated.
+
 ### Report validation command (round 67, 2026-11-26)
 
 - `sentinel report validate <report.json> [--json]` checks a JSON

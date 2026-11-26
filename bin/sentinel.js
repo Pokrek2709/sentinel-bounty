@@ -24,6 +24,7 @@ const {
   renderReportValidationText,
   renderReportValidationJson,
 } = require('../src/report/validate');
+const { mergeReports } = require('../src/report/merge');
 const { runVerifyInstall, checkStatePermissions } = require('../src/install/verifier');
 const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
@@ -80,6 +81,7 @@ function usage() {
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--template generic|immunefi|code4rena|hackerone|bugcrowd] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
     '  sentinel report validate <report.json> [--json]',
+    '  sentinel report merge <a-report.json> <b-report.json> [--out <merged.json>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
     '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
@@ -706,12 +708,50 @@ async function runReportValidate(args) {
   process.exitCode = result.status === 'VALID' ? 0 : 1;
 }
 
+async function runReportMerge(args) {
+  // `sentinel report merge` combines two JSON reports into one
+  // valid round-31 JSON report (round 68, Phase 7): identical
+  // findings kept once, disjoint findings unioned, a same-id
+  // finding with different content fails the merge instead of
+  // silently picking one version. The two report files are
+  // positionals (the runReportDiff pattern). The merged JSON goes
+  // to stdout (pipeable) or --out (safe-write, mode 0600); the
+  // one-line merge summary always goes to stderr, so stdout
+  // stays a clean report. The merge is computed fully in memory
+  // first, so a bad input can never leave a half-written file
+  // behind.
+  const [aPath, bPath, ...optionArgs] = args;
+  if (!aPath || !bPath || aPath.startsWith('--') || bPath.startsWith('--')) {
+    throw new Error('report merge requires two report files: sentinel report merge <a-report.json> <b-report.json> [--out <merged.json>]');
+  }
+  const options = parseOptions(optionArgs, ['--out']);
+  const a = await readReportFile(path.resolve(aPath));
+  const b = await readReportFile(path.resolve(bPath));
+  const merged = mergeReports(a, b);
+  const summary = merged.summary;
+  if (options.out) {
+    const outputPath = path.resolve(options.out);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileRefusingSymlink(outputPath, merged.report, { encoding: 'utf8', mode: 0o600 });
+    process.stdout.write(`Merged report written to ${outputPath}\n`);
+  } else {
+    process.stdout.write(merged.report);
+  }
+  process.stderr.write(`merged ${summary.total} findings from ${summary.fromA} + ${summary.fromB} (${summary.shared} shared, 0 conflicts)\n`);
+}
+
 async function runReport(args) {
   // `sentinel report validate` is a subcommand of `report`
   // (round 67): intercept before parseOptions, which would reject
   // 'validate' as an unknown option.
   if (args[0] === 'validate') {
     await runReportValidate(args.slice(1));
+    return;
+  }
+  // `sentinel report merge` is a subcommand of `report` too
+  // (round 68): same intercept, same reason.
+  if (args[0] === 'merge') {
+    await runReportMerge(args.slice(1));
     return;
   }
   // --allow-mixed-targets is a boolean flag (same pattern as drill
