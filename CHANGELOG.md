@@ -7,6 +7,36 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### First green Windows run: the round-83 fixes are confirmed (round 84, 2026-11-27)
+
+- The first `windows-test` run after round 83 (run 45881977604,
+  head `d2d1991`, 2026-11-26T19:13:08Z) completed with
+  conclusion `success` — job `test` success, every step success
+  including `Run npm test` (~39 s). This is the first green
+  Windows run in the project's history; the workflow had failed
+  on every run since round 28 (53/53 before round 81, then the
+  runs for `bcc3037` and `0897b2e`).
+- The ten run-54 fixes from round 83 are therefore confirmed on
+  a real Windows runner, not just by local simulation: (1)
+  `redact()` no longer runs `new URL()` on Windows paths;
+  (2) drill polite-cancel via IPC `cancel` on win32; (3)
+  digest-read ENOENT walks ancestors and reports
+  `RESET_TOKEN_FILE_PATH_INVALID` when a parent is a file;
+  (4) the pending-promise scanner normalizes paths to
+  forward slashes; (5) `checkTool` has a default command
+  runner, so `sentinel status` now reports the real tool
+  count. The `tests/windows-platform.test.js` win32-only
+  tests, skipped on POSIX, are verified by this run itself.
+- Safe status changes with this run: the "implemented but not
+  proven to pass on Windows" caveat from rounds 81–83 is
+  retired for these fixes. It is not a phase move — no new
+  capability was built and no blocked decision was taken in
+  this round (docs-only, +2 files). The remaining blockers
+  are unchanged: `asset_url` scrub, F5 real detectors, F6
+  policies, release tagging, and the local-lab rule.
+- Linux suite stays green alongside: 801 tests, 797 pass,
+  0 fail, 4 skipped (win32-only), `verify-install` 7/7.
+
 ### Fix the 10 Windows run-54 failures by name (round 83, 2026-11-27)
 
 - The user uploaded the run-54 log archive, so all ten failing test
@@ -1472,14 +1502,17 @@ harden validator`).
 
 ## Known issues
 
-- **Windows CI native run FAILS.** GitHub Actions `windows-latest` fails
-  at `npm test` (runs 45451156030, 45687748470, 45689157563) with zero
-  check-run annotations, so the failing test name is not retrievable
-  without repo-admin log access. A hypothesis fix (pin Actions to
-  Node 24, skip the two tmpfs tests on win32) was disproven by CI —
-  the failure is neither the tmpfs tests nor the action versions. No
-  further blind fix will be attempted; the log must be read by the
-  repo admin first.
+- **Windows CI native run: GREEN since round 84.** GitHub Actions
+  `windows-latest` now passes `npm test` — run 45881977604, head
+  `d2d1991`, 2026-11-26T19:13:08Z, conclusion `success`, the first
+  green Windows run in the project's history. It had failed on
+  every run since round 28 (53/53 before round 81, then the runs
+  for `bcc3037` and `0897b2e`); the ten run-54 failures were
+  fixed by name in round 83 after the user uploaded the run log,
+  and the next run went green. The failing test name is still
+  not retrievable from the lab without repo-admin log access
+  when a run fails — but no blind fix is needed while the run
+  stays green.
 - **Phases 0–1 cannot reach 100% by rounds.** They need Meta: an
   official manifest, quotas, native identity, and persona indexing.
   There is no public Muse skill registry — distribution is this GitHub

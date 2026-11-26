@@ -111,14 +111,16 @@ that platform, and asserting it in tests failed the
 - The privacy guarantee on Windows is the OS ACL, which Node
   cannot observe. That is documented here, not hidden.
 
-Round 82 (2026-11-27) read the first Windows run after this
-fix — run 54, head `bcc3037`: conclusion `failure`, the
-`npm test` step, exit code 1. The failing test name is not
-visible from the lab (the jobs API names only the step, the
-check-run has no output, and the log needs admin access), so
-no further cause was guessed. Safe status until a Windows run
-passes: the fix is implemented but not proven to pass on
-Windows.
+Round 84 (2026-11-27) read the first Windows run after the
+round-83 fix — run 45881977604, head `d2d1991`,
+2026-11-26T19:13:08Z: conclusion `success`, job `test`
+success, every step success including `Run npm test` (~39 s).
+This is the first green Windows run in the project's history.
+The ten run-54 fixes are confirmed on a real Windows runner,
+and the `tests/windows-platform.test.js` win32-only tests
+(skipped on POSIX) are verified by this run itself. The safe
+status from rounds 81–83 — "the fix is implemented but not
+proven to pass on Windows" — is retired for these fixes.
 
 ## Known limitations (honest)
 
