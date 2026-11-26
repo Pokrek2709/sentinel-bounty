@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { promisify } = require('node:util');
-const { generateReport, validateFinding, severityForScore } = require('../src/report/generator');
+const { generateReport, validateFinding, severityForScore, countBySeverity, executiveSummary } = require('../src/report/generator');
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve(__dirname, '..', 'bin', 'sentinel.js');
@@ -44,6 +44,19 @@ test('generateReport is deterministic: same input, byte-identical output', () =>
   const firstJson = generateReport(findingsArray(), { ...options, format: 'json' });
   const secondJson = generateReport(findingsArray(), { ...options, format: 'json' });
   assert.equal(firstJson, secondJson);
+});
+
+test('executiveSummary and countBySeverity are exported and match the JSON report (round 72)', () => {
+  // Export contract: the helpers other report commands reuse must
+  // stay exported, and the JSON report's own summary/counts must be
+  // exactly what the helpers return for the same set — the same
+  // equality the empty filter report now relies on.
+  const options = { programName: 'Lab Program', generatedAt: '2026-11-26T02:00:00.000Z', format: 'json' };
+  const parsed = JSON.parse(generateReport(findingsArray(), options));
+  assert.equal(typeof executiveSummary, 'function');
+  assert.equal(typeof countBySeverity, 'function');
+  assert.deepEqual(parsed.findings_summary, countBySeverity(findingsArray()));
+  assert.equal(parsed.executive_summary, executiveSummary(countBySeverity(findingsArray()), 'Lab Program'));
 });
 
 test('generateReport with no explicit generated_at never invents a wall-clock time', () => {

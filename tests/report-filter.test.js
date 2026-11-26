@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { promisify } = require('node:util');
-const { generateReport } = require('../src/report/generator');
+const { generateReport, countBySeverity, executiveSummary } = require('../src/report/generator');
 const { filterReport } = require('../src/report/filter');
 const { validateReport, deriveExpectedReportId } = require('../src/report/validate');
 const { makeTempDir } = require('./helpers/temp-dir');
@@ -202,6 +202,54 @@ test('empty result is a valid empty report, not an error', () => {
   assert.equal(validation.status, 'VALID');
   assert.equal(validation.report_id_matches, true);
   assert.deepEqual(validation.counts, { findings: 0, valid: 0, false_positive: 0, needs_evidence: 0, errors: 0 });
+});
+
+test('empty report output is byte-identical to the pinned golden (round 72: refactor guard)', () => {
+  const source = generatedReport(FIVE);
+  const result = filterReport(source, { severity: 'critical', verdict: 'needs_evidence' });
+  // Golden pinned 2026-11-26 (round 72) BEFORE the renderEmptyReport
+  // refactor: the empty report must not change by one byte when its
+  // summary/counts stop being hand-written and start calling the
+  // generator's own helpers. If this test fails after the refactor,
+  // the refactor changed output — revert, do not update the golden.
+  const GOLDEN = `{
+  "report_id": "RPT-11ba7f2d7f84",
+  "target_id": "TGT-LAB-001",
+  "program_name": "Lab Program",
+  "generated_at": "2026-11-26T02:00:00.000Z",
+  "executive_summary": "Program Lab Program: 0 validated finding(s) — 0 critical, 0 high, 0 medium, 0 low, 0 informational. Highest severity: informational. All findings in this report were validated against the finding schema before rendering.",
+  "findings_summary": {
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "informational": 0,
+    "total": 0
+  },
+  "findings": [],
+  "session_id": "SES-REPORT-001",
+  "filter": {
+    "from_report_id": "RPT-3aeafa977190",
+    "severity": "critical",
+    "verdict": "needs_evidence"
+  }
+}
+`;
+  assert.equal(result.report, GOLDEN);
+});
+
+test('empty report summary and counts come from the generator helpers, not a copy (round 72)', () => {
+  const source = generatedReport(FIVE);
+  const parsed = JSON.parse(filterReport(source, { severity: 'critical', verdict: 'needs_evidence' }).report);
+  // Anti-divergence: the empty report's summary/counts must equal
+  // the generator's own helpers for the empty set. A future wording
+  // change in executiveSummary propagates here automatically, so
+  // this test still passes — unlike the verbatim pin in the
+  // 'empty result' test, which would (correctly) fail and force a
+  // deliberate golden update instead.
+  const zeroCounts = countBySeverity([]);
+  assert.equal(parsed.executive_summary, executiveSummary(zeroCounts, PROGRAM));
+  assert.deepEqual(parsed.findings_summary, zeroCounts);
 });
 
 test('filtered output passes report validate cleanly with report_id_matches true', () => {

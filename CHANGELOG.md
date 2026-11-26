@@ -7,6 +7,27 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Shared report-summary helpers exported (round 72, 2026-11-26)
+
+- Pure refactor, no new command and no output change:
+  `executiveSummary` is now exported from
+  `src/report/generator.js` (alongside the already-exported
+  `countBySeverity`), and the empty report built by
+  `sentinel report filter` calls the helpers instead of
+  hand-replicating the summary wording and the zero-counts
+  object (round 71 F5). A byte-identical golden pins the
+  empty report's bytes, and an anti-divergence test asserts
+  the empty report's summary/counts equal
+  `executiveSummary(countBySeverity([]), programName)` /
+  `countBySeverity([])`, so a future generator wording change
+  propagates automatically. Audit of the other report
+  commands: JSONL and summary already reuse the exported
+  helpers; `deriveExpectedReportId` is deliberately left an
+  independent re-implementation (validate must check the
+  generator, not call it); the `pickGeneratedAt` triple in
+  filter/split/merge is found and deferred to a future round
+  (the three copies differ in semantics and error codes).
+
 ### Report filter command (round 71, 2026-11-26)
 
 - `sentinel report filter <report.json> [--severity

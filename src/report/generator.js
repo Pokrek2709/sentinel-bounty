@@ -1149,4 +1149,4 @@ function generateReport(findings, options = {}) {
   return renderMarkdown({ programName, generatedAt, counts, groups, targetGroups, multiTarget, targetIds });
 }
 
-module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, escapeCsvField, CSV_COLUMNS, SEVERITY_ORDER };
+module.exports = { generateReport, validateFinding, severityForScore, countBySeverity, executiveSummary, groupFindingsByAsset, groupFindingsByTarget, escapeHtml, escapeCsvField, CSV_COLUMNS, SEVERITY_ORDER };

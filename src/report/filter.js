@@ -56,8 +56,9 @@
 // empty report is built here following renderJson's shape
 // (report_id from the generator's own derivation for the empty
 // set, target_id from the source, program_name, generated_at,
-// executive_summary in the generator's own wording for zero
-// counts, zero findings_summary, findings: []), and it passes
+// executive_summary and findings_summary from the generator's own
+// helpers (executiveSummary over countBySeverity([]), round 72),
+// findings: []), and it passes
 // `report validate` with report_id_matches: true. A report with
 // no usable generated_at fails with REPORT_FILTER_NO_GENERATED_AT
 // (the input's generated_at, else the newest finding created_at
@@ -79,7 +80,7 @@
 // Node stdlib only. No network requests, no scanners, no live data.
 'use strict';
 
-const { generateReport, SEVERITY_ORDER } = require('./generator');
+const { generateReport, SEVERITY_ORDER, countBySeverity, executiveSummary } = require('./generator');
 const { validateReportShape } = require('./report-diff');
 const { validateOneFinding, deriveExpectedReportId, FINDING_STATUSES } = require('./validate');
 const { programOf } = require('./merge');
@@ -136,21 +137,27 @@ function emptyTarget(report, findings) {
 // shape (src/report/generator.js): generateReport refuses an empty
 // finding set for JSON, so the empty case cannot go through it.
 // The report_id is the generator's own derivation for the empty
-// set (deriveExpectedReportId replicates deriveReportId exactly),
-// the executive summary is the generator's own wording for zero
-// counts (executiveSummary with every count 0), and the
-// findings_summary is the zero-counts object countBySeverity
-// returns for an empty set.
+// set (deriveExpectedReportId replicates deriveReportId exactly —
+// deliberately independent, so validate can check the generator;
+// see docs/report-helpers-export-v1.md), and the executive
+// summary and findings_summary come from the generator's own
+// helpers (executiveSummary over countBySeverity([]), round 72).
 function renderEmptyReport(report, programName, generatedAt, filterBlock) {
   const target = emptyTarget(report, report.findings);
+  // Round 72: the summary and counts come from the generator's own
+  // helpers — they used to be hand-written copies here, so a
+  // generator wording change would have silently diverged (round
+  // 71 F5). executiveSummary over countBySeverity([]) IS the
+  // zero-count summary by construction; the golden test pins the
+  // bytes and the anti-divergence test pins the call.
+  const zeroCounts = countBySeverity([]);
   const filtered = {
     report_id: deriveExpectedReportId(programName, []),
     target_id: target.target_id,
     program_name: programName,
     generated_at: generatedAt,
-    executive_summary: `Program ${programName}: 0 validated finding(s) — 0 critical, 0 high, 0 medium, 0 low, 0 informational. `
-      + 'Highest severity: informational. All findings in this report were validated against the finding schema before rendering.',
-    findings_summary: { critical: 0, high: 0, medium: 0, low: 0, informational: 0, total: 0 },
+    executive_summary: executiveSummary(zeroCounts, programName),
+    findings_summary: zeroCounts,
     findings: [],
   };
   if (target.target_ids) {
