@@ -1,13 +1,13 @@
 # Per-class evidence checklists v1
 
 `src/analysis/validator.js` resolves a finding's `vulnerability_type`
-to one of twelve classes in `knowledge/evidence-checklists.json` and
+to one of fifteen classes in `knowledge/evidence-checklists.json` and
 enforces that class's required evidence items. The generic checklist
 is the round-31/32 fallback: it is what every finding gets when its
 type matches no class. All verification is local, over fixtures only;
 no model call, no network, no live target.
 
-## The twelve classes
+## The fifteen classes
 
 | class id | label | extra required item(s) beyond the generic three | why |
 | --- | --- | --- | --- |
@@ -23,12 +23,16 @@ no model call, no network, no live target.
 | `insecure deserialization` | Insecure Deserialization | `evidence_notes` | The crafted serialized payload and the observed object-state change, recorded in evidence notes — the schema has no dedicated payload/state field. |
 | `path traversal` | Path Traversal | `request_log`, `response_log` | The traversal payload and the file content returned. |
 | `business logic flaw` | Business Logic Flaw | `evidence_notes` | The legitimate-vs-abused flow comparison, recorded in evidence notes — no single request or response proves a logic flaw. |
+| `clickjacking` | Clickjacking (UI Redressing) | `response_log` | The framing response: the page must be shown rendered inside a foreign frame with no X-Frame-Options or CSP frame-ancestors. |
+| `open redirect` | Open Redirect | `request_log`, `response_log` | The redirect parameter and the Location header returned. |
+| `json web token weakness` | JSON Web Token (JWT) Weakness | `evidence_notes` | The forged or unsigned token and the response accepting it, recorded in evidence notes — the schema has no dedicated token field. |
 
-Round 57 added the last four rows (XXE, insecure deserialization,
-path traversal, business logic flaw). The matching, verdict, and
-loading rules below are unchanged; the new classes follow the round-40
-pattern exactly (required items + recommended items + `match`
-aliases + a `why`).
+Round 57 added the four rows before the last three (XXE, insecure
+deserialization, path traversal, business logic flaw); round 65
+added the last three rows (clickjacking, open redirect, JWT
+weakness). The matching, verdict, and loading rules below are
+unchanged; the new classes follow the round-40 pattern exactly
+(required items + recommended items + `match` aliases + a `why`).
 
 Every class also requires the generic three: `proof_of_concept`,
 `evidence`, `steps_to_reproduce`. Recommended items (checked and
@@ -45,11 +49,23 @@ contains, one of the class's `match` strings. The first class whose
 match strings hit wins; the file order is the precedence order. So
 `Stored Cross-Site Scripting`, `Reflected XSS`, and `xss` all resolve
 to the XSS class; `idor` resolves to broken access control;
-`Open Redirect` and `Missing Authentication` match no class and get
-the generic checklist. A missing or non-string type also gets the
-generic checklist — a finding with no class is never silently
-accepted; the required-field rule still flags a missing
-`vulnerability_type` as `needs_evidence`.
+`Missing Authentication` matches no class and gets the generic
+checklist. (Open Redirect was an unmatched example until round 65
+made it a class; the round-31 `potential-full` fixture is an open
+redirect finding and now resolves to that class.)
+
+Precedence is why the new classes cannot steal matches: they are
+appended at the end of the file, so every earlier class wins a tie.
+`auth bypass via JWT` stays authentication bypass (not JWT),
+`Open Redirect via XSS` stays XSS, `Clickjacking via CSRF` stays
+CSRF, and `JWT in SQL Injection` stays SQL injection — the new
+classes win only when no earlier alias is present
+(`Clickjacking in lab portal`, `Unvalidated redirect in logout`,
+`JWT none algorithm accepted`). The rule and all four boundary
+cases are tested in `tests/evidence-checklists.test.js`. A missing
+or non-string type also gets the generic checklist — a finding with
+no class is never silently accepted; the required-field rule still
+flags a missing `vulnerability_type` as `needs_evidence`.
 
 ## Item predicates
 
@@ -127,7 +143,7 @@ by making the ratings lazy (see the capability report).
   a 404 still counts as present. Judging whether evidence actually
   proves the finding is an AI-model verdict (Phase 6, needs a
   decision), not a checklist.
-- Twelve classes only. Web/API classes dominate the list; smart
+- Fifteen classes only. Web/API classes dominate the list; smart
   contracts get one class (`reentrancy`). Adding a class is a
   knowledge-file edit plus one full + one missing-item fixture — no
   code change, unless the class needs a new item predicate.

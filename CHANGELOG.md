@@ -7,6 +7,31 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Three more evidence checklists (round 65, 2026-11-26)
+
+- Per-class evidence checklists grow from twelve classes to fifteen
+  (`knowledge/evidence-checklists.json`, no code change):
+  clickjacking (`response_log` — the framing response showing the
+  page rendered inside a foreign frame with no X-Frame-Options or
+  CSP frame-ancestors), open redirect (`request_log` +
+  `response_log` — the redirect parameter and the Location header
+  returned), and JSON Web Token weakness (`evidence_notes` — the
+  forged or unsigned token and the response accepting it; the
+  finding schema has no dedicated token field, the same limitation
+  as reentrancy's trace). CVSS scores for the three new full
+  fixtures are hand-computed from the FIRST 3.1 formula and
+  cross-checked against the repo scorer (clickjacking 5.4 medium,
+  open redirect 6.1 medium, JWT 9.8 critical). Matching is
+  unchanged (first match in file order wins); the three new
+  classes sit last, so every earlier class wins a tie — `auth
+  bypass via JWT` stays authentication bypass, `Open Redirect via
+  XSS` stays XSS, `Clickjacking via CSRF` stays CSRF, `JWT in SQL
+  Injection` stays SQL injection. The round-31 `potential-full`
+  fixture is an open redirect finding and now resolves to that
+  class; the generic-fallback tests retarget a clone at `Missing
+  Authentication` instead. Docs, SKILL.md (both copies, `cmp`
+  verified), and README updated.
+
 ### Report diff between two runs (round 64, 2026-11-26)
 
 - `sentinel report-diff <old-report.json> <new-report.json>

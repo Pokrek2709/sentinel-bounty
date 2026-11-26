@@ -1,8 +1,8 @@
-// Per-class evidence checklists (round 40, extended in round 57): the
-// validator resolves a finding's vulnerability_type to one of twelve
-// classes in knowledge/evidence-checklists.json and enforces that
-// class's required evidence items; unknown types fall back to the
-// generic checklist.
+// Per-class evidence checklists (round 40, extended in rounds 57
+// and 65): the validator resolves a finding's vulnerability_type to
+// one of fifteen classes in knowledge/evidence-checklists.json and
+// enforces that class's required evidence items; unknown types fall
+// back to the generic checklist.
 //
 // Fixtures only; no scanner, no network, no live target.
 'use strict';
@@ -29,7 +29,7 @@ function clone(finding) {
   return JSON.parse(JSON.stringify(finding));
 }
 
-// The twelve classes, each with its fully-evidenced fixture. XSS reuses
+// The fifteen classes, each with its fully-evidenced fixture. XSS reuses
 // the round-31 confirmed-full fixture (Stored Cross-Site Scripting).
 const CLASS_FIXTURES = [
   ['cross-site scripting', 'confirmed-full'],
@@ -44,6 +44,9 @@ const CLASS_FIXTURES = [
   ['insecure deserialization', 'class-deserialization-full'],
   ['path traversal', 'class-pathtraversal-full'],
   ['business logic flaw', 'class-businesslogic-full'],
+  ['clickjacking', 'class-clickjacking-full'],
+  ['open redirect', 'class-openredirect-full'],
+  ['json web token weakness', 'class-jwt-full'],
 ];
 
 // The class-specific required item each class adds beyond the generic
@@ -62,12 +65,15 @@ const CLASS_EXTRA = {
   'insecure deserialization': ['evidence_notes', 'notes'],
   'path traversal': ['response_log', 'response'],
   'business logic flaw': ['evidence_notes', 'notes'],
+  clickjacking: ['response_log', 'response'],
+  'open redirect': ['response_log', 'response'],
+  'json web token weakness': ['evidence_notes', 'notes'],
 };
 
-test('spec loads with twelve classes and the generic fallback', () => {
+test('spec loads with fifteen classes and the generic fallback', () => {
   const spec = loadEvidenceChecklists();
   assert.equal(spec.version, 1);
-  assert.equal(spec.classes.length, 12);
+  assert.equal(spec.classes.length, 15);
   assert.deepEqual(spec.generic.required, ['proof_of_concept', 'evidence', 'steps_to_reproduce']);
   assert.deepEqual(spec.generic.recommended, ['impact', 'remediation', 'cwe_id', 'cvss_vector']);
   assert.deepEqual(
@@ -85,6 +91,9 @@ test('spec loads with twelve classes and the generic fallback', () => {
       'insecure deserialization',
       'path traversal',
       'business logic flaw',
+      'clickjacking',
+      'open redirect',
+      'json web token weakness',
     ],
   );
   for (const entry of spec.classes) {
@@ -116,7 +125,14 @@ test('class resolution normalizes case, spacing, and substrings', () => {
   assert.equal(resolveEvidenceClass('Business Logic Flaw').id, 'business logic flaw');
   assert.equal(resolveEvidenceClass('Business-Logic Bypass').id, 'business logic flaw');
   assert.equal(resolveEvidenceClass('logic flaw').id, 'business logic flaw');
-  assert.equal(resolveEvidenceClass('Open Redirect'), null);
+  assert.equal(resolveEvidenceClass('Clickjacking').id, 'clickjacking');
+  assert.equal(resolveEvidenceClass('UI Redressing').id, 'clickjacking');
+  assert.equal(resolveEvidenceClass('UI-Redressing attack').id, 'clickjacking');
+  assert.equal(resolveEvidenceClass('Open Redirect').id, 'open redirect');
+  assert.equal(resolveEvidenceClass('Unvalidated Redirect').id, 'open redirect');
+  assert.equal(resolveEvidenceClass('JWT').id, 'json web token weakness');
+  assert.equal(resolveEvidenceClass('JSON Web Token').id, 'json web token weakness');
+  assert.equal(resolveEvidenceClass('Auth Token Weakness').id, 'json web token weakness');
   assert.equal(resolveEvidenceClass('Missing Authentication'), null);
   assert.equal(resolveEvidenceClass(''), null);
   assert.equal(resolveEvidenceClass(null), null);
@@ -150,18 +166,27 @@ test('every class fixture fails when its class-specific item is stripped', () =>
   }
 });
 
-test('new classes do not steal matches from the existing eight', () => {
+test('new classes do not steal matches from the existing twelve', () => {
   // File order is precedence: a type containing both an old alias and a
-  // new alias still resolves to the old class.
+  // new alias still resolves to the old class. The three round-65
+  // classes sit last in the file, so every one of the twelve wins a
+  // tie against them.
   assert.equal(resolveEvidenceClass('SQL Injection').id, 'sql injection');
   assert.equal(resolveEvidenceClass('Stored Cross-Site Scripting').id, 'cross-site scripting');
   assert.equal(resolveEvidenceClass('SSRF via XML').id, 'server-side request forgery');
   assert.equal(resolveEvidenceClass('SQL Injection via path traversal').id, 'sql injection');
+  assert.equal(resolveEvidenceClass('auth bypass via JWT').id, 'authentication bypass');
+  assert.equal(resolveEvidenceClass('Open Redirect via XSS').id, 'cross-site scripting');
+  assert.equal(resolveEvidenceClass('Clickjacking via CSRF').id, 'cross-site request forgery');
+  assert.equal(resolveEvidenceClass('JWT in SQL Injection').id, 'sql injection');
   // And the new classes win only when no old alias is present.
   assert.equal(resolveEvidenceClass('Traversal in File Download').id, 'path traversal');
   assert.equal(resolveEvidenceClass('XXE in upload').id, 'xml external entity');
   assert.equal(resolveEvidenceClass('Deserialization gadget chain').id, 'insecure deserialization');
   assert.equal(resolveEvidenceClass('Coupon stacking logic flaw').id, 'business logic flaw');
+  assert.equal(resolveEvidenceClass('Clickjacking in lab portal').id, 'clickjacking');
+  assert.equal(resolveEvidenceClass('Unvalidated redirect in logout').id, 'open redirect');
+  assert.equal(resolveEvidenceClass('JWT none algorithm accepted').id, 'json web token weakness');
 });
 
 test('SSRF requires both the request and the response', () => {
@@ -191,6 +216,33 @@ test('path traversal requires both the request and the response', () => {
   assert.ok(!result.reasons.includes('missing response_log (required for path traversal)'));
 });
 
+test('open redirect requires both the request and the response', () => {
+  const finding = clone(loadFixture('class-openredirect-full'));
+  for (const entry of finding.evidence) delete entry.response;
+  const result = validateFinding(finding);
+  assert.equal(result.verdict, 'needs_evidence');
+  assert.ok(result.reasons.includes('missing response_log (required for open redirect)'));
+  assert.ok(!result.reasons.includes('missing request_log (required for open redirect)'));
+});
+
+test('clickjacking requires the framing response', () => {
+  const finding = clone(loadFixture('class-clickjacking-full'));
+  for (const entry of finding.evidence) delete entry.response;
+  const result = validateFinding(finding);
+  assert.equal(result.verdict, 'needs_evidence');
+  assert.ok(result.reasons.includes('missing response_log (required for clickjacking)'));
+  assert.ok(!result.reasons.includes('missing request_log (required for clickjacking)'));
+});
+
+test('JWT weakness requires the token evidence notes', () => {
+  const finding = clone(loadFixture('class-jwt-full'));
+  for (const entry of finding.evidence) delete entry.notes;
+  const result = validateFinding(finding);
+  assert.equal(result.verdict, 'needs_evidence');
+  assert.ok(result.reasons.includes('missing evidence_notes (required for json web token weakness)'));
+  assert.ok(!result.reasons.includes('missing evidence'));
+});
+
 test('a missing evidence array reports only missing evidence, not its derived items', () => {
   const finding = clone(loadFixture('class-sqli-full'));
   delete finding.evidence;
@@ -200,7 +252,11 @@ test('a missing evidence array reports only missing evidence, not its derived it
 });
 
 test('unknown class falls back to the generic seven-item checklist', () => {
-  const finding = loadFixture('potential-full'); // Open Redirect: no class.
+  // potential-full is an Open Redirect finding, which is a class since
+  // round 65 — so the generic case now uses a clone retargeted at a
+  // type that still matches nothing.
+  const finding = clone(loadFixture('potential-full'));
+  finding.vulnerability_type = 'Missing Authentication';
   const resolved = evidenceChecklistForClass(finding);
   assert.equal(resolved.classId, 'generic');
   assert.deepEqual(
@@ -302,17 +358,24 @@ test('generator attaches the checklist to each finding in JSON', () => {
 });
 
 test('generator names the generic fallback in Markdown for an unmatched class', () => {
-  const report = generateReport([loadFixture('potential-full')], { programName: 'Lab Program', generatedAt: '2026-11-26T02:00:00.000Z' });
+  // potential-full is an Open Redirect finding, a class since round 65,
+  // so the generic case uses a clone retargeted at a still-unmatched type.
+  const finding = clone(loadFixture('potential-full'));
+  finding.vulnerability_type = 'Missing Authentication';
+  const report = generateReport([finding], { programName: 'Lab Program', generatedAt: '2026-11-26T02:00:00.000Z' });
   assert.match(report, /Class: Generic \(no class match\) — the vulnerability type matched no class, so the generic checklist applies/);
   assert.match(report, /- \[x\] proof_of_concept \(required\)/);
 });
 
-test('generator renders the four new classes in Markdown and JSON', () => {
+test('generator renders the round-57 and round-65 classes in Markdown and JSON', () => {
   const NEW_CLASSES = [
     ['class-xxe-full', 'XML External Entity (XXE)', ['request_log', 'response_log']],
     ['class-deserialization-full', 'Insecure Deserialization', ['evidence_notes']],
     ['class-pathtraversal-full', 'Path Traversal', ['request_log', 'response_log']],
     ['class-businesslogic-full', 'Business Logic Flaw', ['evidence_notes']],
+    ['class-clickjacking-full', 'Clickjacking (UI Redressing)', ['response_log']],
+    ['class-openredirect-full', 'Open Redirect', ['request_log', 'response_log']],
+    ['class-jwt-full', 'JSON Web Token (JWT) Weakness', ['evidence_notes']],
   ];
   for (const [fixtureName, label, extraRequired] of NEW_CLASSES) {
     const finding = loadFixture(fixtureName);
