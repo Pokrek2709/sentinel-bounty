@@ -17,6 +17,7 @@ const { repairStatePermissions } = require('../src/policy/state-permissions');
 const { writeFileRefusingSymlink } = require('../src/policy/safe-write');
 const { backupState, restoreState, INTEGRITY_REASONS } = require('../src/policy/state-backup');
 const { collectStateExport, renderStateExport } = require('../src/policy/state-export');
+const { collectOperatorStatus, renderOperatorStatusText, OperatorStatusError } = require('../src/policy/operator-status');
 const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limits');
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
@@ -59,6 +60,7 @@ function usage() {
     '  sentinel audit verify [--state-dir <path>]',
     '  sentinel audit export [--state-dir <path>] [--out <file>] [--format json|jsonl]',
     '  sentinel audit retention [--state-dir <path>] [--max-archives <n>] [--max-records <n>] [--show]',
+    '  sentinel status [--state-dir <path>] [--skill-dir <path>] [--json]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel state export [--state-dir <path>] [--out <file>]',
@@ -844,6 +846,31 @@ async function runStateCommand(args) {
   }
 }
 
+async function runStatusCommand(args) {
+  // `sentinel status` (round 63): one strictly read-only overview of
+  // the whole operator state. Fail-closed component failures
+  // (kill-switch state, audit-log storage, scope-store shape) are
+  // reported as JSON with the component named and exit 1; audit
+  // content breaks and a damaged retention policy are reported
+  // inside their sections and the command still exits 0 (see
+  // src/policy/operator-status.js for the full semantics).
+  const json = args.includes('--json');
+  const options = parseOptions(args.filter((argument) => argument !== '--json'), ['--state-dir', '--skill-dir']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const skillDirectory = path.resolve(options.skillDir || path.resolve(__dirname, '..'));
+  try {
+    const status = await collectOperatorStatus({ stateDir: stateDirectory, skillDirectory });
+    process.stdout.write(json ? `${JSON.stringify(status, null, 2)}\n` : `${renderOperatorStatusText(status)}\n`);
+  } catch (error) {
+    if (error instanceof OperatorStatusError) {
+      process.stdout.write(`${JSON.stringify({ status: false, component: error.component, reason: error.reason }, null, 2)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
+}
+
 async function runDrillCommand(args) {
   // --recover is a boolean flag, not a valued option: strip it before
   // parseOptions (which requires a value for every permitted option).
@@ -916,6 +943,10 @@ async function main(argv) {
   }
   if (command === 'state') {
     await runStateCommand(args);
+    return;
+  }
+  if (command === 'status') {
+    await runStatusCommand(args);
     return;
   }
   if (command === 'drill') {

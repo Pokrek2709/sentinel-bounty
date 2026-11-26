@@ -7,6 +7,44 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Operator status overview (round 63, 2026-11-26)
+
+- `sentinel status [--state-dir <path>] [--skill-dir <path>]
+  [--json]` gives one strictly read-only overview of the whole
+  operator state: kill-switch state (active/inactive, live-worker
+  count, trigger when active, reset-token file presence — never
+  the value), audit chain counts (total/verified/legacy/broken,
+  anchor hash, first/last timestamps, prune-anchor count, first
+  break reason), scope target counts, retention policy,
+  verify-install pass/fail counts, and tool availability counts.
+  Every read is lockless and creates nothing: the kill-switch is
+  read with `snapshotLockless()` (no lock file, no mkdir, no lease
+  pruning — stricter than `kill-switch status`, which takes the
+  lock), the audit log is read with plain `readFile` and its chain
+  replayed with the round-43/56 rules, and the scope store,
+  retention policy, verify-install, and tool probes are all reads
+  or local version-command spawns. A test proves it: state file
+  contents AND mtimes, and the state directory's own mtime, are
+  identical before and after a status run (module level and via
+  the real CLI). Failure semantics: a corrupt/unreadable
+  kill-switch state, audit-log storage failure, or damaged scope
+  store fails the whole command (exit 1, JSON with the component
+  named); audit content breaks and a damaged retention policy are
+  reported inside their sections and the command still exits 0; a
+  missing state directory is the empty view, not an error. The
+  status object carries no wall-clock timestamp, so the same state
+  renders byte-identically. New module
+  `src/policy/operator-status.js` (15 tests: golden text + JSON,
+  lockless-vs-locked chain cross-check, read-only proof, armed,
+  empty, corrupt kill-switch/scope, corrupt audit content,
+  damaged retention, token presence, direct-command count match,
+  CLI text/JSON/unknown-option, CLI read-only proof) plus a guard
+  test: the installed-copy root `SKILL.md` must be byte-identical
+  to the canonical copy when present (skipped in a fresh clone,
+  which has no root copy). That guard caught a real drift: the
+  root copy had missed the round-62 retention command line and
+  paragraph — re-copied in this round.
+
 ### Audit-log retention policy (round 62, 2026-11-26)
 
 - `sentinel audit retention [--max-archives <n>] [--max-records
