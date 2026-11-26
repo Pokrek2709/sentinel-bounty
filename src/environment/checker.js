@@ -132,7 +132,14 @@ async function loadToolNames(configPath = DEFAULT_CONFIG_PATH) {
   return { names: [...new Set(parsed.tools)], source: 'config' };
 }
 
-async function checkTool(name, commandRunner) {
+// The runner defaults to the real one: operator-status's probeTools
+// called checkTool(name) with no runner, so every tool silently
+// reported not_verified ("commandRunner is not a function") and
+// `sentinel status` always showed 0 tools available. That stayed
+// invisible on Linux (no documented tools installed: 0 verified either
+// way) and surfaced on Windows run 54, where docker IS installed
+// (direct check-env found 1 verified, status found 0).
+async function checkTool(name, commandRunner = defaultCommandRunner) {
   const definition = TOOL_DEFINITIONS[name];
   if (!definition) {
     return status('not_verified', `${name} could not be verified safely.`, {

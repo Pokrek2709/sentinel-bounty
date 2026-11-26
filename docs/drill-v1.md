@@ -9,12 +9,25 @@ sentinel drill [--state-dir <path>] [--recover]
 `sentinel drill` exercises the kill-switch end-to-end in the lab
 against a fake worker — a local child process that only sleeps, never
 a real target and never a network call. One drill run covers two
-phases: a cooperative worker (exits on SIGTERM) and a stubborn worker
-(ignores SIGTERM, so the drill must escalate to SIGKILL and report
-it honestly). Each phase arms the kill-switch, cancels the worker,
-verifies the audit record, and resets to clean. The drill prints a
-PASS/FAIL line per step plus an overall verdict, and exits non-zero
-if any step fails.
+phases: a cooperative worker (exits on the polite cancel) and a
+stubborn worker (ignores the polite cancel, so the drill must
+escalate to SIGKILL and report it honestly). Each phase arms the
+kill-switch, cancels the worker, verifies the audit record, and
+resets to clean. The drill prints a PASS/FAIL line per step plus an
+overall verdict, and exits non-zero if any step fails.
+
+Polite cancel is platform-aware (round 83): on POSIX it is SIGTERM,
+which a handler can swallow. On Windows there is no SIGTERM delivery
+to a handler — the OS terminates the process outright
+(TerminateProcess) — so a "stubborn" worker cannot be stubborn
+against SIGTERM at all: it would die on the polite step and the
+escalation check would fail (Windows run 54 failed all four drill
+tests this way). On win32 the polite step is therefore an IPC
+`cancel` message over the child's IPC channel, which the stubborn
+worker ignores like it ignores SIGTERM on POSIX. The forceful step
+is SIGKILL on both platforms (TerminateProcess on Windows), and the
+`escalated` verdict keeps the same meaning: the worker only died on
+the forceful step.
 
 ## Steps (11 per run)
 
@@ -26,15 +39,15 @@ if any step fails.
 | 4 | `trigger-cooperative` | Trigger cancels the worker within the bound, without escalation. |
 | 5 | `verify-audit-cooperative` | Audit log records the trigger and the cancellation. |
 | 6 | `reset-after-cooperative` | Kill-switch resets; state is clean. |
-| 7 | `start-stubborn-worker` | SIGTERM-ignoring fake worker spawned and registered. |
+| 7 | `start-stubborn-worker` | Polite-cancel-ignoring fake worker spawned and registered. |
 | 8 | `trigger-stubborn` | Trigger cancels the worker, escalating to SIGKILL. |
 | 9 | `verify-audit-stubborn` | Audit log records the trigger and the escalation. |
 | 10 | `reset-after-stubborn` | Kill-switch resets; state is clean. |
 | 11 | `complete` | `DRILL_COMPLETE` written; overall verdict PASS. |
 
-Defaults: SIGTERM grace 1,000 ms, cancel bound 5,000 ms, worker
-lease 30,000 ms (longer than the default 5,000 ms so a slow machine
-cannot expire a drill lease mid-run).
+Defaults: polite-cancel grace 1,000 ms, cancel bound 5,000 ms,
+worker lease 30,000 ms (longer than the default 5,000 ms so a slow
+machine cannot expire a drill lease mid-run).
 
 ## Safety rules
 
@@ -56,7 +69,7 @@ cannot expire a drill lease mid-run).
    token behind.
 4. **Readiness before arming.** The fake worker prints `ready` once
    it is running; the drill waits for that line (5 s timeout) before
-   arming. Without this, a SIGTERM landing before the child has
+   arming. Without this, a polite cancel landing before the child has
    executed its script would kill it with the default disposition
    and fake the stubborn-worker's result. (Found the hard way: the
    first implementation failed the stubborn phase exactly like this.)
@@ -69,12 +82,13 @@ cannot expire a drill lease mid-run).
 
 ## Failure behaviors
 
-- **Worker ignores SIGTERM:** the cancel path waits the grace
-  period, then escalates to SIGKILL and reports `escalated: true`
-  with the elapsed milliseconds. Escalation is a recorded outcome,
-  not a failure — the step fails only if the worker is still alive
-  after SIGKILL (`DRILL_WORKER_CANCEL_FAILED`) or if the escalation
-  flag does not match the phase (`DRILL_ESCALATION_MISMATCH`).
+- **Worker ignores the polite cancel:** the cancel path waits the
+  grace period, then escalates to SIGKILL and reports `escalated:
+  true` with the elapsed milliseconds. Escalation is a recorded
+  outcome, not a failure — the step fails only if the worker is
+  still alive after SIGKILL (`DRILL_WORKER_CANCEL_FAILED`) or if
+  the escalation flag does not match the phase
+  (`DRILL_ESCALATION_MISMATCH`).
 - **Already armed drill state:** the drill refuses cleanly with
   `DRILL_ALREADY_ARMED` and exits 1. It never double-arms. The
   refusal is recorded as `DRILL_REFUSED` in the drill audit log.

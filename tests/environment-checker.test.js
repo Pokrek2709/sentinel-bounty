@@ -68,6 +68,18 @@ test('unavailable tools carry a purpose and an install hint', async () => {
   assert.equal(result.detail.caveat, TOOL_DEFINITIONS.docker.caveat);
 });
 
+test('checkTool without a runner still probes the real command (default runner)', async () => {
+  // Round 83, Windows run 54: operator-status's probeTools called
+  // checkTool(name) with no runner, so every tool silently reported
+  // not_verified ("commandRunner is not a function") and `sentinel
+  // status` always showed 0 tools available. A real probe either
+  // verifies the tool or fails with ENOENT (unavailable) — it never
+  // fails for a missing runner.
+  const result = await checkTool('docker');
+  assert.notEqual(result.detail?.reason, 'commandRunner is not a function');
+  assert.ok(['verified', 'unavailable'].includes(result.status), `unexpected status ${result.status}: ${JSON.stringify(result.detail)}`);
+});
+
 test('a tool listed in the config without a checker definition is not_verified, never skipped', async () => {
   const result = await checkTool('definitely-not-a-tool', async () => 'x');
   assert.equal(result.status, 'not_verified');

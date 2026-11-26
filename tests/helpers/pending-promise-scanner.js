@@ -113,12 +113,24 @@ function scanText(relativeFile, source) {
   return occurrences;
 }
 
+// The allowlist is written with forward slashes (the repo's canonical
+// spelling), but path.relative yields backslashes on Windows, so an
+// allowlist entry never matched its occurrence there (Windows run 54:
+// all seven allowlisted sites reported as violations). Normalize to
+// forward slashes at the single place paths enter the comparison; on
+// POSIX the separator is already `/`, so the default call is a no-op.
+// The separator is a parameter so tests can pin the folding behavior
+// on any platform.
+function normalizeRelativePath(relativeFile, separator = path.sep) {
+  return relativeFile.split(separator).join('/');
+}
+
 async function scanPendingPromises(root, allowlist) {
   const files = await listJsFiles(root);
   const occurrences = [];
   for (const file of files) {
     const source = await fs.readFile(file, 'utf8');
-    occurrences.push(...scanText(path.relative(root, file), source));
+    occurrences.push(...scanText(normalizeRelativePath(path.relative(root, file)), source));
   }
   const matched = new Set();
   const violations = occurrences.filter((occurrence) => {
@@ -130,4 +142,4 @@ async function scanPendingPromises(root, allowlist) {
   return { violations, stale };
 }
 
-module.exports = { scanPendingPromises, scanText, stripComments };
+module.exports = { scanPendingPromises, scanText, stripComments, normalizeRelativePath };

@@ -5,7 +5,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const test = require('node:test');
 const { makeTempDir } = require('./helpers/temp-dir');
-const { AuditLog } = require('../src/audit/audit-log');
+const { AuditLog, redact } = require('../src/audit/audit-log');
 
 const execFileAsync = promisify(execFile);
 
@@ -13,6 +13,18 @@ const execFileAsync = promisify(execFile);
 // permission bits. The nobody probe below is skipped anywhere that cannot
 // run as an unprivileged user (non-root, Windows).
 const canRunAsNobody = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
+
+test('redact leaves a Windows absolute path byte-identical but still strips URL credentials', () => {
+  // Round 83, Windows run 54: `new URL('C:\\Users\\...')` parses as a
+  // URL with scheme `c`, and toString() lowercases the scheme, so the
+  // audit-retention store was recorded as `c:\...` instead of `C:\...`.
+  // Only scheme:// strings go through the URL parser now.
+  assert.equal(redact('C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\state\\audit-retention.json', 'store'), 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\state\\audit-retention.json');
+  assert.equal(redact('C:/Users/RUNNER~1/AppData/Local/Temp/state/audit-retention.json', 'store'), 'C:/Users/RUNNER~1/AppData/Local/Temp/state/audit-retention.json');
+  assert.equal(redact('https://user:secret@example.com/hook', 'url'), 'https://example.com/hook');
+  assert.equal(redact('https://example.com/hook', 'url'), 'https://example.com/hook');
+  assert.equal(redact('my-secret-token', 'token'), '[REDACTED]');
+});
 
 test('audit health reports healthy for a writable log', async (t) => {
   const directory = await makeTempDir(t, 'sentinel-audit-healthy-');

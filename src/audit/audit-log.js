@@ -66,14 +66,25 @@ function redact(value, key = '') {
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
     if (/authorization|cookie|password|secret|token|api[-_]?key/i.test(key)) return '[REDACTED]';
-    try {
-      const parsed = new URL(value);
-      parsed.username = '';
-      parsed.password = '';
-      return parsed.toString();
-    } catch {
-      return value.length > 4_000 ? `${value.slice(0, 4_000)}…` : value;
+    // Only strings that look like URLs (scheme://...) go through the
+    // URL parser: a Windows absolute path such as `C:\Users\...`
+    // parses as a URL with scheme `c`, and toString() lowercases the
+    // scheme, which silently corrupts the stored path (Windows run 54:
+    // audit-retention store reported as `c:\...` instead of `C:\...`).
+    // Credentials live in the authority component, which requires
+    // `//`, so gating on `://` keeps the credential stripping while
+    // leaving plain paths byte-identical.
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) {
+      try {
+        const parsed = new URL(value);
+        parsed.username = '';
+        parsed.password = '';
+        return parsed.toString();
+      } catch {
+        // Not a parseable URL after all: fall through to the length cap.
+      }
     }
+    return value.length > 4_000 ? `${value.slice(0, 4_000)}…` : value;
   }
   if (Array.isArray(value)) return value.slice(0, 100).map((entry) => redact(entry, key));
   if (typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 100).map(([childKey, childValue]) => [childKey, redact(childValue, childKey)]));

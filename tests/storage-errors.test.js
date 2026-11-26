@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const {
   classifyStorageError,
@@ -6,6 +9,7 @@ const {
   classifyTokenFileError,
   classifyStateReadError,
   isCorruptStateError,
+  hasNonDirectoryAncestor,
 } = require('../src/policy/storage-errors');
 
 function fakeError(code) {
@@ -62,4 +66,25 @@ test('isCorruptStateError detects unparseable or wrong-shape state', () => {
   assert.equal(isCorruptStateError(new Error('Invalid kill-switch state.')), true);
   assert.equal(isCorruptStateError(new Error('KILL_SWITCH_STATE_CORRUPT')), false);
   assert.equal(isCorruptStateError(fakeError('EACCES')), false);
+});
+
+test('hasNonDirectoryAncestor distinguishes a file parent from a genuinely missing file', async (t) => {
+  // Round 83, Windows run 54: on Windows a path through a file yields
+  // ENOENT, not ENOTDIR, so the rotate/revoke tests degraded to
+  // "unauthorized" instead of reporting RESET_TOKEN_FILE_PATH_INVALID.
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sentinel-storage-errors-'));
+  t.after(async () => {
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  // A file as a parent component: the path can never resolve.
+  const notADir = path.join(directory, 'notadir');
+  await fs.writeFile(notADir, 'I am a regular file, not a directory');
+  assert.equal(await hasNonDirectoryAncestor(path.join(notADir, 'digest', 'operator-reset-token.sha256')), true);
+  // Genuinely missing below a real directory: no file ancestor.
+  assert.equal(await hasNonDirectoryAncestor(path.join(directory, 'digest', 'operator-reset-token.sha256')), false);
+  // An existing file itself has no non-directory ancestor.
+  assert.equal(await hasNonDirectoryAncestor(notADir), false);
+  // A path below an existing directory is genuinely missing.
+  await fs.mkdir(path.join(directory, 'realdir'));
+  assert.equal(await hasNonDirectoryAncestor(path.join(directory, 'realdir', 'missing.json')), false);
 });

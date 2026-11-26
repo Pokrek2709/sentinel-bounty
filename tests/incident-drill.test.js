@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 const { makeTempDir } = require('./helpers/temp-dir');
-const { runDrill } = require('../src/policy/incident-drill');
+const { runDrill, COOPERATIVE_WORKER_SCRIPT, STUBBORN_WORKER_SCRIPT } = require('../src/policy/incident-drill');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
 const { AuditLog } = require('../src/audit/audit-log');
 
@@ -81,6 +81,54 @@ test('drill passes end-to-end: cooperative cancel, stubborn escalation, clean re
   // no audit.jsonl exist outside the drill directory.
   await assert.rejects(fs.stat(path.join(stateDir, 'kill-switch.json')), /ENOENT/);
   await assert.rejects(fs.stat(path.join(stateDir, 'audit.jsonl')), /ENOENT/);
+});
+
+test('worker scripts: the cooperative worker exits on the IPC cancel message, the stubborn one ignores it', async () => {
+  // Round 83: on win32 the polite cancel is an IPC `cancel` message
+  // (Windows cannot deliver SIGTERM to a handler). This test proves
+  // the mechanism the win32 polite step relies on, on any platform.
+  const spawnWorker = (script) => spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'pipe', 'ignore', 'ipc'] });
+  const waitReady = (child) => new Promise((resolve) => {
+    let buffer = '';
+    const timer = setTimeout(() => resolve(false), 5000);
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      if (buffer.includes('ready')) {
+        clearTimeout(timer);
+        resolve(true);
+      }
+    });
+  });
+  const exited = (child, timeoutMs) => new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve(true);
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+
+  const cooperative = spawnWorker(COOPERATIVE_WORKER_SCRIPT);
+  try {
+    assert.equal(await waitReady(cooperative), true);
+    cooperative.send('cancel');
+    assert.equal(await exited(cooperative, 2000), true, 'cooperative worker must exit on the IPC cancel message');
+    assert.equal(cooperative.exitCode, 0);
+  } finally {
+    cooperative.kill('SIGKILL');
+  }
+
+  const stubborn = spawnWorker(STUBBORN_WORKER_SCRIPT);
+  try {
+    assert.equal(await waitReady(stubborn), true);
+    stubborn.send('cancel');
+    assert.equal(await exited(stubborn, 500), false, 'stubborn worker must ignore the IPC cancel message');
+    assert.equal(stubborn.exitCode, null);
+    assert.equal(stubborn.signalCode, null);
+  } finally {
+    stubborn.kill('SIGKILL');
+    await exited(stubborn, 2000);
+  }
 });
 
 test('drill refuses while the real kill-switch is armed and while a real worker is registered', async (t) => {

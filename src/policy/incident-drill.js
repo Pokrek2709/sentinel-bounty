@@ -3,8 +3,21 @@
 // `sentinel drill` exercises the kill-switch end-to-end in the lab
 // against a fake worker — a local child process that only sleeps, never
 // a real target and never a network call. Two phases run in one drill:
-// a cooperative worker (exits on SIGTERM) and a stubborn worker (ignores
-// SIGTERM, so the drill must escalate to SIGKILL and report it honestly).
+// a cooperative worker (exits on the polite cancel) and a stubborn
+// worker (ignores the polite cancel, so the drill must escalate to
+// SIGKILL and report it honestly).
+//
+// Polite cancel is platform-aware (round 83): on POSIX it is SIGTERM,
+// which a handler can swallow. On Windows there is no SIGTERM delivery
+// to a handler — the OS terminates the process outright (TerminateProcess)
+// — so a "stubborn" worker cannot be stubborn against SIGTERM at all:
+// it would die on the polite step and the escalation check would fail
+// (Windows run 54: all four drill tests). On win32 the polite step is
+// therefore an IPC `cancel` message over the child's IPC channel, which
+// the stubborn worker ignores like it ignores SIGTERM on POSIX. The
+// forceful step is SIGKILL on both platforms (TerminateProcess on
+// Windows), and the `escalated` verdict keeps the same meaning: the
+// worker only died on the forceful step.
 //
 // Safety model, in one paragraph: the drill NEVER touches the real
 // kill-switch state. It uses a drill-scoped state directory
@@ -46,13 +59,20 @@ const EXIT_POLL_MS = 25;
 // A sleep loop: the fake lab worker does nothing but stay alive until
 // cancelled. No target, no network, no work of any kind. The worker
 // prints `ready` once it is running — the drill waits for that line
-// before arming, so a SIGTERM can never land before the handler is
-// installed (a freshly spawned child killed in that window would die
-// with the default disposition and fake the result).
-const COOPERATIVE_WORKER_SCRIPT = "console.log('ready'); setInterval(() => {}, 1000);";
-// Same sleep loop, but SIGTERM is swallowed: proves the drill escalates
-// to SIGKILL instead of reporting a success it did not achieve.
-const STUBBORN_WORKER_SCRIPT = "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);";
+// before arming, so a polite cancel can never land before the handler
+// is installed (a freshly spawned child cancelled in that window would
+// die with the default disposition and fake the result).
+//
+// Both scripts install both polite-cancel handlers, so the same script
+// works on either platform: the cooperative worker exits on the IPC
+// `cancel` message and dies on SIGTERM by default disposition; the
+// stubborn worker swallows both. Which channel the drill actually uses
+// is decided by cancelChild (SIGTERM on POSIX, IPC on win32).
+const COOPERATIVE_WORKER_SCRIPT = "process.on('message', (m) => { if (m === 'cancel') process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);";
+// Same sleep loop, but the polite cancel is swallowed: proves the drill
+// escalates to SIGKILL instead of reporting a success it did not
+// achieve.
+const STUBBORN_WORKER_SCRIPT = "process.on('message', () => {}); process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);";
 
 const READY_TIMEOUT_MS = 5_000;
 
@@ -118,13 +138,28 @@ function isPidAlive(pid) {
   }
 }
 
-// Cancel one drill child: SIGTERM, a grace period, then SIGKILL. The
-// outcome is reported honestly — `escalated` is true exactly when the
-// worker ignored SIGTERM and only died on SIGKILL.
+// Send the polite cancel to one drill child: SIGTERM on POSIX, an IPC
+// `cancel` message on win32 (Windows cannot deliver SIGTERM to a
+// handler — see the module header). A failed send means the channel is
+// already closed, i.e. the child is exiting; waitForExit settles that.
+function sendPoliteCancel(child) {
+  if (process.platform === 'win32') {
+    try {
+      return child.send('cancel');
+    } catch {
+      return false;
+    }
+  }
+  return child.kill('SIGTERM');
+}
+
+// Cancel one drill child: polite cancel, a grace period, then SIGKILL.
+// The outcome is reported honestly — `escalated` is true exactly when
+// the worker ignored the polite cancel and only died on SIGKILL.
 async function cancelChild(child, { sigtermGraceMs, cancelTimeoutMs }) {
   const started = Date.now();
   if (isExited(child)) return { cancelled: true, escalated: false, ms: 0 };
-  child.kill('SIGTERM');
+  sendPoliteCancel(child);
   if (await waitForExit(child, sigtermGraceMs)) {
     return { cancelled: true, escalated: false, ms: Date.now() - started };
   }
@@ -263,7 +298,9 @@ async function runDrill({
       const auditId = `verify-audit-${phase.kind}`;
       const resetId = `reset-after-${phase.kind}`;
 
-      const child = spawn(process.execPath, ['-e', phase.script], { stdio: ['ignore', 'pipe', 'ignore'] });
+      // The fourth stdio entry opens the IPC channel the win32 polite
+      // cancel uses; on POSIX it is unused (the polite step is SIGTERM).
+      const child = spawn(process.execPath, ['-e', phase.script], { stdio: ['ignore', 'pipe', 'ignore', 'ipc'] });
       children.push(child);
       if (!(await waitForReady(child, READY_TIMEOUT_MS))) {
         fail(startId, `Worker did not signal ready within ${READY_TIMEOUT_MS}ms.`, 'DRILL_WORKER_NOT_READY');
@@ -446,4 +483,8 @@ module.exports = {
   DRILL_DIR_NAME,
   DEFAULT_SIGTERM_GRACE_MS,
   DEFAULT_CANCEL_TIMEOUT_MS,
+  // Exported for tests: the IPC-cancel mechanism the win32 polite step
+  // relies on is verified by spawning these scripts directly.
+  COOPERATIVE_WORKER_SCRIPT,
+  STUBBORN_WORKER_SCRIPT,
 };

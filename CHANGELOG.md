@@ -7,6 +7,36 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Fix the 10 Windows run-54 failures by name (round 83, 2026-11-27)
+
+- The user uploaded the run-54 log archive, so all ten failing test
+  names are known for the first time. Each is a genuine
+  Windows-vs-Linux difference, none of them the POSIX mode bits
+  round 81 fixed: (1) audit-log `redact()` ran `new URL()` on every
+  string, and a Windows path `C:\...` parses as URL scheme `c`,
+  whose `toString()` lowercases the drive letter — URL parsing is
+  now gated on `scheme://`, credentials in real URLs are still
+  stripped; (2-5) the drill's polite cancel was SIGTERM, which
+  Windows cannot deliver to a handler (TerminateProcess kills
+  outright), so the stubborn worker died on the polite step and the
+  escalation check failed — the polite step is now an IPC `cancel`
+  message on win32, SIGTERM unchanged on POSIX, SIGKILL escalation
+  unchanged on both; (6-7) a path through a file yields ENOENT on
+  Windows, not ENOTDIR, so rotate/revoke degraded to
+  "unauthorized" — an ENOENT digest read now walks the ancestors
+  and reports `RESET_TOKEN_FILE_PATH_INVALID` when a parent is a
+  file; (8-9) the pending-promise scanner compared
+  `path.relative` output (backslashes on Windows) against the
+  forward-slash allowlist — relative paths are now normalized to
+  forward slashes; (10) `sentinel status` always reported 0 tools
+  available because `probeTools` called `checkTool` with no command
+  runner and `checkTool` had no default — the runner now defaults
+  to the real one (masked on Linux, where no documented tools are
+  installed; exposed on Windows, where docker is installed).
+- Linux mode assertions stay strict (0600/0700); no new platform
+  skip was added. Safe status until a Windows run passes: the fix
+  is implemented but not proven to pass on Windows.
+
 ### Windows run 54 verdict: round-81 fix not proven green (round 82, 2026-11-27)
 
 - The first `windows-test` run after round 81 (run 54, head

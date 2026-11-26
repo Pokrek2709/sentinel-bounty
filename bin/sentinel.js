@@ -7,7 +7,7 @@ const path = require('node:path');
 const { runEnvironmentCheck } = require('../src/environment/checker');
 const { TargetRegistry, renderScopeExplanationText } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
-const { classifyRotationLockError, classifyTokenFileError } = require('../src/policy/storage-errors');
+const { classifyRotationLockError, classifyTokenFileError, hasNonDirectoryAncestor } = require('../src/policy/storage-errors');
 const { AuditLog } = require('../src/audit/audit-log');
 const { renderAuditExport, AUDIT_EXPORT_FORMATS } = require('../src/audit/audit-export');
 const { retentionPathFor, readRetentionPolicy, writeRetentionPolicy } = require('../src/audit/audit-retention');
@@ -202,6 +202,14 @@ async function readExpectedResetTokenHash() {
     if (error.message === 'RESET_TOKEN_FILE_CORRUPT') throw error;
     const classified = classifyTokenFileError(error);
     if (classified) throw new Error(classified);
+    // Windows reports a path through a file as ENOENT, not ENOTDIR, so
+    // an unclassified ENOENT here is ambiguous: genuinely missing, or
+    // a parent that is a file. Only the latter is a path failure
+    // (RESET_TOKEN_FILE_PATH_INVALID); a genuinely missing digest stays
+    // "no usable token" (fail-closed, unauthorized).
+    if (error.code === 'ENOENT' && await hasNonDirectoryAncestor(hashFile)) {
+      throw new Error('RESET_TOKEN_FILE_PATH_INVALID');
+    }
     return undefined;
   }
 }

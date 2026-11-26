@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 const { makeTempDir } = require('./helpers/temp-dir');
-const { scanPendingPromises, scanText } = require('./helpers/pending-promise-scanner');
+const { scanPendingPromises, scanText, normalizeRelativePath } = require('./helpers/pending-promise-scanner');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -55,6 +55,17 @@ test('an allowlist entry excuses its occurrence and goes stale when the code mov
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+test('normalizeRelativePath folds Windows backslashes to the allowlist forward-slash spelling', () => {
+  // Round 83, Windows run 54: path.relative yields backslashes on
+  // Windows, so no allowlist entry (forward slashes) ever matched.
+  // The allowlist comparison itself is exercised by the real-tree test
+  // on the Windows runner; this pins the folding with an explicit
+  // Windows separator, plus the no-op on the current platform.
+  assert.equal(normalizeRelativePath('src\\execution\\controlled-wrapper.js', '\\'), 'src/execution/controlled-wrapper.js');
+  assert.equal(normalizeRelativePath('bin\\sentinel.js', '\\'), 'bin/sentinel.js');
+  assert.equal(normalizeRelativePath('src/execution/controlled-wrapper.js'), 'src/execution/controlled-wrapper.js');
 });
 
 test('scanText ignores commented-out code', () => {

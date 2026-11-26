@@ -8,7 +8,45 @@
 // - EACCES/EPERM: the operator cannot access the storage location at all.
 // - ENOSPC/EDQUOT: the disk/quota is exhausted.
 // - ENOTDIR: a path component is not a directory.
+//
+// Windows caveat (round 83): on Windows a path through a file does NOT
+// yield ENOTDIR — the OS reports the path as not found (ENOENT) — so an
+// ENOENT alone cannot tell "file missing" apart from "a parent is a
+// file". hasNonDirectoryAncestor() makes that distinction by walking
+// the ancestors: it exists for exactly that ENOENT disambiguation and
+// is only consulted when the error code is ENOENT.
 'use strict';
+
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
+// True when some ancestor of filePath exists and is not a directory
+// (a regular file, a symlink to one, ...): traversing through it can
+// never succeed, so an ENOENT for filePath means the path is invalid,
+// not merely absent. False when an existing directory ancestor is
+// found first (the missing part is genuinely absent) or the walk cannot
+// tell (permission failure, root reached). Follows symlinks, so a
+// symlink to a directory counts as a directory — traversal through it
+// works — while a symlink to a file counts as a file.
+async function hasNonDirectoryAncestor(filePath) {
+  let dir = path.dirname(filePath);
+  for (;;) {
+    let stat = null;
+    try {
+      stat = await fs.stat(dir);
+    } catch (error) {
+      // ENOENT (Windows: also the code for a path through a file) and
+      // ENOTDIR (POSIX: a component above is not a directory) both
+      // mean "keep walking up to find the offending ancestor".
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') return false;
+      const parent = path.dirname(dir);
+      if (parent === dir) return false;
+      dir = parent;
+      continue;
+    }
+    return !stat.isDirectory();
+  }
+}
 
 function classifyStorageError(error) {
   if (!error || typeof error.code !== 'string') return null;
@@ -57,4 +95,4 @@ function isCorruptStateError(error) {
   return error instanceof SyntaxError || (error instanceof Error && error.message === 'Invalid kill-switch state.');
 }
 
-module.exports = { classifyStorageError, classifyRotationLockError, classifyTokenFileError, classifyStateReadError, isCorruptStateError };
+module.exports = { classifyStorageError, classifyRotationLockError, classifyTokenFileError, classifyStateReadError, isCorruptStateError, hasNonDirectoryAncestor };
