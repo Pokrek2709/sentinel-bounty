@@ -93,7 +93,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1117,10 +1117,14 @@ async function runDetect(args) {
   // is a raw detector-input record (the shape normalizeRawFinding
   // accepts) or a batch record `{ tool, results: [...] }`; it is
   // read bounded (size + nesting depth) like every other JSON
-  // input. The detector defaults to the built-in stub; a path
-  // loads a custom detector module from inside the skill
-  // directory (refused with a named DETECTOR_* error when it is
-  // missing, malformed, a symlink, or outside the skill root).
+  // input. The detector defaults to the built-in stub; `secret-scan`
+  // (round 86) is the first real detector — it scans the `content`
+  // string of a local record for well-known credential formats
+  // and reports one finding per distinct secret, never the full
+  // secret itself; a path loads a custom detector module from
+  // inside the skill directory (refused with a named DETECTOR_*
+  // error when it is missing, malformed, a symlink, or outside
+  // the skill root).
   // The output findings are normalized finding records, directly
   // consumable by the validator (`sentinel report` or
   // validateFinding). The optional --session-id / --target-id /

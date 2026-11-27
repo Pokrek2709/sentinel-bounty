@@ -7,6 +7,63 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### First real detector: secret-scan over local text (round 86, 2026-11-27)
+
+- Windows run verdict for the round-85 commit `82d68d4`
+  (round 86, part 1): run 45884755893 completed
+  2026-11-26T19:36:10Z with conclusion `success` — job `test`
+  success, every step success including `Run npm test`. This is
+  the second green Windows run in the project's history (after
+  run 45881977604 for `d2d1991`) and the first green run for
+  the round-85 commit itself, so the round-85 ENOENT change
+  causes no Windows regression. The red `933e0e7` run is now
+  sandwiched between two green runs on the same suite, which
+  strengthens the flake hypothesis — but the failing test name
+  is still unknown (log download 403), so the red run stays
+  unexplained, not resolved, and no fix was attempted. A green
+  run proves no regression, not that the new ENOENT branches
+  fired: they only fire on Windows when a state path goes
+  through a file, which the suite does not exercise.
+- F5's first real detector: `secret-scan`
+  (`src/detection/secret-scan.js`, registered as the built-in
+  `--detector secret-scan` alongside `stub`; CLI help and
+  `runDetect` comment updated). It scans the `content` string
+  of an operator-supplied local input record for five strict
+  fixed-format credential patterns (AWS access key ID, GitHub
+  classic and fine-grained tokens, Slack tokens, private-key
+  PEM headers) and reports one finding per distinct secret in
+  the `information disclosure` class (`severity: high`,
+  `cwe_id: CWE-200`, confidence `potential` — it never checks
+  whether a credential is live, because it never contacts any
+  service). No network, no scanner, no target; the detector
+  only ever sees text the operator hands it. Safety properties,
+  all tested: a finding never contains the full matched secret
+  (proof of concept and evidence carry first 4 + `****` +
+  last 4; the PEM header is not secret material and is carried
+  verbatim); `finding_id` is deterministic
+  (`secret-scan-` + SHA-256 of pattern + value, first 16 hex);
+  one finding per distinct (pattern, value) with the first
+  occurrence line; at most 100 findings per record with the
+  truncation recorded in `errors`, never silent; content over
+  1,000,000 characters is skipped; a record without usable
+  content is counted in `skipped`, never thrown; batch records
+  follow the stub convention (batch `tool` forced as
+  `discovery_tool`). The detect → validate → dedupe → report
+  pipeline is proven end to end by test (findings validate as
+  `needs_evidence` — the checklist also requires a
+  `response_log` — and the JSON report carries the
+  `information disclosure` evidence checklist). 16 new tests
+  (`tests/secret-scan.test.js`); see
+  `docs/detection-secret-scan-v1.md`. SKILL.md's detector
+  paragraph now names `secret-scan` as the first real detector
+  (both copies, still 150 lines, `cmp` passes); the open
+  decisions (which further detectors, auto-run, async) are
+  unchanged.
+- Phase movement: F5 ~20% → ~35% (the interface plus the
+  first working detector, CLI wiring, docs, and tests; more
+  detectors and the auto-run/async decisions remain). All
+  other phases unchanged.
+
 ### ENOENT-through-a-file: same taxonomy for every state reader (round 85, 2026-11-27)
 
 - Round 83 fixed the ENOENT-through-a-file case at one call site
@@ -1562,23 +1619,25 @@ harden validator`).
 
 ## Known issues
 
-- **Windows CI native run: RED again on the round-84 commit.**
-  GitHub Actions `windows-latest` passed `npm test` once — run
-  45881977604, head `d2d1991`, 2026-11-26T19:13:08Z, conclusion
-  `success`, the first green Windows run in the project's history
-  (round 84) — but the next run, 45882467549 for head `933e0e7`
-  (round 84's docs-only commit), completed 2026-11-26T23:31:34Z
+- **Windows CI native run: GREEN on the round-85 commit, RED once on the round-84 commit.**
+  GitHub Actions `windows-latest` passed `npm test` twice —
+  run 45881977604, head `d2d1991`, 2026-11-26T19:13:08Z,
+  conclusion `success`, the first green Windows run in the
+  project's history (round 84) — and run 45884755893, head
+  `82d68d4`, 2026-11-26T19:36:10Z, conclusion `success` (round
+  86). Between them, run 45882467549 for head `933e0e7`
+  (round 84's docs-only commit) completed 2026-11-26T23:31:34Z
   with conclusion `failure`: job `test` failed, step `Run npm
   test` exit 1 after ~48 s (setup, checkout, setup-node all
   success). The failing test name is not retrievable from the
   lab without repo-admin log access (log download returns 403),
-  so no fix was attempted — a blind fix is not a fix. The local
-  suite is green 3x in a row on the same commit (802 tests,
-  798 pass, 0 fail, 4 skipped) and the win32 simulation is
-  green (786 pass, 0 fail, 16 skipped), so the red run is
-  either a Windows-only failure or a flake; the evidence that
-  decides it is the failing test name from the run log, which
-  needs the user's admin access. The ten run-54 failures were
+  so no fix was attempted — a blind fix is not a fix. The red
+  run is now sandwiched between two green runs on the same
+  suite, which strengthens the flake hypothesis, but the
+  failing test name is still unknown, so the red run stays
+  unexplained, not resolved; the evidence that decides it is
+  the failing test name from the run log, which needs the
+  user's admin access. The ten run-54 failures were
   fixed by name in round 83 after the user uploaded the run log;
   the same path applies here when the user is awake.
 - **Phases 0–1 cannot reach 100% by rounds.** They need Meta: an

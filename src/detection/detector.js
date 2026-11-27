@@ -77,6 +77,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeRawFinding } = require('./normalized-record');
+const { secretScanDetector } = require('./secret-scan');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -207,12 +208,15 @@ function runDetector(detector, input, defaults) {
 // Resolve a detector specification to { detector, source }:
 //   - undefined / null -> null (no detector configured).
 //   - 'stub' -> the built-in stub detector, source 'stub'.
+//   - 'secret-scan' -> the first real detector (round 86),
+//     source 'secret-scan'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
 function getDetector(spec, skillRoot) {
   if (spec === undefined || spec === null) return null;
   if (spec === 'stub') return { detector: stubDetector, source: 'stub' };
+  if (spec === 'secret-scan') return { detector: secretScanDetector, source: 'secret-scan' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');
