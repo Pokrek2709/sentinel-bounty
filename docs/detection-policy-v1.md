@@ -84,9 +84,19 @@ That is a future architecture decision, not a flag.
 
 ## What this round does not decide
 
-- No parser-based detector is built (that is a new
-  architecture decision, not a detector round).
+- The parser decision is now MADE, in round 95
+  (`docs/parser-taint-scope-v1.md`): a hand-written
+  stdlib-only JavaScript subset parser plus
+  intra-procedural taint, proven by the first parser-based
+  detector (`tainted-deserialize`,
+  `docs/detection-tainted-deserialize-v1.md`). The
+  dependency question (Acorn, vendored) is deferred to
+  the round that outgrows the subset grammar or adds a
+  second language — it is a documented upgrade path, not
+  a blocker.
 - No model is chosen for the AI verifier (still open).
 - No public-target execution is authorized (see
   `docs/public-http-adapter-v1.md` — the adapter exists
-  behind the activation gate; nothing invokes it yet).
+  behind the activation gate; the CLI invocation path
+  exists since round 93 and is drilled since round 94,
+  but no real-target fetch has been run).

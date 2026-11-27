@@ -111,7 +111,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1332,7 +1332,19 @@ async function runDetect(args) {
   // quoted string literal (password, API key, secret/token) and
   // reports one finding per distinct assignment site, carrying
   // only the masked assignment (`<name><operator> "****"`) —
-  // never the literal value itself; a
+  // never the literal value itself; `insecure-transport`
+  // (round 90) is the fifth real detector — it scans the
+  // `content` string for cleartext HTTP URLs and disabled TLS
+  // verification and reports one finding per distinct call
+  // site, never executing the code; `tainted-deserialize`
+  // (round 95) is the sixth real detector and the first
+  // parser-based one — it parses the `content` string as
+  // JavaScript (hand-written stdlib-only subset parser) and
+  // tracks taint from function parameters and `process.argv`
+  // to unsafe deserialization sinks (yaml.load, YAML.load,
+  // yaml.loadAll, unserialize), reporting a sink call only
+  // when its first argument is tainted or the call is reached
+  // through an alias, never carrying a literal value; a
   // path loads a custom detector module from inside the skill
   // directory (refused with a named DETECTOR_* error when it is
   // missing, malformed, a symlink, or outside the skill root).

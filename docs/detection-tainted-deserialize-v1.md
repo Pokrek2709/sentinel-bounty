@@ -1,0 +1,157 @@
+# tainted-deserialize detector v1 — sixth real detector, first parser-based (round 95)
+
+`sentinel detect --detector tainted-deserialize` parses the
+`content` string of an operator-supplied local input record
+as JavaScript and tracks taint from sources to unsafe
+deserialization sinks, reporting one finding per distinct
+sink call site. It is the sixth real detector (after
+`insecure-transport`, round 90) and the first parser-based
+one: the five earlier detectors scan call-site text with
+regexes; this one reads structure and flow. See
+`docs/parser-taint-scope-v1.md` for the scoping (what regex
+cannot do, the subset grammar, the dependency decision).
+
+## Input contract
+
+- The detector takes a raw detector-input record — the shape
+  `normalizeRawFinding()` accepts — or a batch
+  `{ tool, results: [...] }`. It parses only the record's
+  `content` string: text the operator already holds (for
+  example source code or a code excerpt captured in the lab)
+  and hands to the CLI. It never reads a file itself, never
+  makes a request, and never executes the code it scans.
+- `source` (optional, non-empty string) labels where the text
+  came from and is carried into the description and proof of
+  concept.
+- `language` (optional) must be JavaScript (`javascript`,
+  `js`, `node`, case-insensitive) when present; any other
+  value counts the record in `skipped`. When absent, the
+  content is attempted as JavaScript.
+- `session_id` / `target_id` / `asset_id` come from the
+  record, else from `defaults` (the CLI `--session-id` /
+  `--target-id` / `--asset-id` options); a record missing an
+  id after defaults is counted in `skipped`, never invented.
+- A record without a non-empty string `content` is counted in
+  `skipped` with its error recorded, never thrown; a bad
+  record never aborts a batch. A non-object input throws
+  `DETECTOR_INVALID_INPUT`, exactly like the stub detector.
+- Batch records follow the stub convention: the batch `tool`,
+  when present, is forced as `discovery_tool` on every
+  finding; otherwise the finding carries
+  `discovery_tool: 'tainted-deserialize'`.
+- Content that does not parse under the subset grammar is
+  counted in `skipped` with a parse error (reason + line +
+  column). The detector NEVER falls back to scanning text
+  with a regex — a partial or wrong answer presented as a
+  parse is worse than no answer.
+
+## Sinks and sources
+
+Sinks (JavaScript, all CWE-502, severity high):
+
+| sink | notes |
+|---|---|
+| `yaml.load` | js-yaml; `yaml.safeLoad` is NOT a sink (safe loader) |
+| `YAML.load` | uppercase spelling used by some yaml libraries |
+| `yaml.loadAll` | js-yaml multi-document load |
+| `unserialize` | phpjs-style unserialize |
+
+`JSON.parse` is NOT a sink (data-only format). Python's
+`pickle` / `marshal` / `shelve` stay regex-covered by
+`dangerous-call` — this parser is JavaScript-only.
+
+Sources: every function parameter (untrusted input by
+definition) and member access rooted at `process.argv`.
+
+## When a sink call is reported
+
+A sink call is reported ONLY when it carries information
+the regex detector cannot:
+
+| kind | rule | evidence |
+|---|---|---|
+| `tainted-arg` | direct sink call (`yaml.load(...)`, `unserialize(...)`) whose first argument is tainted | the taint chain (source + identifier-name steps) |
+| `aliased-call` | sink call reached through an alias (`const l = yaml.load`, `const { load } = yaml`, `yaml['load']`) with any first argument | the alias binding (`name` → `boundTo`) |
+
+A direct sink call with a clean argument is NOT reported:
+the regex detector already flags that call site, and the
+AST detector adds nothing. A sink call with zero arguments
+cannot deserialize attacker data and is not reported.
+
+Taint propagates through: assignment and declaration,
+member access on a tainted base, binary / logical /
+conditional expressions, template interpolations, array /
+object literals, `await`, unary `-` / `+` / `~`. `!`,
+`typeof`, `void`, `delete` cleanse (they produce a boolean
+or nothing, not the data). Return values of unknown calls
+are clean (an under-approximation — it trades missed
+findings for fewer false positives). Branch joins are OR:
+tainted on any path stays tainted.
+
+## What the parser sees that a regex cannot — and what it cannot
+
+- A sink call in a comment or a string literal is NOT a
+  call: the tokenizer strips comments and treats string
+  contents as single tokens, so prose never becomes a
+  finding. This is the sharpest difference from the regex
+  detector, which matches call text wherever it appears.
+- An aliased call IS a call: `const l = yaml.load; l(x)`
+  and `const { load } = yaml; load(x)` resolve the alias
+  to its sink. Reassigning the alias to a non-sink value
+  clears it (`let l = yaml.load; l = 5; l(x)` is not a
+  finding).
+- A wrapper function IS analyzed: `function parse(d) {
+  return yaml.load(d); }` flags the sink because `d` is a
+  parameter (a source by rule) — the detector does not
+  need to see the call site `parse(userInput)` to flag
+  it, and it does not claim the wrapper is reachable
+  from one.
+
+## Known limitations (documented, not hidden)
+
+- **JavaScript only.** A second language needs a second
+  parser.
+- **Intra-procedural only.** Taint does not flow from a
+  call site into a callee, and a sink inside a helper is
+  flagged only because the helper's parameter is a source
+  by rule — not because the call graph was analyzed.
+- **No sanitizer modeling.** A `validate()` or allow-list
+  call does not cleanse taint; code that validates before
+  deserializing can still be flagged. The finding is
+  confidence `potential` for exactly this reason — the
+  operator triages it, and the validator's
+  `false_positive` verdict exists for exactly that.
+- **No import resolution.** A sink imported under its own
+  name (`import { load } from 'js-yaml'`) is not resolved
+  to `yaml.load`. Destructuring of a name already in scope
+  (`const { load } = yaml`) IS resolved — that is not an
+  import.
+- **Subset grammar.** Class fields, decorators, and other
+  constructs outside the subset (see
+  `docs/parser-taint-scope-v1.md` §2.2) fail the parse and
+  skip the record rather than being scanned
+  approximately. Block scoping is not modeled: bindings
+  are function-scoped.
+- **No reachability proof.** A sink inside dead code is
+  still flagged — the detector parses structure, not
+  reachability. Every finding is confidence `potential`
+  because the detector cannot prove the call is reachable
+  or attacker-controlled; exploitability must be verified
+  out of band before reporting.
+
+## Safety properties (tested, not assumed)
+
+- A finding carries only the sink name, position, and a
+  taint chain of identifier names — never a literal value,
+  never a source line, never an argument's text.
+- `finding_id` is deterministic:
+  `tainted-deserialize-` + the first 16 hex chars of
+  SHA-256
+  (`tainted-deserialize:<sink>:<line>:<column>:<kind>`).
+- One finding per distinct sink call site per record; at
+  most 100 findings per record (further matches are
+  dropped and the drop is recorded in `errors`, so a
+  truncated scan is visible, never silent).
+- Content over 1,000,000 characters is skipped, not
+  scanned; the CLI already bounds the input file to
+  10 MiB, this bound keeps the scan itself bounded.

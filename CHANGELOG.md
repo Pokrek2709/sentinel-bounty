@@ -7,6 +7,53 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 95: F5 parser/taint scoping + first AST-based detector (2026-11-28)
+
+- The regex detector set is now extended by a parser: new
+  `docs/parser-taint-scope-v1.md` scopes what regex cannot
+  do and why (code vs prose, aliased calls, taint,
+  cross-function flow), the approach (hand-written
+  stdlib-only JavaScript subset parser — tokenizer +
+  recursive descent — plus intra-procedural taint), and
+  the deliberate limits (JavaScript only,
+  intra-procedural, no sanitizer modeling, no import
+  resolution, subset grammar that fails loudly instead of
+  scanning approximately).
+- Dependency decision (documented, not a blocker): Acorn
+  was evaluated and NOT adopted this round — the skill
+  installs and verifies offline, every module is
+  stdlib-only, and the prototype's single class does not
+  need a full grammar. Vendored Acorn remains the upgrade
+  path if the grammar outgrows the subset or a second
+  language is added.
+- Sixth real detector `tainted-deserialize` (new
+  `src/detection/js-parser.js`,
+  `src/detection/tainted-deserialize.js`, 18 tests):
+  unsafe deserialization sinks in JavaScript (yaml.load,
+  YAML.load, yaml.loadAll, unserialize) reported only
+  when the regex detector cannot see them — a direct call
+  with a tainted first argument (function parameters and
+  `process.argv` are sources; taint flows through
+  assignments, members, templates, binary/conditional,
+  arrays/objects; branch joins are OR) or an aliased call
+  (`const l = yaml.load`, `const { load } = yaml`,
+  `yaml['load']`) with any first argument. A direct call
+  with a clean argument is not reported (the regex
+  detector already flags it); sink text in a comment or
+  a string is never a finding; parse failures skip the
+  record with a positioned error and never fall back to
+  regex. Findings carry only the sink name, position,
+  and a taint chain of identifier names — never a literal
+  value or source line. Registered in
+  `src/detection/detector.js` and the `sentinel detect`
+  CLI help; SKILL.md (both copies) updated. The CLI
+  comment block also gains the insecure-transport
+  sentence round 90 had omitted.
+- `docs/detection-policy-v1.md` updated: the parser
+  decision the policy left open is now made (round 95);
+  the AI-verifier model choice and the public-target
+  execution authorization remain open.
+
 ### Round 94: Public-fetch activation drill — E2E chain, refusal matrix, kill-switch drill (2026-11-28)
 
 - The round-93 invocation path is drilled end to end with stub
