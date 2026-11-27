@@ -127,7 +127,9 @@ test('CLI: a false_positive finding is excluded by default, with a stderr note',
   ]);
   const parsed = JSON.parse(stdout);
   assert.deepEqual(parsed.findings.map((f) => f.finding_id), ['FND-CRIT-001']);
-  assert.equal(stderr, 'Excluded 1 false_positive finding from the report (policy F6; use --include-false-positives to keep them).\n');
+  // Round 96: the note carries the policy version, so a run's
+  // enforcement is auditable from its own output.
+  assert.equal(stderr, 'Excluded 1 false_positive finding from the report (policy F6 v1.0.0; use --include-false-positives to keep them).\n');
 });
 
 test('CLI: --include-false-positives keeps the finding and says nothing', async (t) => {

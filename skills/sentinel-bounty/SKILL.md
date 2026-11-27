@@ -40,6 +40,7 @@ sentinel audit verify [--state-dir <path>]
 sentinel audit export [--state-dir <path>] [--out <file>] [--format json|jsonl]
 sentinel audit retention [--state-dir <path>] [--max-archives <n>] [--max-records <n>] [--show]
 sentinel status [--state-dir <path>] [--skill-dir <path>] [--json]
+sentinel policy [--json]
 sentinel backup --out <file> [--state-dir <path>]
 sentinel restore --from <file> [--state-dir <path>]
 sentinel state export [--state-dir <path>] [--out <file>]
@@ -95,7 +96,9 @@ attached per finding with `--verifier stub|<path>` (`sentinel report --verifier 
 `docs/report-render-v1.md`, `docs/ai-verdict-v1.md`, `docs/reporting-v1.md`,
 `docs/report-templates-v1.md`, `docs/report-filter-v1.md`,
 `docs/report-stats-v1.md`, `docs/report-helpers-export-v1.md`,
-`docs/report-generated-at-helper-v1.md`, `docs/policies-f6-v1.md`, and `docs/cvss-vector-v1.md`.
+`docs/report-generated-at-helper-v1.md`, `docs/policies-f6-v1.md`, `docs/policy-versioning-v1.md`, and `docs/cvss-vector-v1.md`.
+
+`sentinel policy` prints the active F6 policy version and the five user-approved decisions (text, or `--json` for the same summary as JSON); it is read-only and changes nothing. The version (`POLICY_VERSION` in `src/analysis/policies.js`, currently 1.0.0) tracks the decision set, not the enforcement code — it bumps to 2.0.0 only when a decision changes by an explicit user decision, with a migration note. Policy enforcement happens at report generation from raw findings (`sentinel report --finding/--findings`): rule-verdict `false_positive` findings are excluded first (unless `--include-false-positives`), then the conservative semantic dedup pass merges the kept findings — never across rule verdicts, so a valid finding and a false_positive twin never merge and input order can never pick the surviving verdict; when every finding is excluded the command fails closed with `REPORT_ALL_FINDINGS_FALSE_POSITIVE`. Both steps are announced on stderr with the policy version, so a run's enforcement is auditable from its own output. `sentinel detect` output stays raw by design — detect is a finding source, and policy enforcement happens at report generation. See `docs/policies-f6-v1.md` and `docs/policy-versioning-v1.md`.
 
 These commands make no network request and execute no security scanner.
 

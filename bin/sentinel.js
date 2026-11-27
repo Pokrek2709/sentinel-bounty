@@ -41,7 +41,7 @@ const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limit
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
 const { getDetector, runDetector } = require('../src/detection/detector');
-const { excludeFalsePositives } = require('../src/analysis/policies');
+const { POLICY_VERSION, enforceReportPolicies, getPolicySummary } = require('../src/analysis/policies');
 const { storePathFor, addScopeTarget, removeScopeTarget, findScopeTarget, listScopeTargets } = require('../src/scope/target-store');
 const {
   storePathFor: publicTargetStorePathFor,
@@ -97,6 +97,7 @@ function usage() {
     '  sentinel audit export [--state-dir <path>] [--out <file>] [--format json|jsonl]',
     '  sentinel audit retention [--state-dir <path>] [--max-archives <n>] [--max-records <n>] [--show]',
     '  sentinel status [--state-dir <path>] [--skill-dir <path>] [--json]',
+    '  sentinel policy [--json]',
     '  sentinel backup --out <file> [--state-dir <path>]',
     '  sentinel restore --from <file> [--state-dir <path>]',
     '  sentinel state export [--state-dir <path>] [--out <file>]',
@@ -1233,24 +1234,33 @@ async function runReport(args) {
     if (!Array.isArray(findings)) throw new Error('--findings must contain a JSON array.');
     if (findings.length > MAX_FINDINGS) throw new Error(`Too many findings: ${findings.length} (maximum ${MAX_FINDINGS}).`);
   }
-  // Policy F6 (round 90, user-approved 2026-11-28): rule-verdict
+  // Policy F6 (round 90, user-approved 2026-11-28; enforced by
+  // enforceReportPolicies, round 96): rule-verdict
   // false_positive findings are excluded from a report generated
-  // from raw findings, unless --include-false-positives is given.
-  // The exclusion runs before generateReport (which is untouched,
-  // so report transformations keep whatever a stored report
-  // already carries). If every finding is excluded, fail
+  // from raw findings, unless --include-false-positives is given,
+  // and the kept findings are then merged by the conservative
+  // semantic dedup pass. Exclusion runs FIRST, so a valid finding
+  // can never absorb a false_positive's evidence by merging, and
+  // a false_positive can never survive inside a merged valid
+  // finding. Both steps run before generateReport (which is
+  // untouched, so report transformations keep whatever a stored
+  // report already carries). If every finding is excluded, fail
   // closed with a named error instead of rendering an empty
   // report — the operator asked for a report, not a blank page.
-  if (!includeFalsePositives) {
-    const { kept, excluded } = excludeFalsePositives(findings);
-    if (findings.length > 0 && kept.length === 0) {
-      throw new Error('REPORT_ALL_FINDINGS_FALSE_POSITIVE: every finding in the input has rule verdict false_positive; nothing to report (use --include-false-positives to keep them).');
-    }
-    if (excluded.length > 0) {
-      process.stderr.write(`Excluded ${excluded.length} false_positive finding${excluded.length === 1 ? '' : 's'} from the report (policy F6; use --include-false-positives to keep them).\n`);
-    }
-    findings = kept;
+  // The stderr notes carry the policy version, so a run's
+  // enforcement is auditable from its own output (see
+  // docs/policy-versioning-v1.md).
+  const { kept, excluded, duplicates } = enforceReportPolicies(findings, { includeFalsePositives });
+  if (!includeFalsePositives && findings.length > 0 && kept.length === 0) {
+    throw new Error('REPORT_ALL_FINDINGS_FALSE_POSITIVE: every finding in the input has rule verdict false_positive; nothing to report (use --include-false-positives to keep them).');
   }
+  if (excluded.length > 0) {
+    process.stderr.write(`Excluded ${excluded.length} false_positive finding${excluded.length === 1 ? '' : 's'} from the report (policy F6 v${POLICY_VERSION}; use --include-false-positives to keep them).\n`);
+  }
+  if (duplicates > 0) {
+    process.stderr.write(`Merged ${duplicates} duplicate finding${duplicates === 1 ? '' : 's'} (policy F6 v${POLICY_VERSION}, conservative semantic dedup).\n`);
+  }
+  findings = kept;
   const report = generateReport(findings, {
     programName: options.program,
     generatedAt: options.generatedAt,
@@ -1474,6 +1484,37 @@ async function runStateCommand(args) {
   }
 }
 
+async function runPolicyCommand(args) {
+  // `sentinel policy` prints the active F6 policy version and
+  // decisions (round 96): the version tracks the decision set
+  // (docs/policy-versioning-v1.md), and the decisions are the
+  // user-approved constants in src/analysis/policies.js.
+  // Read-only: it changes nothing, and there is no flag or
+  // variable that can change a decision — a decision changes
+  // only by editing the policy module alongside its doc, which
+  // is what the versioning doc requires a future user decision
+  // for. --json prints the same summary as JSON.
+  const json = args.includes('--json');
+  const rest = args.filter((argument) => argument !== '--json');
+  if (rest.length > 0) throw new Error(`Unknown option: ${rest[0]}`);
+  const summary = getPolicySummary();
+  if (json) {
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    return;
+  }
+  const decisions = summary.decisions;
+  process.stdout.write([
+    `Sentinel policy F6 v${summary.version}`,
+    `  semantic dedup: ${decisions.semanticDedupMode} — enforced at report generation from raw findings (sentinel report)`,
+    `  false positives: ${decisions.falsePositiveReporting} — excluded from generated reports unless --include-false-positives`,
+    `  AI verdict: advisory only, never overrides the rule verdict (AI_VERDICT_OVERRIDE=${decisions.aiVerdictOverride})`,
+    `  detection auto-run: ${decisions.detectionAutoRun ? 'yes' : 'no'} — detectors run only via explicit \`sentinel detect\``,
+    `  detectors: ${decisions.detectorAsync ? 'async allowed' : 'synchronous only'} — an async detector is refused`,
+    'See docs/policies-f6-v1.md and docs/policy-versioning-v1.md.',
+    '',
+  ].join('\n'));
+}
+
 async function runStatusCommand(args) {
   // `sentinel status` (round 63): one strictly read-only overview of
   // the whole operator state. Fail-closed component failures
@@ -1575,6 +1616,10 @@ async function main(argv) {
   }
   if (command === 'status') {
     await runStatusCommand(args);
+    return;
+  }
+  if (command === 'policy') {
+    await runPolicyCommand(args);
     return;
   }
   if (command === 'drill') {

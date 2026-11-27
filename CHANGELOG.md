@@ -7,6 +7,72 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 96: F6 policy hardening (2026-11-28)
+
+- Enforcement gap, found by this round and fixed: the
+  conservative semantic dedup pass (`semanticDedupeFindings`,
+  round 48) had no production caller — `sentinel report`
+  rendered duplicate findings, and a report with two
+  identical findings failed its own `report validate` with
+  `REPORT_VALIDATE_DUPLICATE_FINDING_ID`. `enforceReportPolicies`
+  (`src/analysis/policies.js`) is now the single enforcement
+  entry point for report generation from raw findings:
+  false-positive exclusion first, then the conservative
+  semantic dedup pass, in `sentinel report` (`bin/sentinel.js`
+  `runReport`). `generateReport` itself is untouched, so
+  report transformations keep whatever a stored report
+  already carries.
+- Order is load-bearing and pinned by tests: exclusion first
+  means a valid finding can never absorb a false_positive's
+  evidence by merging, and a false_positive can never survive
+  inside a merged valid finding. Dedup never merges across
+  rule verdicts, even with `--include-false-positives` — two
+  findings with different rule verdicts carry different
+  triage states, and merging them would let input order pick
+  the surviving verdict. The four merge conditions are
+  unchanged (the pass itself is untouched); the verdict
+  partition is composition, not a fifth condition. The
+  semantic pass runs directly, not after the exact-key
+  dedup — exact-first would silently drop findings the
+  conservative rule refuses to merge.
+- Second gap, found by the AST end-to-end test and fixed:
+  the evidence-entry canonicalization only recognized the
+  classic `{request, response, notes}` shape, so findings
+  whose evidence carries other fields — the round-95 AST
+  detector's `{type, sink, kind, line, column, call, taint}`
+  entries — could never satisfy rule (d), and the policy
+  silently did not apply to a whole detector class. The
+  canonicalization now falls back to the full entry (sorted
+  keys, `full:` prefix) when none of the three classic
+  subfields is present, counting only when the entry carries
+  at least one non-empty string leaf. Classic entries are
+  unchanged. The fallback also fixes the evidence union in
+  `mergeFindingGroup`, which collapsed distinct AST entries
+  onto one key. `merged_from` is now an id set (two members
+  sharing one deterministic id list it once).
+- Policy versioning (`docs/policy-versioning-v1.md`):
+  `POLICY_VERSION = '1.0.0'` tracks the decision set
+  (MAJOR = a decision changed, needs a user decision;
+  MINOR/PATCH = enforcement or doc changes, no bump), and
+  `sentinel policy [--json]` prints the active version and
+  the five decisions (read-only). The stderr notes on
+  report generation carry the version, so a run's
+  enforcement is auditable from its own output. No flag,
+  environment variable, or config file can change a
+  decision — a code search finds only the constants, their
+  tests, and their docs.
+- End-to-end proof: `sentinel detect --detector
+  tainted-deserialize` over a batch of two identical
+  records yields two findings (detect stays raw by design),
+  and `sentinel report` merges them into one finding whose
+  report passes `report validate`. AI-verdict disagreement
+  is proven at the CLI level both ways with the class
+  verifier fixture: a rule-valid finding with an AI
+  false_positive is kept with the advisory verdict
+  recorded, and a rule-false_positive finding with an AI
+  valid is still excluded. 16 new tests
+  (`tests/policies-f6-enforcement.test.js`).
+
 ### Round 95: F5 parser/taint scoping + first AST-based detector (2026-11-28)
 
 - The regex detector set is now extended by a parser: new

@@ -169,3 +169,50 @@ That is a future architecture decision, not a flag.
 - No public-target execution is authorized (see
   `docs/public-http-adapter-v1.md` — the adapter exists
   behind the activation gate; nothing invokes it yet).
+
+## Round 96 enforcement note (policy hardening, 2026-11-28)
+
+The v1 decisions above were constants plus a library pass,
+but no operator path applied the semantic dedup: `sentinel
+report` rendered duplicate findings, and a report with two
+identical findings failed its own `report validate` with
+`REPORT_VALIDATE_DUPLICATE_FINDING_ID`. Round 96 wired the
+enforcement without changing any decision (so the version
+stays 1.0.0 — see `docs/policy-versioning-v1.md`):
+
+- `enforceReportPolicies` in `src/analysis/policies.js` is
+  the single enforcement entry point for report generation
+  from raw findings: false-positive exclusion FIRST, then
+  the conservative semantic dedup pass, in `sentinel
+  report` (`bin/sentinel.js` `runReport`). The stderr notes
+  carry the policy version, so a run's enforcement is
+  auditable from its own output.
+- The exclusion-first order is load-bearing: a valid finding
+  can never absorb a false_positive's evidence by merging,
+  and a false_positive can never survive inside a merged
+  valid finding.
+- Dedup never merges across rule verdicts, even with
+  `--include-false-positives`: two findings with different
+  rule verdicts carry different triage states, and merging
+  them would let input order pick the surviving verdict.
+  The four merge conditions are unchanged (the pass itself
+  is untouched); the verdict partition is composition, not
+  a fifth condition.
+- The semantic pass runs directly at report generation,
+  NOT after the exact-key dedup: exact-key grouping would
+  fold findings that share a first reproduction step but
+  differ in vector or severity, and taking only the
+  representative would silently drop a finding the
+  conservative rule refuses to merge. Semantic-only merges
+  less, never more.
+- `sentinel detect` output stays raw by design: detect is
+  a finding source, and policy enforcement happens at
+  report generation. The detect -> report chain is proven
+  end to end including the round-95 AST detector
+  (`tainted-deserialize`).
+- `sentinel policy` prints the active version and the five
+  decisions (text or `--json`); it is read-only.
+- The evidence-entry canonicalization learned the
+  structured evidence shape (see
+  `docs/semantic-dedup-v1.md`): AST-detector findings can
+  now satisfy rule (d), where before they never could.

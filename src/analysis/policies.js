@@ -7,6 +7,17 @@
 // change it (a future explicit user decision — never a round's
 // own judgment call).
 //
+// Round 96 (policy hardening) wired the enforcement the v1
+// doc only described: `enforceReportPolicies` below is the
+// single enforcement entry point for report generation from
+// raw findings — false-positive exclusion first, then the
+// conservative semantic dedup pass — and `POLICY_VERSION`
+// names the decision set it enforces. The wiring changes no
+// decision: the version stays 1.0.0 because the version tracks
+// the DECISION SET, not the enforcement code (see
+// docs/policy-versioning-v1.md). `sentinel policy` prints the
+// active version and decisions for the operator.
+//
 // The decisions:
 //   1. SEMANTIC_DEDUP_MODE = 'conservative': the semantic
 //      dedup pass (src/analysis/validator.js
@@ -58,12 +69,41 @@
 'use strict';
 
 const { validateOneFinding } = require('../report/validate');
+const { semanticDedupeFindings } = require('./validator');
+
+// The policy version (round 96, docs/policy-versioning-v1.md).
+// The version tracks the DECISION SET, not the enforcement code:
+// MAJOR changes only when a decision changes (needs an explicit
+// user decision), MINOR when enforcement surface is added without
+// changing any decision, PATCH for doc/test clarifications.
+// 1.0.0 is the v1 decision set approved 2026-11-28 ~01:03 WIB.
+const POLICY_VERSION = '1.0.0';
 
 const SEMANTIC_DEDUP_MODE = 'conservative';
 const FALSE_POSITIVE_REPORTING = 'exclude-from-reports';
 const AI_VERDICT_OVERRIDE = false;
 const DETECTION_AUTO_RUN = false;
 const DETECTOR_ASYNC = false;
+
+// The active policy as a plain object, for `sentinel policy`
+// (text and --json): the version plus the five decisions, in
+// the same words the constants carry. Nothing here is computed
+// from the environment — there is no flag or variable that can
+// change a decision silently; a decision changes only by editing
+// this file alongside docs/policies-f6-v1.md, which is exactly
+// what the versioning doc requires a future user decision for.
+function getPolicySummary() {
+  return {
+    version: POLICY_VERSION,
+    decisions: {
+      semanticDedupMode: SEMANTIC_DEDUP_MODE,
+      falsePositiveReporting: FALSE_POSITIVE_REPORTING,
+      aiVerdictOverride: AI_VERDICT_OVERRIDE,
+      detectionAutoRun: DETECTION_AUTO_RUN,
+      detectorAsync: DETECTOR_ASYNC,
+    },
+  };
+}
 
 // Split findings into kept/excluded by RULE verdict
 // (round 67's validateOneFinding). A finding whose status is
@@ -89,11 +129,94 @@ function excludeFalsePositives(findings) {
   return { kept, excluded };
 }
 
+// The single enforcement entry point for report generation
+// from raw findings (round 96). Order matters and is pinned
+// by tests:
+//   1. False-positive exclusion FIRST (unless the operator opts
+//      in with --include-false-positives): a valid finding can
+//      never absorb a false_positive's evidence by merging, and
+//      a false_positive can never survive inside a merged valid
+//      finding. Findings that fail the strict check (status
+//      'error') are never excluded — excludeFalsePositives
+//      keeps them, so generateReport still throws on them.
+//   2. Conservative semantic dedup SECOND, over the kept
+//      findings only — and NEVER across rule verdicts: a valid
+//      finding and a false_positive finding may describe the
+//      same issue, but they carry different triage states, and
+//      merging them would let input order pick the surviving
+//      verdict and hide the other triage. The four merge
+//      conditions are unchanged (semanticDedupeFindings itself
+//      is untouched); the verdict partition is composition,
+//      not a fifth condition. Findings that fail the strict
+//      check pass through untouched, so generateReport still
+//      throws on the first one, as today.
+// The semantic pass runs directly, NOT after the exact-key
+// dedup (`dedupeFindings`): exact-key grouping would fold
+// findings that share a first reproduction step but differ in
+// vector or severity, and taking only the representative would
+// silently drop a finding the conservative rule refuses to
+// merge. Semantic-only is strictly more conservative — it
+// merges less, never more.
+// Returns { kept, excluded, duplicates }: kept are the merged
+// findings in first-appearance order, excluded are the
+// false_positive findings removed in step 1, duplicates is the
+// count of findings folded away by step 2. `sentinel detect`
+// output stays raw by design — detect is a finding source, and
+// policy enforcement happens here, at report generation,
+// exactly like the false-positive exclusion round 90 placed
+// here.
+function enforceReportPolicies(findings, { includeFalsePositives = false } = {}) {
+  let candidates = findings;
+  let excluded = [];
+  if (!includeFalsePositives) {
+    const split = excludeFalsePositives(findings);
+    candidates = split.kept;
+    excluded = split.excluded;
+  }
+  const indexByFinding = new Map();
+  candidates.forEach((finding, index) => {
+    if (!indexByFinding.has(finding)) indexByFinding.set(finding, index);
+  });
+  const partitions = new Map();
+  const passthrough = [];
+  for (const finding of candidates) {
+    let status = null;
+    try {
+      status = validateOneFinding(finding).status;
+    } catch {
+      status = null;
+    }
+    if (status === 'error' || status === null) {
+      passthrough.push(finding);
+      continue;
+    }
+    if (!partitions.has(status)) partitions.set(status, []);
+    partitions.get(status).push(finding);
+  }
+  const merged = [];
+  let duplicates = 0;
+  for (const items of partitions.values()) {
+    const deduped = semanticDedupeFindings(items);
+    for (const group of deduped.groups) {
+      const firstIndex = Math.min(...group.findings.map((member) => indexByFinding.get(member)));
+      merged.push({ finding: group.merged, index: firstIndex });
+      duplicates += group.findings.length - 1;
+    }
+  }
+  const kept = [...merged, ...passthrough.map((finding) => ({ finding, index: indexByFinding.get(finding) }))]
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => entry.finding);
+  return { kept, excluded, duplicates };
+}
+
 module.exports = {
+  POLICY_VERSION,
   SEMANTIC_DEDUP_MODE,
   FALSE_POSITIVE_REPORTING,
   AI_VERDICT_OVERRIDE,
   DETECTION_AUTO_RUN,
   DETECTOR_ASYNC,
   excludeFalsePositives,
+  enforceReportPolicies,
+  getPolicySummary,
 };

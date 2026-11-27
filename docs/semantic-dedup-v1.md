@@ -160,3 +160,53 @@ or a text-similarity threshold on titles/steps. This round
 implements the conservative version only; any loosening needs the
 user's decision, because it trades recall (fewer duplicate
 reports) against the risk of hiding a genuinely distinct finding.
+
+## Enforcement at report generation (round 96)
+
+The pass itself is unchanged, but round 96 found two gaps in
+how it was (not) applied, and fixed both without changing the
+four conditions:
+
+- **No operator path ran the pass.** `semanticDedupeFindings`
+  had no production caller: `sentinel report` rendered
+  duplicate findings, and a report with two identical findings
+  failed its own `report validate` with
+  `REPORT_VALIDATE_DUPLICATE_FINDING_ID`. Round 96 wires the
+  pass into `sentinel report` generation from raw findings
+  via `enforceReportPolicies` (`src/analysis/policies.js`):
+  false-positive exclusion first, then this pass. The pass
+  runs directly, NOT after the exact-key dedup — exact-key
+  grouping would fold findings that share a first
+  reproduction step but differ in vector or severity, and
+  taking only the representative would silently drop a finding
+  this rule refuses to merge.
+- **Dedup never merges across rule verdicts at report
+  generation.** The pass itself still merges a valid finding
+  with a false_positive one when the four conditions hold
+  (the representative's confidence wins — see "No verdict
+  change" above), but the report path partitions by rule
+  verdict first, so that order-dependence cannot hide a
+  triage in a generated report. The partition lives in
+  `enforceReportPolicies`, not in the pass.
+- **Structured evidence can now satisfy rule (d).** The
+  canonical evidence entry only recognized the classic
+  `{request, response, notes}` shape, so findings whose
+  evidence carries other fields — the round-95 AST
+  detector's `{type, sink, kind, line, column, call, taint}`
+  entries — could never share an entry, and the policy
+  silently did not apply to a whole detector class. The
+  canonicalization now falls back to the full entry (sorted
+  keys, `full:` prefix) when none of the three classic
+  subfields is present, and it counts only when the entry
+  carries at least one non-empty string leaf, so an empty or
+  all-blank entry still can never be the shared item. The
+  classic canonicalization is unchanged: entries with a
+  classic subfield keep the exact `{request, response,
+  notes}` key, extra fields ignored as before. The fallback
+  also fixes the evidence union in `mergeFindingGroup`,
+  which previously collapsed distinct AST entries onto one
+  key.
+- **`merged_from` is an id set.** Two members can share one
+  finding_id (deterministic detector ids — two identical
+  records), and the merged finding lists it once, matching
+  how report-diff treats `merged_from` as an id set.

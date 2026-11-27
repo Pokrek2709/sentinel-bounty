@@ -442,11 +442,41 @@ function baseMetricsKey(finding) {
   return BASE_METRIC_KEYS.map((key) => `${key}:${metrics[key]}`).join('/');
 }
 
-// An evidence entry is "meaningful" when at least one of its three
-// subfields is a non-empty string; an empty {} entry (or a non-object
-// entry) carries no evidence and can never be the shared item rule
-// (d) requires. Canonical form fixes the key order so the same entry
-// written with different key order still matches.
+// Canonical evidence entry key, with a round-96 fallback for
+// structured evidence. Classic entries carry request/response/
+// notes; an entry counts only when at least one of those is a
+// non-empty string, and the key is exactly those three fields
+// (extra fields do not distinguish entries — unchanged
+// behavior). Entries that carry NONE of the three classic
+// subfields were invisible to rule (d): they could never be the
+// shared entry, so findings from a detector with that evidence
+// shape (the round-95 AST detector's {type, sink, kind, line,
+// column, call, taint} entries) could never merge — the policy
+// silently did not apply to a whole detector class, and the
+// evidence union in mergeFindingGroup collapsed distinct AST
+// entries onto one key. The fallback canonicalizes the FULL
+// entry with sorted keys, and it counts only when the entry
+// carries at least one non-empty string leaf, so an empty or
+// all-blank entry still can never be the shared item. The four
+// merge conditions do not change: (d) still requires a shared
+// entry — the fallback only recognizes entries the classic
+// shape could not see. A fallback key never collides with a
+// classic key (it carries the `full:` prefix).
+function stableStringify(value) {
+  if (value === undefined) return 'null';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => (item === undefined ? 'null' : stableStringify(item))).join(',')}]`;
+  const keys = Object.keys(value).filter((key) => value[key] !== undefined).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+
+function hasNonEmptyStringLeaf(value) {
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.some(hasNonEmptyStringLeaf);
+  if (value && typeof value === 'object') return Object.values(value).some(hasNonEmptyStringLeaf);
+  return false;
+}
+
 function canonicalEvidenceEntry(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return { key: JSON.stringify(entry), meaningful: false };
@@ -455,10 +485,10 @@ function canonicalEvidenceEntry(entry) {
   const request = field('request');
   const response = field('response');
   const notes = field('notes');
-  return {
-    key: JSON.stringify({ request, response, notes }),
-    meaningful: request !== null || response !== null || notes !== null,
-  };
+  if (request !== null || response !== null || notes !== null) {
+    return { key: JSON.stringify({ request, response, notes }), meaningful: true };
+  }
+  return { key: `full:${stableStringify(entry)}`, meaningful: hasNonEmptyStringLeaf(entry) };
 }
 
 function meaningfulEvidenceKeys(finding) {
@@ -576,9 +606,14 @@ function mergeFindingGroup(members) {
     if (environmental.length > 0) merged.cvss_environmental_score = Math.max(...environmental);
     else delete merged.cvss_environmental_score;
   }
-  merged.merged_from = members
+  // merged_from is an id SET (round 96): two members can share
+  // one finding_id (deterministic detector ids — e.g. two
+  // identical tainted-deserialize records) and the merged
+  // finding lists it once, matching how report-diff treats
+  // merged_from as an id set.
+  merged.merged_from = [...new Set(members
     .map((member) => member.finding_id)
-    .filter((id) => typeof id === 'string');
+    .filter((id) => typeof id === 'string'))];
   return merged;
 }
 
