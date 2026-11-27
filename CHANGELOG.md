@@ -7,6 +7,57 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 94: Public-fetch activation drill — E2E chain, refusal matrix, kill-switch drill (2026-11-28)
+
+- The round-93 invocation path is drilled end to end with stub
+  transport/resolver only (new
+  `tests/public-fetch-activation-drill.test.js`, 8 tests):
+  register → preview → mint → fetch, audit trail in order
+  (`PUBLIC_TARGET_ADDED` → `PUBLIC_FETCH_APPROVAL_MINTED` →
+  `PUBLIC_HTTP_REQUEST_ALLOWED` → `PUBLIC_HTTP_RESPONSE`), no
+  token/body/reference in the audit log. The refusal matrix is
+  replayed as a sequence: every gate refuses before any
+  network, and a refusal decided before the token is read does
+  not spend it — the same token still fetches afterwards.
+  A refusal decided after the token is consumed (DNS failure;
+  the adapter's kill-switch re-check) burns it.
+- Kill-switch drill at every point in the chain, with the
+  persistent kill switch in a real temp state directory:
+  trigger before fetch refuses (`KILL_SWITCH_ACTIVE`, zero
+  requests, zero DNS) and the token is NOT spent; minting is
+  refused while armed; add/remove are refused while armed
+  (`target list` still works); reset restores service and a
+  token minted before the trigger, never spent, still within
+  its TTL, still fetches after reset (documented semantics:
+  the switch blocks use while armed, it does not revoke
+  approvals). A trip between token consume and adapter run is
+  refused by the adapter's own re-check (token burned, zero
+  requests, worker registration never reached). A trigger
+  mid-flight aborts a hanging request in ~160–220 ms with
+  `PROCESS_FAILED` + `cancellation: 'KILL_SWITCH_ACTIVE'` —
+  both via direct worker cancel and via the cross-instance
+  poller. The CLI drill (register → mint → trigger →
+  refusals → reset → CLI-minted token fetches at module level
+  with stubs) proves the CLI-produced stores interoperate
+  with the fetch path.
+- Fix found by the drill: the adapter's in-flight abort detail
+  (`cancellation: 'KILL_SWITCH_ACTIVE'`) was dropped by
+  `runPublicFetch`, so a kill-switch abort looked like a bare
+  `PROCESS_FAILED`; it is now propagated when present
+  (additive only; the refusal reason stays the contract).
+- Operator runbook: new
+  `docs/public-fetch-activation-drill-v1.md` (activation chain
+  table, what each refusal spends, kill-switch drill table,
+  pre-trigger-token semantics), listed in `docs/README.md` and
+  anchored in both SKILL.md copies.
+- No real-target execution in this round: all fetch tests use
+  stub transport/resolver; no CLI spawn test presents a valid
+  token. Phase 4 moves to ~90%; what keeps F4 from 100% is a
+  first real fetch against a real registered target, which
+  needs the user's word, a registered target with a verified
+  authorization reference, and the five activation
+  requirements.
+
 ### Round 93: Public-fetch invocation path — `sentinel target` + `sentinel fetch` (2026-11-28)
 
 - The user approved ("Boleh", 28 Nov ~02:01 WIB) the two-step
