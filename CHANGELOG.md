@@ -61,6 +61,59 @@ are the reports' own first-implementation estimates, not test counts.
   open decisions (which further detectors, auto-run, async)
   are unchanged.
 
+### Third real detector: insecure-crypto over local text (round 88, 2026-11-27)
+
+- Windows run verdict for the round-87 commit `e2d164b`
+  could NOT be checked this round: the unauthenticated GitHub
+  API returns 403 "API rate limit exceeded" for the shared
+  egress IP (104.29.197.140) — no run list, no jobs, no
+  verdict, and no fix was guessed from the absence. No token
+  was used (none is available to this round) and no run log
+  was downloaded. The check is deferred to the next round,
+  when the rate-limit window may have reset; the red `933e0e7`
+  run stays unexplained as before.
+- F5's third real detector: `insecure-crypto`
+  (`src/detection/insecure-crypto.js`, registered as the
+  built-in `--detector insecure-crypto` alongside `stub`,
+  `secret-scan`, and `dangerous-call`; CLI help and
+  `runDetect` comment updated). It scans the `content` string
+  of an operator-supplied local input record for six
+  weak-cryptography call-site patterns (MD5/SHA-1 hash calls,
+  ECB cipher mode, DES/3DES/RC4/ARC4 cipher instantiation,
+  Node's deprecated `crypto.createCipher()` /
+  `createDecipher()`, `Math.random()` / `random.random()`)
+  and reports one finding per distinct call site in the
+  `cryptographic failure` class (CWE-327, CWE-338 for the weak
+  PRNG; DES/RC4 high, the rest medium — each medium pattern is
+  only exploitable in a sensitive context the detector cannot
+  prove), confidence `potential`, never executing the code it
+  scans. No network, no scanner, no target; the detector only
+  ever sees text the operator hands it. Safety properties, all
+  tested: a finding carries only the matched call text (never
+  the whole source line, which could hold adjacent sensitive
+  data); `finding_id` is deterministic (`insecure-crypto-` +
+  SHA-256 of pattern + line + column + match, first 16 hex);
+  one finding per call site with the first occurrence line and
+  column; at most 100 findings per record with the truncation
+  recorded in `errors`, never silent; content over 1,000,000
+  characters is skipped; a record without usable content is
+  counted in `skipped`, never thrown; batch records follow the
+  stub convention (batch `tool` forced as `discovery_tool`).
+  A DES cipher in ECB mode is two distinct weaknesses and
+  yields two findings, one per pattern (tested explicitly).
+  The detect → validate → dedupe → report pipeline is proven
+  end to end by test (findings validate as `valid` under the
+  generic checklist — `cryptographic failure` has no dedicated
+  checklist class and resolves to the generic fallback, the
+  same situation as round 87's code-injection classes — and
+  the JSON report carries the per-finding evidence checklist).
+  16 new tests (`tests/insecure-crypto.test.js`); see
+  `docs/detection-insecure-crypto-v1.md`. SKILL.md's detector
+  paragraph now names `insecure-crypto` as the third real
+  detector (both copies, still 150 lines, `cmp` passes); the
+  open decisions (which further detectors, auto-run, async)
+  are unchanged.
+
 ### First real detector: secret-scan over local text (round 86, 2026-11-27)
 
 - Windows run verdict for the round-85 commit `82d68d4`

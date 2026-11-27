@@ -93,7 +93,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1125,7 +1125,13 @@ async function runDetect(args) {
   // detector — it scans the `content` string for risky code-sink
   // calls (eval, Function, command execution, innerHTML,
   // document.write, unsafe deserialization) and reports one
-  // finding per distinct call site, never executing the code; a
+  // finding per distinct call site, never executing the code;
+  // `insecure-crypto` (round 88) is the third real detector — it
+  // scans the `content` string for weak-cryptography call sites
+  // (MD5/SHA-1 hashes, ECB mode, DES/RC4 ciphers, Node's
+  // deprecated createCipher()/createDecipher(), Math.random() /
+  // random.random()) and reports one finding per distinct call
+  // site, never executing the code; a
   // path loads a custom detector module from inside the skill
   // directory (refused with a named DETECTOR_* error when it is
   // missing, malformed, a symlink, or outside the skill root).
