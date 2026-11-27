@@ -3,13 +3,16 @@
 // activation gate as the local adapter — plus two rules the
 // local adapter does not need.
 //
-// This module is INFRASTRUCTURE, not an execution: it
-// implements the adapter and its gate, and no CLI command
-// invokes it yet. Nothing in this round runs it against a
-// real target: there is no registered target with a
+// This module is the gate and the transport. It is invoked by
+// exactly one command — `sentinel fetch` (round 93,
+// src/http/public-fetch.js) — which resolves the target, shows the
+// preview, and obtains the explicit human approval before calling
+// get(). Nothing else calls it, and nothing in this round runs it
+// against a real target: there is no registered target with a
 // verified authorization reference, and the tests use a stub
-// transport and a stub resolver only (no real socket, no
-// real DNS). See docs/public-http-adapter-v1.md.
+// transport and a stub resolver only (no real socket, no real DNS).
+// See docs/public-http-adapter-v1.md and
+// docs/public-http-invocation-v1.md.
 //
 // The gate, in order — the first failing rule decides, the
 // rest are never evaluated:
@@ -51,7 +54,7 @@
 //      (the unregister discipline of the local adapter,
 //      round 47).
 //
-// Node stdlib only. No CLI invokes this adapter yet.
+// Node stdlib only. Invoked only by `sentinel fetch` (round 93).
 'use strict';
 
 const dns = require('node:dns');
@@ -288,7 +291,7 @@ class PublicHttpAdapter {
                 : { action: 'UNSUPPORTED' };
               await this.#audit.append('PUBLIC_HTTP_RESPONSE', { targetId, url, statusCode: response.statusCode, contentLength: bytes, redirected: [301, 302, 303, 307, 308].includes(response.statusCode), pressureAction: pressure.action });
               const headers = Object.fromEntries(Object.entries(response.headers).map(([key, value]) => [key, redact(value, key)]));
-              await finishRun(result(true, 'HTTP_COMPLETED', { statusCode: response.statusCode, headers, body: body.join(''), truncated: bytes > this.#maxBodyBytes }));
+              await finishRun(result(true, 'HTTP_COMPLETED', { statusCode: response.statusCode, contentLength: bytes, redirected: [301, 302, 303, 307, 308].includes(response.statusCode), headers, body: body.join(''), truncated: bytes > this.#maxBodyBytes }));
             } catch {
               await finishRun(result(false, 'AUDIT_UNAVAILABLE'));
             }

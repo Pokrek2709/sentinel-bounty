@@ -32,6 +32,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [pending-promise-audit-v1](pending-promise-audit-v1.md) — Audit of every unawaited async call in `src/` and `bin/` (the adapter's fire-and-forget `unregister()`, the wrapper's throwing `terminate()`, the adapter poller's unguarded `cancel()`, lock close/unlink ordering), the fixes, and the regression guard (`tests/pending-promise-guard.test.js` + allowlist); for implementers and reviewers of async safety.
 - [local-http-adapter-v1](local-http-adapter-v1.md) — GET-only `localhost` HTTP adapter for the local lab; for implementers and reviewers of lab network access.
 - [public-http-adapter-v1](public-http-adapter-v1.md) — GET-only public-target HTTP adapter (round 90 groundwork: public-hostname rule, authorization-reference match, post-approval DNS resolution refusing non-public addresses; no CLI command invokes it yet, nothing runs against a real target); for implementers and reviewers of public-target network access.
+- [public-http-invocation-v1](public-http-invocation-v1.md) — Public-fetch invocation path (round 93: `sentinel target add/list/remove` and `sentinel fetch`, preview + interactive YA confirmation or a 5-minute one-time token, scope-prefix enforcement, redirect never followed, metadata-only audit); for operators invoking the public adapter and reviewers of the invocation gate.
 
 ## Finding pipeline (phases 5–7, fixtures only)
 

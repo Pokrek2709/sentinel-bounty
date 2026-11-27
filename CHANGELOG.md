@@ -7,6 +7,48 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 93: Public-fetch invocation path — `sentinel target` + `sentinel fetch` (2026-11-28)
+
+- The user approved ("Boleh", 28 Nov ~02:01 WIB) the two-step
+  invocation design proposed by the parent: register once, then
+  invoke per request with explicit human approval. This round
+  builds the CLI + activation verification + tests for it.
+- `sentinel target add <host> --scope <path> --purpose <purpose>
+  --auth-ref <reference>` registers a public target in the new
+  `<state-dir>/public-targets.json` store (one host, one
+  path-prefix scope, one purpose, one authorization reference;
+  exact host only, no wildcards). A separate store was required
+  because the scope schema cannot express a path-prefix
+  allowlist (`allowed_urls` is validated but never enforced in
+  scope evaluation). `target list` (read-only, never prints the
+  reference) and `target remove` are added for symmetry with
+  `scope`; add/remove are refused while the kill switch is
+  armed; a conflicting re-add is refused
+  (`PUBLIC_TARGET_ALREADY_REGISTERED`), an identical re-add is
+  an idempotent no-op.
+- `sentinel fetch --url <url>` is the ONLY command that invokes
+  the public HTTP adapter: unregistered host refused outright,
+  kill-switch and scope-prefix checks, preview (GET only, no
+  headers/body/credentials, 5 s timeout, 1 MiB body cap), then
+  explicit human approval — interactive YA confirmation
+  (terminal only, no `--yes` flag) or a one-time token from
+  `fetch --mint-approval` (5-minute TTL, bound to the exact
+  URL/target/fingerprint, single-use, consumed before the
+  adapter runs so a DNS failure still burns it; the store holds
+  only the SHA-256 hash). The adapter then runs its own gate
+  and never follows a redirect. The response body goes to the
+  operator's stdout only, never to the audit log.
+- The adapter result gained `contentLength` and `redirected`
+  (both already recorded in the audit event; additive only).
+  Lock files in the two new stores ensure the state directory
+  first (a missing directory used to surface as a bogus
+  `*_STORE_LOCKED`).
+- No real-target execution in this round: all fetch tests use
+  stub transport/resolver; no CLI spawn test presents a valid
+  token. Phase 4 moves up (invocation path complete); the
+  remaining F4 work is the end-to-end activation drill (roadmap
+  round 94).
+
 ### Round 91: Windows run for c4c9060 diagnosed by name from the user-supplied log, test fixed (2026-11-28)
 
 - The user supplied the Windows run log

@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
+const readline = require('node:readline');
 const { runEnvironmentCheck } = require('../src/environment/checker');
 const { TargetRegistry, renderScopeExplanationText } = require('../src/scope/target-registry');
 const { PersistentKillSwitch } = require('../src/policy/persistent-kill-switch');
@@ -42,6 +43,18 @@ const { closeAndRemoveLock } = require('../src/policy/lock-file');
 const { getDetector, runDetector } = require('../src/detection/detector');
 const { excludeFalsePositives } = require('../src/analysis/policies');
 const { storePathFor, addScopeTarget, removeScopeTarget, findScopeTarget, listScopeTargets } = require('../src/scope/target-store');
+const {
+  storePathFor: publicTargetStorePathFor,
+  addPublicTarget,
+  removePublicTarget,
+  listPublicTargets,
+} = require('../src/scope/public-target-store');
+const {
+  previewPublicFetch,
+  mintPublicFetchApprovalFor,
+  runPublicFetch,
+  renderPreviewText,
+} = require('../src/http/public-fetch');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -70,6 +83,10 @@ function usage() {
     '  sentinel scope add <target.json> [--state-dir <path>]',
     '  sentinel scope remove <target-id> [--state-dir <path>]',
     '  sentinel scope list [--state-dir <path>] [--store <file>] [--url <url>] [--json]',
+    '  sentinel target add <host> --scope <path> --purpose <purpose> --auth-ref <reference> [--program <name>] [--state-dir <path>]',
+    '  sentinel target list [--state-dir <path>] [--json]',
+    '  sentinel target remove <host> [--state-dir <path>]',
+    '  sentinel fetch --url <url> [--state-dir <path>] [--timeout-ms <n>] [--max-body-bytes <n>] [--mint-approval] [--approve-token <token>]',
     '  sentinel kill-switch status [--state-dir <path>]',
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
@@ -317,6 +334,160 @@ async function runScopeCommand(args) {
   const auditLogged = await appendOperatorAudit(stateDirectory, 'SCOPE_TARGET_REMOVED', { targetId: result.targetId, store: storePath });
   process.stdout.write(`${JSON.stringify({ ...result, store: storePath, auditLogged }, null, 2)}\n`);
   if (!auditLogged) process.exitCode = 4;
+}
+
+// Public-target management (Phase 4, round 93). The persistent
+// store is `<state-dir>/public-targets.json` — one host, one
+// path-prefix scope, one purpose, one authorization reference per
+// entry. Like scope changes, add/remove are operator config writes,
+// so they are refused while the kill-switch is ARMED; a successful
+// mutation writes an audit record (PUBLIC_TARGET_ADDED /
+// PUBLIC_TARGET_REMOVED); a mutation whose audit append fails
+// reports `auditLogged: false` and exits 4. A duplicate add with
+// identical fields is an idempotent no-op (exit 0, no rewrite, no
+// audit record); a duplicate with different fields is refused by
+// the store (PUBLIC_TARGET_ALREADY_REGISTERED — remove first, then
+// re-add). `target list` is read-only: it changes nothing, so it
+// needs no kill-switch guard and works while the switch is armed.
+// The authorization reference is never printed by list (neither
+// text nor JSON): the fetch command reads it from the store
+// directly.
+function renderPublicTargetListText(result) {
+  if (result.count === 0) return `No public targets in ${result.store}.`;
+  const lines = [`Public targets in ${result.store} (${result.count}):`];
+  for (const entry of result.targets) {
+    lines.push(`  ${entry.targetId} | scope: ${entry.scope} | purpose: ${entry.purpose} | program: ${entry.programName} | budget: ${entry.requestBudget}`);
+  }
+  return lines.join('\n');
+}
+
+async function runTargetCommand(args) {
+  const [action, value, ...optionArgs] = args;
+  if (action === 'list') {
+    const listArgs = args.slice(1);
+    const json = listArgs.includes('--json');
+    const options = parseOptions(listArgs.filter((argument) => argument !== '--json'), ['--state-dir']);
+    const storePath = publicTargetStorePathFor(path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY));
+    const result = await listPublicTargets(storePath);
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`${renderPublicTargetListText(result)}\n`);
+    return;
+  }
+  if (action !== 'add' && action !== 'remove') {
+    throw new Error('target requires an action: add, remove, or list.');
+  }
+  if (!value || value.startsWith('--')) {
+    throw new Error(action === 'add' ? 'target add requires a <host>.' : 'target remove requires a <host>.');
+  }
+  const options = parseOptions(optionArgs, action === 'add' ? ['--scope', '--purpose', '--auth-ref', '--program', '--state-dir'] : ['--state-dir']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const storePath = publicTargetStorePathFor(stateDirectory);
+  const { killSwitch } = await killSwitchFor({ stateDir: stateDirectory });
+  const guard = await killSwitch.assertNotTriggered();
+  if (!guard.allowed) {
+    process.stdout.write(`${JSON.stringify({ [action === 'add' ? 'added' : 'removed']: false, reason: 'PUBLIC_TARGET_CHANGE_REFUSED_KILL_SWITCH_ACTIVE', trigger: guard.trigger || null }, null, 2)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (action === 'add') {
+    if (!options.scope || !options.purpose || !options.authRef) {
+      throw new Error('target add requires --scope, --purpose, and --auth-ref.');
+    }
+    const result = await addPublicTarget(storePath, {
+      host: value,
+      scope: options.scope,
+      purpose: options.purpose,
+      authorization_reference: options.authRef,
+      ...(options.program ? { program_name: options.program } : {}),
+    });
+    if (!result.added) {
+      // Idempotent no-op: nothing was written and nothing was logged.
+      process.stdout.write(`${JSON.stringify({ ...result, store: storePath }, null, 2)}\n`);
+      return;
+    }
+    const auditLogged = await appendOperatorAudit(stateDirectory, 'PUBLIC_TARGET_ADDED', { targetId: result.targetId, host: value, scope: options.scope, store: storePath });
+    process.stdout.write(`${JSON.stringify({ ...result, store: storePath, auditLogged }, null, 2)}\n`);
+    if (!auditLogged) process.exitCode = 4;
+    return;
+  }
+  const result = await removePublicTarget(storePath, value);
+  const auditLogged = await appendOperatorAudit(stateDirectory, 'PUBLIC_TARGET_REMOVED', { targetId: result.targetId, store: storePath });
+  process.stdout.write(`${JSON.stringify({ ...result, store: storePath, auditLogged }, null, 2)}\n`);
+  if (!auditLogged) process.exitCode = 4;
+}
+
+// Public fetch (Phase 4, round 93): the ONLY command that invokes
+// the public HTTP adapter. The preview is printed to stderr so
+// stdout stays clean JSON. The flow, in order:
+//   --mint-approval: resolve the context, print the preview, mint
+//     a one-time token (5-minute TTL, bound to this exact URL /
+//     target / scope fingerprint) and print it ONCE on stdout.
+//     Nothing is executed.
+//   --approve-token <token>: consume the token (single-use — a fetch
+//     that then fails still burns it), then run the adapter.
+//   default (no token): the operator must be at a terminal — a
+//     piped stdin cannot type YA — then the prompt asks for an
+//     explicit YA; anything else denies and nothing is executed.
+// There is deliberately no --yes flag. Exit 0 when fetched, 1 on a
+// gate refusal or usage error, 4 when an audit append failed
+// (auditLogged: false). The response body goes to stdout only,
+// never to the audit log.
+async function runFetchCommand(args) {
+  const mintApproval = args.includes('--mint-approval');
+  const options = parseOptions(args.filter((argument) => argument !== '--mint-approval'), ['--url', '--state-dir', '--timeout-ms', '--max-body-bytes', '--approve-token']);
+  if (!options.url) throw new Error('fetch requires --url.');
+  if (mintApproval && options.approveToken) throw new Error('fetch: --mint-approval and --approve-token are mutually exclusive.');
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const timeoutMs = options.timeoutMs === undefined ? undefined : Number(options.timeoutMs);
+  const maxBodyBytes = options.maxBodyBytes === undefined ? undefined : Number(options.maxBodyBytes);
+  if (mintApproval) {
+    const minted = await mintPublicFetchApprovalFor({ stateDir: stateDirectory, url: options.url, timeoutMs, maxBodyBytes });
+    if (!minted.minted) {
+      process.stdout.write(`${JSON.stringify({ minted: false, reason: minted.reason, targetId: minted.targetId || null, auditLogged: minted.auditLogged }, null, 2)}\n`);
+      process.exitCode = minted.auditLogged === false ? 4 : 1;
+      return;
+    }
+    process.stderr.write(`${renderPreviewText(minted.preview)}\n`);
+    process.stdout.write(`${JSON.stringify({ minted: true, token: minted.token, expiresAt: new Date(minted.expiresAt).toISOString(), targetId: minted.preview.targetId, url: minted.preview.url, auditLogged: minted.auditLogged }, null, 2)}\n`);
+    if (minted.auditLogged === false) process.exitCode = 4;
+    return;
+  }
+  const previewed = await previewPublicFetch({ stateDir: stateDirectory, url: options.url, timeoutMs, maxBodyBytes });
+  if (!previewed.allowed) {
+    process.stdout.write(`${JSON.stringify({ fetched: false, reason: previewed.reason, targetId: previewed.targetId || null }, null, 2)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  process.stderr.write(`${renderPreviewText(previewed.preview)}\n`);
+  let approval;
+  if (options.approveToken) {
+    approval = { kind: 'token', token: options.approveToken };
+  } else {
+    if (!process.stdin.isTTY) {
+      process.stdout.write(`${JSON.stringify({ fetched: false, reason: 'PUBLIC_HTTP_APPROVAL_REQUIRES_TTY', targetId: previewed.preview.targetId }, null, 2)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    approval = {
+      kind: 'interactive',
+      confirm: async () => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise((resolve) => {
+          rl.question('Type YA to approve this fetch (anything else cancels): ', (line) => {
+            rl.close();
+            resolve(line);
+          });
+        });
+        return answer.trim().toLowerCase() === 'ya';
+      },
+    };
+  }
+  const fetched = await runPublicFetch({ stateDir: stateDirectory, url: options.url, approval, timeoutMs, maxBodyBytes });
+  process.stdout.write(`${JSON.stringify(fetched, null, 2)}\n`);
+  if (!fetched.fetched) process.exitCode = fetched.auditLogged === false ? 4 : 1;
 }
 
 async function runKillSwitch(action, args) {
@@ -1425,6 +1596,14 @@ async function main(argv) {
   }
   if (command === 'scope') {
     await runScopeCommand(args);
+    return;
+  }
+  if (command === 'target') {
+    await runTargetCommand(args);
+    return;
+  }
+  if (command === 'fetch') {
+    await runFetchCommand(args);
     return;
   }
   if (command === 'check-scope') {
