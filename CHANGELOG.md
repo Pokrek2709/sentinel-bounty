@@ -7,6 +7,72 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 90: user decisions executed — asset_url scrub, F6 policies, fifth detector, public HTTP adapter groundwork, first release tag (2026-11-28)
+
+- User decision 28 Nov 2026 ~01:03 WIB ("Semua yang di
+  daftar"): the operator approved the whole pending-decision
+  list at once. This round executes items 1–3 and 5 in full,
+  item 4 (tagging) at the end, and records items 6–7 as still
+  blocked/pending.
+- `asset_url` is now scrubbed by `report anonymize`: the host
+  maps to a deterministic `anon-<sha256(salt + ':' +
+  host).slice(0, 12)>` value, scheme/port/path/query/fragment
+  preserved, userinfo stripped, and a non-URL value passes
+  through unchanged. The pinned test that asserted
+  "asset_url is NOT scrubbed" is replaced by four tests
+  (host mapping, userinfo strip, fallback non-URL, salt
+  mapping). See `docs/report-anonymize-v1.md`.
+- Phase 6 policies v1 (`src/analysis/policies.js`,
+  `docs/policies-f6-v1.md`): semantic dedup is
+  `conservative`, rule-verdict false positives are
+  `exclude-from-reports` (opt back in with
+  `--include-false-positives` on `--finding`/`--findings`;
+  when every finding is excluded the report fails with
+  `REPORT_ALL_FINDINGS_FALSE_POSITIVE` and a stderr note),
+  AI verdicts are advisory-only and never override the rule
+  verdict (`AI_VERDICT_OVERRIDE=false`), detection is NOT
+  auto-run and detectors are NOT async. The false-positive
+  exclusion is the only policy that changes runtime behavior;
+  the rest pins behavior that already existed.
+- F5's fifth real detector: `insecure-transport`
+  (`src/detection/insecure-transport.js`, registered as the
+  built-in `--detector insecure-transport`). It scans the
+  `content` string of an operator-supplied local input record
+  for cleartext HTTP URLs (carrying only `http://<host>`,
+  never path/query/userinfo; loopback never matches) and
+  disabled TLS verification, one finding per distinct call
+  site, never executing the code it scans. The detection
+  policy (`docs/detection-policy-v1.md`) declares the
+  detector set complete for the synchronous regex approach:
+  SQL/template/LDAP/XPath need a parser, path traversal /
+  SSRF / open redirect / XXE / ReDoS need taint, and key
+  management / certificate validation / password-storage are
+  outside call-site reach; auto-run is NO and async is NO.
+- Public HTTP adapter groundwork
+  (`src/http/public-http-adapter.js`,
+  `docs/public-http-adapter-v1.md`): a GET-only adapter for
+  public targets mirroring the local adapter, with a
+  public-hostname rule, an authorization-reference match
+  against the registered target
+  (`TargetRegistry.getAuthorizationReference`), and a
+  post-approval DNS resolution that refuses non-public
+  addresses (SSRF guard, including 169.254.169.254). Tests
+  use a stub transport and a stub resolver only; no CLI
+  command invokes the adapter yet and nothing runs against
+  a real target — the activation requirements stand.
+- Windows run verdict for the round-89 commit `31df812`
+  (round 90, part 6): run 46042520416 completed
+  2026-11-27T17:59:36Z with conclusion `failure` — job `test`
+  failed at step `Run npm test` (~34 s; setup, checkout,
+  setup-node all success). The failing test name is not
+  retrievable (log download 403), so no fix was attempted;
+  this is the third unexplained red run, and the flake
+  hypothesis is weakening.
+- First release tag `v0.1.0` (annotated) on the round-90
+  commit: pre-1.0 because the Meta integration items and the
+  public-adapter invocation path are still outstanding and
+  three Windows runs are red and unexplained.
+
 ### Second real detector: dangerous-call over local text (round 87, 2026-11-27)
 
 - Windows run verdict for the round-86 commit `4c10a44`
@@ -1793,7 +1859,7 @@ harden validator`).
 
 ## Known issues
 
-- **Windows CI native run: GREEN on the round-87 commit, RED on the round-88 commit.**
+- **Windows CI native run: GREEN on the round-87 commit, RED on the round-88 and round-89 commits.**
   GitHub Actions `windows-latest` passed `npm test` four times —
   run 45881977604, head `d2d1991`, 2026-11-26T19:13:08Z,
   conclusion `success`, the first green Windows run in the
@@ -1804,7 +1870,8 @@ harden validator`).
   first green run for the round-86 commit itself — and run
   46034607189, head `e2d164b`, 2026-11-27T16:33:24Z,
   conclusion `success` (round 89), the first green run for
-  the round-87 commit itself. Two runs are RED and unexplained.
+  the round-87 commit itself. Three runs are RED and
+  unexplained.
   Between the first two green runs, run 45882467549 for head
   `933e0e7` (round 84's docs-only commit) completed
   2026-11-26T23:31:34Z with conclusion `failure`: job `test`
@@ -1813,14 +1880,19 @@ harden validator`).
   head `98f09cb` (round 88's detector commit) completed
   2026-11-27T17:07:30Z with conclusion `failure`: job `test`
   failed at step `Run npm test` (setup, checkout, setup-node
-  all success). The failing test name is not retrievable from
+  all success). And run 46042520416 for head `31df812`
+  (round 89's detector commit) completed 2026-11-27T17:59:36Z
+  with conclusion `failure`: job `test` failed at step
+  `Run npm test` (~34 s; setup, checkout, setup-node all
+  success). The failing test name is not retrievable from
   the lab without repo-admin log access (log download returns
-  403), so no fix was attempted for either red run — a blind
-  fix is not a fix. A bounded local investigation in round 89
-  found no Windows-hostile construct in the round-88 change,
-  so the second red run stays unexplained, not resolved; it
-  may be a flake in a timing-sensitive pre-existing test or a
-  genuine Windows-only issue invisible without the log. The
+  403), so no fix was attempted for any of the three red runs
+  — a blind fix is not a fix. A bounded local investigation
+  in round 89 found no Windows-hostile construct in the
+  round-88 change, so the second and third red runs stay
+  unexplained, not resolved; they may be a flake in a
+  timing-sensitive pre-existing test or a genuine
+  Windows-only issue invisible without the log. The
   evidence that decides either red run is the failing test
   name from the run log, which needs the user's admin access.
   The ten run-54 failures were fixed by name in round 83 after

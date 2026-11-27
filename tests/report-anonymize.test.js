@@ -77,7 +77,7 @@ test('anonymizes identifiers and keeps the findings intact', () => {
   const anonymized = anonymizeReport(report);
   assert.deepEqual(anonymized.summary, {
     total: 3,
-    identifiers_replaced: 9,
+    identifiers_replaced: 10,
     text_substitutions: 0,
     salt_source: 'default',
   });
@@ -85,7 +85,7 @@ test('anonymizes identifiers and keeps the findings intact', () => {
   assert.equal(parsed.anonymized, true);
   assert.deepEqual(parsed.anonymization, {
     salt_source: 'default',
-    patterns: ['ipv4-dotted-quad', 'hostname-.local/.internal'],
+    patterns: ['ipv4-dotted-quad', 'hostname-.local/.internal', 'asset-url-host'],
   });
   // The report id is the generator's own derivation (program +
   // sorted finding ids), and anonymization preserves exactly
@@ -225,7 +225,7 @@ test('salt validation: non-hex, too short, and too long are refused without echo
   // The boundaries are accepted: 8 and 64 hex chars.
   assert.equal(validateSalt('abcdef12'), 'abcdef12');
   assert.equal(validateSalt('a'.repeat(64)), 'a'.repeat(64));
-  assert.equal(SCRUB_PATTERNS.length, 2);
+  assert.equal(SCRUB_PATTERNS.length, 3);
 });
 
 test('a finding that fails the strict check fails anonymization', () => {
@@ -279,15 +279,55 @@ test('the input report is not mutated', () => {
   assert.equal(JSON.stringify(report), before);
 });
 
-test('asset_url is NOT scrubbed (documented limitation of this round)', () => {
+test('asset_url host is scrubbed (round 90, user-approved): host replaced, path kept', () => {
   // The CRIT finding's asset_url names an internal host
-  // (https://lab.example.internal/login). This round scrubs
-  // description and evidence notes only, so the URL survives
-  // verbatim — pinned here so a future change is deliberate,
-  // not accidental. See docs/report-anonymize-v1.md.
+  // (https://lab.example.internal/login). Round 90 replaces the
+  // host with the deterministic anonymized mapping for that
+  // host and preserves scheme, port, path, query, and
+  // fragment — the path names the affected endpoint, which a
+  // program needs to reproduce the finding. The old pinned
+  // test ("asset_url is NOT scrubbed") is retired here by the
+  // user's 2026-11-28 decision, not by accident.
   const report = generatedReport(ALL);
   const parsed = JSON.parse(anonymizeReport(report).report);
-  assert.equal(parsed.findings[0].asset_url, 'https://lab.example.internal/login');
+  // The anonymized report is grouped by anonymized asset_id, so
+  // the finding order is salt-dependent — look the CRIT finding
+  // up by id, never by index.
+  const crit = parsed.findings.find((f) => f.finding_id === 'FND-CRIT-001');
+  assert.equal(
+    crit.asset_url,
+    `https://${expectedAnon(DEFAULT_SALT, 'lab.example.internal')}/login`,
+  );
+});
+
+test('asset_url userinfo is stripped outright, never carried into the output', () => {
+  const report = generatedReport(ALL);
+  report.findings[0].asset_url = 'https://operator:s3cret-pass@lab.example.internal:8443/login?next=/admin';
+  const parsed = JSON.parse(anonymizeReport(report).report);
+  const url = parsed.findings.find((f) => f.finding_id === 'FND-CRIT-001').asset_url;
+  assert.ok(!url.includes('operator'), 'username must not survive');
+  assert.ok(!url.includes('s3cret-pass'), 'password must not survive');
+  assert.equal(
+    url,
+    `https://${expectedAnon(DEFAULT_SALT, 'lab.example.internal')}:8443/login?next=/admin`,
+  );
+});
+
+test('a non-URL asset_url falls back to the text patterns', () => {
+  const report = generatedReport(ALL);
+  report.findings[0].asset_url = 'db01.corp.internal/login';
+  const parsed = JSON.parse(anonymizeReport(report).report);
+  assert.equal(parsed.findings.find((f) => f.finding_id === 'FND-CRIT-001').asset_url, 'anon-host/login');
+});
+
+test('asset_url host mapping follows the salt', () => {
+  const report = generatedReport(ALL);
+  const parsed = JSON.parse(anonymizeReport(report, { salt: 'abcdef1234567890' }).report);
+  assert.equal(
+    parsed.findings.find((f) => f.finding_id === 'FND-CRIT-001').asset_url,
+    `https://${expectedAnon('abcdef1234567890', 'lab.example.internal')}/login`,
+  );
+  assert.equal(parsed.anonymization.salt_source, 'provided');
 });
 
 test('the other report goldens do not move', () => {
@@ -306,7 +346,7 @@ test('CLI: stdout is pure JSON and the summary line goes to stderr', async (t) =
   assert.equal(parsed.report_id, 'RPT-0536be9278ec');
   assert.equal(parsed.anonymized, true);
   assert.equal(parsed.target_id, expectedAnon(DEFAULT_SALT, 'TGT-LAB-001'));
-  assert.equal(stderr, 'anonymized 3 findings (9 identifiers replaced, 0 text substitutions)\n');
+  assert.equal(stderr, 'anonymized 3 findings (10 identifiers replaced, 0 text substitutions)\n');
 });
 
 test('CLI: --out writes mode 0600 and stdout carries only the confirmation', async (t) => {
@@ -316,7 +356,7 @@ test('CLI: --out writes mode 0600 and stdout carries only the confirmation', asy
   fs.writeFileSync(inPath, generateReport(ALL, { programName: PROGRAM, generatedAt: GENERATED_AT, format: 'json' }));
   const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, 'report', 'anonymize', inPath, '--out', outPath]);
   assert.equal(stdout, `Anonymized report written to ${outPath}\n`);
-  assert.equal(stderr, 'anonymized 3 findings (9 identifiers replaced, 0 text substitutions)\n');
+  assert.equal(stderr, 'anonymized 3 findings (10 identifiers replaced, 0 text substitutions)\n');
   assertPrivateModeSync(outPath, 0o600);
   const parsed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
   assert.equal(parsed.anonymized, true);
@@ -333,7 +373,7 @@ test('CLI: --salt changes the mapping and is never printed', async (t) => {
   assert.equal(parsed.anonymization.salt_source, 'provided');
   assert.ok(!stdout.includes('abcdef1234567890'), 'stdout must never contain the salt');
   assert.ok(!stderr.includes('abcdef1234567890'), 'stderr must never contain the salt');
-  assert.equal(stderr, 'anonymized 3 findings (9 identifiers replaced, 0 text substitutions)\n');
+  assert.equal(stderr, 'anonymized 3 findings (10 identifiers replaced, 0 text substitutions)\n');
 });
 
 test('CLI: an invalid salt fails with exit 1 and writes no file', async (t) => {

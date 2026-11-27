@@ -51,6 +51,11 @@ const GENERATED_AT = '2026-11-26T02:00:00.000Z';
 // (/tmp/r73-pins.js, round 73): the byte output of each command on
 // the fixed FIVE fixture set. If the refactor changes even one
 // byte, a pin fails — that is the point.
+// The anonymize pin was re-pinned in round 90: the asset_url scrub
+// (user decision 28 Nov 2026) maps the fixture's
+// https://lab.example.internal/login to
+// https://anon-35cb21804682/login — the host only, scheme and path
+// preserved — and nothing else in the output moved.
 const PINS = {
   filterHigh: 'eb8117b18135e8dcac6527ad8826e8277c468c5ae878b37b5ec143e18b065690',
   filterEmpty: '23722db392c76a9ea2b7b101bd47a4a329da363fd7a90d618887e33ecc40f9f3',
@@ -58,7 +63,7 @@ const PINS = {
   splitVerdict: '8d906cb5976ca1c87dbd2477059c89b5cb3e6a2ac1a4098e545a85d44b73a899',
   mergeSame: '302282df151ab56712a5ec1a7b3864a4a1c98f6a22ad2b9a69010c471c0c838d',
   mergeNewer: '477a8d8614d3e0f89ea14e9f48ff4338b343a0f8e8008685ae7dab1caf6af51f',
-  anonymize: '2d1b264221987824981e1d7e247cc1eb0fc13849d59a6e9736ae3154cddab8c7',
+  anonymize: '721f13407d7bb8dde68182eeae9a97a9030b32ebfbe9f80e507e2a325b15e7eb',
   filterFallback: '8900fc3997112bb7385414f9278ccd8059b5ec9cb821b0e5e38938d545816c44',
   splitFallback: '1715cf56be34f682d9c814c74982bf2e60346748c66410d56e3614eba8347933',
 };

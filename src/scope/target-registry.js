@@ -460,6 +460,21 @@ class TargetRegistry {
     return target ? scopeFingerprint(target) : null;
   }
 
+  // The authorization reference recorded at registration
+  // (round 90, for the public HTTP adapter's activation
+  // gate): the stored reference string, or null when the
+  // target is not registered. Registration requires a
+  // non-empty reference (normalizeTarget), so a registered
+  // target always has one; null means "unregistered", never
+  // "registered without a reference". The value itself is a
+  // reference string (for example a program ticket id), not
+  // a secret — but callers must still never log it; the
+  // adapter's audit events carry targetId and url only.
+  getAuthorizationReference(targetId) {
+    const target = this.#targets.get(targetId);
+    return target ? target.authorizationReference : null;
+  }
+
   isMethodAllowed(targetId, method) {
     const target = this.#targets.get(targetId);
     return Boolean(target && typeof method === 'string' && target.allowedMethods.includes(method));

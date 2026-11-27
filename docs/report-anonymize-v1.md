@@ -111,15 +111,23 @@ the finding. `title`, `impact`, `remediation`,
 `steps_to_reproduce`, `proof_of_concept`, and `references`
 are likewise untouched.
 
-`asset_url` is NOT scrubbed. Its host names the same asset
+`asset_url` IS scrubbed (round 90, user-approved
+2026-11-28 — the round-69 limitation is retired by that
+decision, not by accident). Its host names the same asset
 `asset_id` names, so an `asset_url` like
-`https://lab.example.internal/login` still leaks the
-internal hostname even after `asset_id` is replaced. That
-is a known limitation of this round, pinned by a test so a
-future change is deliberate, not accidental; a future
-round may extend the scrub to it. Operators sharing a
-report with a sensitive `asset_url` should check it by
-hand.
+`https://lab.example.internal/login` would still leak the
+internal hostname even after `asset_id` is replaced. The
+scrub replaces ONLY the host — with the same deterministic
+`anon-<sha256(salt + ':' + host).slice(0, 12)>` mapping as
+the identifiers — while scheme, port, path, query, and
+fragment are preserved (the path names the affected
+endpoint, which a program needs to reproduce the finding,
+the same rationale as the request/response logs). Any
+userinfo in the URL is stripped outright. A value that does
+not parse as an absolute URL falls back to the two text
+patterns above. The host replacement counts as an
+identifier replacement in the summary line, and
+`asset-url-host` is listed in the output's `patterns`.
 
 ## Output
 
@@ -178,10 +186,13 @@ stderr, no output file written).
 - No re-scoring, no semantic dedup, no AI verdict, no
   audit-chain verification (that is `audit verify`'s job).
 - No redaction of finding text beyond the two documented
-  scrub patterns, and no scrubbing of `asset_url`,
-  `request` / `response` logs, `title`, `impact`,
-  `remediation`, `steps_to_reproduce`, `proof_of_concept`,
-  or `references` (see above).
+  scrub patterns plus the `asset_url` host scrub, and no
+  scrubbing of `request` / `response` logs, `title`,
+  `impact`, `remediation`, `steps_to_reproduce`,
+  `proof_of_concept`, or `references` (see above). The
+  `asset_url` path, query, and fragment are preserved by
+  design (they name the affected endpoint); only the host
+  — and any userinfo — is removed.
 - No crypto-grade anonymization: the mapping is a salted
   hash, reversible by anyone holding the original report
   and the salt (see the reversibility warning). The mapping

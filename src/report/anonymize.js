@@ -54,14 +54,21 @@
 // destroy the evidence a program needs to reproduce the
 // finding. `title`, `impact`, `remediation`,
 // `steps_to_reproduce`, `proof_of_concept`, and `references`
-// are likewise untouched. `asset_url` is NOT scrubbed: its
-// host names the same asset `asset_id` names, so an
-// `asset_url` like https://lab.example.internal/login still
-// leaks the internal hostname even after `asset_id` is
-// replaced — that is a known limitation of this round,
-// documented in docs/report-anonymize-v1.md (a future round
-// may extend the scrub to it); operators sharing a report
-// with a sensitive asset_url should check it by hand.
+// are likewise untouched.
+//
+// `asset_url` IS scrubbed (round 90, user-approved 2026-11-28):
+// its host names the same asset `asset_id` names, so leaving it
+// would leak the internal hostname even after `asset_id` is
+// replaced. Only the HOST is replaced — with the same
+// deterministic `anon-<sha256(salt + ':' + host).slice(0, 12)>`
+// mapping as the identifiers — while scheme, port, path, query,
+// and fragment are preserved (the path names the affected
+// endpoint, which a program needs to reproduce the finding, the
+// same rationale as the request/response logs). Any userinfo in
+// the URL is stripped outright (credentials must never survive
+// anonymization). A value that does not parse as an absolute
+// URL falls back to the two text patterns above. See
+// docs/report-anonymize-v1.md.
 //
 // Everything else is preserved byte-for-byte in substance:
 // severity, CVSS scores and vectors, verdict
@@ -120,7 +127,7 @@ const DEFAULT_SALT = 'sentinel-report-anonymize-v1';
 // The scrub patterns, named for the output metadata block and
 // the doc. The list is part of the output, so a consumer can
 // see exactly what was scrubbed.
-const SCRUB_PATTERNS = ['ipv4-dotted-quad', 'hostname-.local/.internal'];
+const SCRUB_PATTERNS = ['ipv4-dotted-quad', 'hostname-.local/.internal', 'asset-url-host'];
 
 // IPv4 dotted quad: four groups of 1-3 digits. Not
 // octet-validated (see the header comment).
@@ -170,6 +177,35 @@ function scrubText(text) {
   return { text: out, substitutions };
 }
 
+// Scrub one asset_url value. Returns { url,
+// identifiers_replaced, text_substitutions }. When the value
+// parses as an absolute URL with a host, the host is replaced
+// with the deterministic anonymized mapping for that host
+// (same formula as anonymizeValue, so the same host always
+// maps to the same replacement under the same salt), any
+// userinfo is stripped outright, and scheme, port, path,
+// query, and fragment are preserved. When the value does not
+// parse as an absolute URL (a bare host or a relative path),
+// the two text patterns are applied instead, and the result
+// counts as text substitutions, not an identifier replacement.
+function anonymizeAssetUrl(salt, url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    const scrubbed = scrubText(url);
+    return { url: scrubbed.text, identifiers_replaced: 0, text_substitutions: scrubbed.substitutions };
+  }
+  if (!parsed.hostname) {
+    const scrubbed = scrubText(url);
+    return { url: scrubbed.text, identifiers_replaced: 0, text_substitutions: scrubbed.substitutions };
+  }
+  parsed.username = '';
+  parsed.password = '';
+  parsed.hostname = anonymizeValue(salt, parsed.hostname);
+  return { url: parsed.toString(), identifiers_replaced: 1, text_substitutions: 0 };
+}
+
 // The generated_at for the anonymized report comes from the
 // generator's shared pickGeneratedAt (round 73): the input's own
 // generated_at when valid, else the newest finding created_at.
@@ -180,12 +216,12 @@ function scrubText(text) {
 
 // Anonymize one finding (deep-cloned by the caller): replace
 // target_id, session_id, and asset_id with their mapped
-// values, and scrub description plus each evidence entry's
-// notes. Returns { finding, identifiers_replaced,
-// text_substitutions }. Only non-empty string values are
-// replaced; anything else is left untouched (the strict check
-// has already run, so a missing required field cannot reach
-// here).
+// values, replace the host of asset_url (round 90), and scrub
+// description plus each evidence entry's notes. Returns
+// { finding, identifiers_replaced, text_substitutions }. Only
+// non-empty string values are replaced; anything else is left
+// untouched (the strict check has already run, so a missing
+// required field cannot reach here).
 function anonymizeFinding(finding, salt) {
   let identifiersReplaced = 0;
   let textSubstitutions = 0;
@@ -195,6 +231,12 @@ function anonymizeFinding(finding, salt) {
       out[field] = anonymizeValue(salt, out[field]);
       identifiersReplaced += 1;
     }
+  }
+  if (typeof out.asset_url === 'string' && out.asset_url.trim() !== '') {
+    const replaced = anonymizeAssetUrl(salt, out.asset_url);
+    out.asset_url = replaced.url;
+    identifiersReplaced += replaced.identifiers_replaced;
+    textSubstitutions += replaced.text_substitutions;
   }
   if (typeof out.description === 'string') {
     const scrubbed = scrubText(out.description);
@@ -303,6 +345,7 @@ module.exports = {
   SCRUB_PATTERNS,
   validateSalt,
   anonymizeValue,
+  anonymizeAssetUrl,
   scrubText,
   anonymizeFinding,
   anonymizeReport,

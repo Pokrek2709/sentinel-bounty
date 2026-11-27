@@ -40,6 +40,7 @@ const { readJsonFileBounded, MAX_FINDINGS } = require('../src/policy/input-limit
 const { runDrill } = require('../src/policy/incident-drill');
 const { closeAndRemoveLock } = require('../src/policy/lock-file');
 const { getDetector, runDetector } = require('../src/detection/detector');
+const { excludeFalsePositives } = require('../src/analysis/policies');
 const { storePathFor, addScopeTarget, removeScopeTarget, findScopeTarget, listScopeTargets } = require('../src/scope/target-store');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
@@ -84,7 +85,7 @@ function usage() {
     '  sentinel state export [--state-dir <path>] [--out <file>]',
     '  sentinel drill [--state-dir <path>] [--recover]',
     '  sentinel report --finding <finding.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--template generic|immunefi|code4rena|hackerone|bugcrowd] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
-    '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>]',
+    '  sentinel report --findings <findings-array.json> [--out <report.md>] [--format markdown|json|html|csv|summary|jsonl] [--generated-at <iso>] [--program <name>] [--allow-mixed-targets] [--verifier stub|<path>] [--include-false-positives]',
     '  sentinel report validate <report.json> [--json]',
     '  sentinel report merge <a-report.json> <b-report.json> [--out <merged.json>]',
     '  sentinel report anonymize <report.json> [--out <anon.json>] [--salt <hex>]',
@@ -93,7 +94,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1037,7 +1038,12 @@ async function runReport(args) {
   // --recover): strip it before parseOptions, which only accepts
   // valued options.
   const allowMixedTargets = args.includes('--allow-mixed-targets');
-  const options = parseOptions(args.filter((argument) => argument !== '--allow-mixed-targets'), ['--finding', '--findings', '--out', '--format', '--template', '--generated-at', '--program', '--verifier']);
+  // --include-false-positives is a boolean flag too (policy F6,
+  // round 90): by default, findings whose RULE verdict is
+  // false_positive are excluded from a report generated from raw
+  // findings; the flag keeps them. Strip it before parseOptions.
+  const includeFalsePositives = args.includes('--include-false-positives');
+  const options = parseOptions(args.filter((argument) => argument !== '--allow-mixed-targets' && argument !== '--include-false-positives'), ['--finding', '--findings', '--out', '--format', '--template', '--generated-at', '--program', '--verifier']);
   if ((options.finding && options.findings) || (!options.finding && !options.findings)) {
     throw new Error('report requires exactly one of --finding and --findings.');
   }
@@ -1055,6 +1061,24 @@ async function runReport(args) {
     findings = await readJsonFileBounded(path.resolve(options.findings));
     if (!Array.isArray(findings)) throw new Error('--findings must contain a JSON array.');
     if (findings.length > MAX_FINDINGS) throw new Error(`Too many findings: ${findings.length} (maximum ${MAX_FINDINGS}).`);
+  }
+  // Policy F6 (round 90, user-approved 2026-11-28): rule-verdict
+  // false_positive findings are excluded from a report generated
+  // from raw findings, unless --include-false-positives is given.
+  // The exclusion runs before generateReport (which is untouched,
+  // so report transformations keep whatever a stored report
+  // already carries). If every finding is excluded, fail
+  // closed with a named error instead of rendering an empty
+  // report — the operator asked for a report, not a blank page.
+  if (!includeFalsePositives) {
+    const { kept, excluded } = excludeFalsePositives(findings);
+    if (findings.length > 0 && kept.length === 0) {
+      throw new Error('REPORT_ALL_FINDINGS_FALSE_POSITIVE: every finding in the input has rule verdict false_positive; nothing to report (use --include-false-positives to keep them).');
+    }
+    if (excluded.length > 0) {
+      process.stderr.write(`Excluded ${excluded.length} false_positive finding${excluded.length === 1 ? '' : 's'} from the report (policy F6; use --include-false-positives to keep them).\n`);
+    }
+    findings = kept;
   }
   const report = generateReport(findings, {
     programName: options.program,
