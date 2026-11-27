@@ -7,6 +7,34 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 91: Windows run for c4c9060 diagnosed by name from the user-supplied log, test fixed (2026-11-28)
+
+- The user supplied the Windows run log
+  (`logs_124580440327.zip`, check suite 124580440327):
+  run 46049522263 for head `c4c9060` (round 90), completed
+  2026-11-27T18:27:37Z, conclusion `failure` — 905 tests,
+  888 pass, 1 fail, 16 skipped. The single failing test is
+  named in the log: `tests/environment-checker.test.js:71`
+  ("checkTool without a runner still probes the real command
+  (default runner)") — `docker --version` spawns but exits
+  non-zero on the windows-2025-vs2026 runner, so the real
+  probe reports `not_verified`, which the test's whitelist
+  (`verified`/`unavailable`) did not accept.
+- Fix (test-only, no production change): the whitelist now
+  accepts `not_verified` as a legitimate real-probe outcome;
+  the regression detector for the round-83 bug is the reason
+  guard (`commandRunner is not a function`), which is
+  unchanged. A new test pins the production behavior the
+  failure relied on: a command that runs but exits non-zero
+  is `not_verified`, never `unavailable` (which means "not
+  found on PATH"). The log is preserved at
+  `~/workspace/sentinel-bounty/windows-ci-logs/logs_124580440327-c4c9060/`.
+  Whether the same test caused the three earlier red runs
+  (`933e0e7`, `98f09cb`, `31df812`) is an unproven
+  hypothesis — their logs were never supplied — and the
+  confirmation is the next green Windows run, not this
+  round's claim.
+
 ### Round 90: user decisions executed — asset_url scrub, F6 policies, fifth detector, public HTTP adapter groundwork, first release tag (2026-11-28)
 
 - User decision 28 Nov 2026 ~01:03 WIB ("Semua yang di
@@ -1870,8 +1898,8 @@ harden validator`).
   first green run for the round-86 commit itself — and run
   46034607189, head `e2d164b`, 2026-11-27T16:33:24Z,
   conclusion `success` (round 89), the first green run for
-  the round-87 commit itself. Three runs are RED and
-  unexplained.
+  the round-87 commit itself. Four runs are RED; the fourth
+  is diagnosed by name, the first three still unexplained.
   Between the first two green runs, run 45882467549 for head
   `933e0e7` (round 84's docs-only commit) completed
   2026-11-26T23:31:34Z with conclusion `failure`: job `test`
@@ -1898,6 +1926,25 @@ harden validator`).
   The ten run-54 failures were fixed by name in round 83 after
   the user uploaded the run log; the same path applies here
   when the user is awake.
+  The fourth red run, run 46049522263 for head `c4c9060`
+  (round 90's commit), completed 2026-11-27T18:27:37Z with
+  conclusion `failure` (905 tests, 888 pass, 1 fail, 16
+  skipped) — and this one IS diagnosed: the user supplied
+  its log (`logs_124580440327.zip`, check suite
+  124580440327), which names the single failing test,
+  `tests/environment-checker.test.js:71` — `docker
+  --version` spawns but exits non-zero on the
+  windows-2025-vs2026 runner, so the real probe reports
+  `not_verified`, which the test's whitelist did not accept.
+  Round 91 fixes the test by name (the whitelist now accepts
+  `not_verified` as a legitimate probe outcome; the
+  regression detector is the reason guard). Whether the same
+  test caused the first three red runs is an unproven
+  hypothesis — the test file is unchanged since `d2d1991`
+  and the failure is a runner-environment issue, not a
+  round-88/89/90 code issue, but without their logs it
+  cannot be confirmed; the confirmation is the next green
+  Windows run.
 - **Phases 0–1 cannot reach 100% by rounds.** They need Meta: an
   official manifest, quotas, native identity, and persona indexing.
   There is no public Muse skill registry — distribution is this GitHub

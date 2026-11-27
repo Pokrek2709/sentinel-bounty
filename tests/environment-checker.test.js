@@ -75,9 +75,33 @@ test('checkTool without a runner still probes the real command (default runner)'
   // status` always showed 0 tools available. A real probe either
   // verifies the tool or fails with ENOENT (unavailable) — it never
   // fails for a missing runner.
+  // Round 91, Windows run for c4c9060 (log logs_124580440327,
+  // supplied by the user): docker IS present on the
+  // windows-2025-vs2026 runner but `docker --version` exits
+  // non-zero, so a real probe reports not_verified ("Command failed:
+  // docker --version"). That is a legitimate probe outcome — the
+  // command was executed and its failure reported — not the
+  // missing-runner error. The regression detector is the reason
+  // guard below, not the status whitelist: any of the three probe
+  // outcomes proves the default runner executed.
   const result = await checkTool('docker');
   assert.notEqual(result.detail?.reason, 'commandRunner is not a function');
-  assert.ok(['verified', 'unavailable'].includes(result.status), `unexpected status ${result.status}: ${JSON.stringify(result.detail)}`);
+  assert.ok(['verified', 'unavailable', 'not_verified'].includes(result.status), `unexpected status ${result.status}: ${JSON.stringify(result.detail)}`);
+});
+
+test('a command that runs but exits non-zero is not_verified, never unavailable', async () => {
+  // Round 91: the c4c9060 Windows run failed because `docker
+  // --version` spawns and exits non-zero on the runner. That must
+  // stay not_verified (the command exists; its version probe failed),
+  // not unavailable (which means "not found on PATH"). Pinning this
+  // so no future change mislabels a present-but-broken tool as absent.
+  const result = await checkCommand('docker', 'docker', ['--version'], async () => {
+    const error = new Error('Command failed: docker --version\n');
+    error.code = 1;
+    throw error;
+  });
+  assert.equal(result.status, 'not_verified');
+  assert.match(result.detail.reason, /Command failed: docker --version/);
 });
 
 test('a tool listed in the config without a checker definition is not_verified, never skipped', async () => {
