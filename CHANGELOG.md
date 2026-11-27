@@ -7,6 +7,60 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Second real detector: dangerous-call over local text (round 87, 2026-11-27)
+
+- Windows run verdict for the round-86 commit `4c10a44`
+  (round 87, part 1): run 45984432990 completed
+  2026-11-27T10:43:01Z with conclusion `success` — job `test`
+  success, every step success including `Run npm test`. This is
+  the third green Windows run in the project's history (after
+  run 45881977604 for `d2d1991` and run 45884755893 for
+  `82d68d4`) and the first green run for the round-86 commit
+  itself, so the round-86 detector change causes no Windows
+  regression. The red `933e0e7` run stays unexplained (the
+  failing test name is still unknown, log download 403) and no
+  fix was attempted; it is now sandwiched between three green
+  runs on the same suite.
+- F5's second real detector: `dangerous-call`
+  (`src/detection/dangerous-call.js`, registered as the
+  built-in `--detector dangerous-call` alongside `stub` and
+  `secret-scan`; CLI help and `runDetect` comment updated).
+  It scans the `content` string of an operator-supplied local
+  input record for six risky code-sink patterns (eval, the
+  Function constructor, command execution, innerHTML
+  assignment, document.write, unsafe deserialization) and
+  reports one finding per distinct call site (pattern, line,
+  column, match) in four classes — code injection (CWE-94,
+  high), OS command injection (CWE-78, high), cross-site
+  scripting (CWE-79, medium), insecure deserialization
+  (CWE-502, high) — confidence `potential`, never executing
+  the code it scans. No network, no scanner, no target; the
+  detector only ever sees text the operator hands it. Safety
+  properties, all tested: a finding carries only the matched
+  call text (never the whole source line, which could hold
+  adjacent sensitive data); `finding_id` is deterministic
+  (`dangerous-call-` + SHA-256 of pattern + line + column +
+  match, first 16 hex); one finding per call site with the
+  first occurrence line and column; at most 100 findings per
+  record with the truncation recorded in `errors`, never
+  silent; content over 1,000,000 characters is skipped; a
+  record without usable content is counted in `skipped`,
+  never thrown; batch records follow the stub convention
+  (batch `tool` forced as `discovery_tool`). The detect →
+  validate → dedupe → report pipeline is proven end to end by
+  test (XSS and deserialization findings validate as
+  `needs_evidence` — their checklists require a `response_log`
+  / `evidence_notes` — and the JSON report carries the
+  per-finding evidence checklist; code injection and OS
+  command injection have no dedicated checklist class and
+  resolve to the generic checklist). 15 new tests
+  (`tests/dangerous-call.test.js`); see
+  `docs/detection-dangerous-call-v1.md`. SKILL.md's detector
+  paragraph now names `dangerous-call` as the second real
+  detector (both copies, still 150 lines, `cmp` passes); the
+  open decisions (which further detectors, auto-run, async)
+  are unchanged.
+
 ### First real detector: secret-scan over local text (round 86, 2026-11-27)
 
 - Windows run verdict for the round-85 commit `82d68d4`
@@ -1619,20 +1673,23 @@ harden validator`).
 
 ## Known issues
 
-- **Windows CI native run: GREEN on the round-85 commit, RED once on the round-84 commit.**
-  GitHub Actions `windows-latest` passed `npm test` twice —
+- **Windows CI native run: GREEN on the round-86 commit, RED once on the round-84 commit.**
+  GitHub Actions `windows-latest` passed `npm test` three times —
   run 45881977604, head `d2d1991`, 2026-11-26T19:13:08Z,
   conclusion `success`, the first green Windows run in the
-  project's history (round 84) — and run 45884755893, head
+  project's history (round 84) — run 45884755893, head
   `82d68d4`, 2026-11-26T19:36:10Z, conclusion `success` (round
-  86). Between them, run 45882467549 for head `933e0e7`
+  86) — and run 45984432990, head `4c10a44`,
+  2026-11-27T10:43:01Z, conclusion `success` (round 87), the
+  first green run for the round-86 commit itself. Between the
+  first two, run 45882467549 for head `933e0e7`
   (round 84's docs-only commit) completed 2026-11-26T23:31:34Z
   with conclusion `failure`: job `test` failed, step `Run npm
   test` exit 1 after ~48 s (setup, checkout, setup-node all
   success). The failing test name is not retrievable from the
   lab without repo-admin log access (log download returns 403),
   so no fix was attempted — a blind fix is not a fix. The red
-  run is now sandwiched between two green runs on the same
+  run is now sandwiched between three green runs on the same
   suite, which strengthens the flake hypothesis, but the
   failing test name is still unknown, so the red run stays
   unexplained, not resolved; the evidence that decides it is
