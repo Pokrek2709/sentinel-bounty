@@ -229,3 +229,96 @@ test('environment report is explicitly non-networked and does not assert Muse ve
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test('Node floor constant matches package.json engines (drift guard)', async () => {
+  // Round 97: the check-env audit (round 41) says the floor constant
+  // "mirrors package.json engines and is covered by a test" — but no
+  // test ever read package.json, so bumping engines without the
+  // constant (or vice versa) would drift silently. Pin it.
+  const pkg = JSON.parse(await fs.readFile(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
+  const match = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(pkg.engines.node);
+  assert.ok(match, `unexpected engines.node: ${pkg.engines.node}`);
+  assert.equal(MIN_NODE_VERSION, `${match[1]}.${match[2]}.${match[3]}`);
+  assert.equal(checkNodeVersion(`v${MIN_NODE_VERSION}`).status, 'verified');
+});
+
+test('Muse-like environment markers are reported, never treated as proof', async (t) => {
+  // Round 97: detectMuseEnvironment's marker branch had no test —
+  // the only coverage was the no-marker path (environment: {}).
+  const directory = await makeTempDir(t, 'sentinel-env-');
+  try {
+    const withMarker = await runEnvironmentCheck({
+      probeDirectory: directory,
+      environment: { MUSE_TEST_MARKER: '1', PATH: process.env.PATH },
+      commandRunner: async () => 'test-version',
+      now: new Date('2026-01-01T00:00:00.000Z'),
+      nodeVersion: 'v24.22.1',
+    });
+    assert.equal(withMarker.capabilities.museSecureVm.status, 'not_verified');
+    assert.deepEqual(withMarker.capabilities.museSecureVm.detail.markers, ['MUSE_TEST_MARKER']);
+    assert.match(withMarker.decision, /not verified/i);
+
+    const withoutMarker = await runEnvironmentCheck({
+      probeDirectory: directory,
+      environment: {},
+      commandRunner: async () => 'test-version',
+      now: new Date('2026-01-01T00:00:00.000Z'),
+      nodeVersion: 'v24.22.1',
+    });
+    assert.equal(withoutMarker.capabilities.museSecureVm.status, 'not_verified');
+    assert.equal(withoutMarker.capabilities.museSecureVm.detail, undefined);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('checkFirstAvailableCommand fails closed when every candidate fails', async () => {
+  // Round 97: only the success path (second candidate verifies) was
+  // tested. The all-fail branches — all ENOENT means unavailable, a
+  // mixed failure means not_verified — had no test.
+  const allMissing = await checkFirstAvailableCommand('Missing', [['a', []], ['b', []]], async () => {
+    const error = new Error('not found');
+    error.code = 'ENOENT';
+    throw error;
+  });
+  assert.equal(allMissing.status, 'unavailable');
+  assert.equal(allMissing.detail.attempts.length, 2);
+
+  const mixed = await checkFirstAvailableCommand('Mixed', [['a', []], ['b', []]], async (command) => {
+    if (command === 'a') throw new Error('Command failed: a --version');
+    const error = new Error('not found');
+    error.code = 'ENOENT';
+    throw error;
+  });
+  assert.equal(mixed.status, 'not_verified');
+  assert.equal(mixed.detail.attempts[0].status, 'not_verified');
+  assert.equal(mixed.detail.attempts[1].status, 'unavailable');
+});
+
+test('checkCommand treats NOT_FOUND like ENOENT (unavailable, never not_verified)', async () => {
+  // Round 97: only the ENOENT code was tested; the NOT_FOUND code
+  // takes the same branch and had no test.
+  const result = await checkCommand('missing', 'missing', [], async () => {
+    const error = new Error('not found');
+    error.code = 'NOT_FOUND';
+    throw error;
+  });
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.detail.reason, 'Command was not found on PATH.');
+});
+
+test('storage probe fails closed when the probe directory cannot be created', async (t) => {
+  // Round 97: only the success path (write, read back, persistence
+  // on a second call) was tested. A probe directory through a file
+  // must report unavailable with the reason, not throw.
+  const directory = await makeTempDir(t, 'sentinel-env-');
+  try {
+    const blocker = path.join(directory, 'blocker');
+    await fs.writeFile(blocker, 'not a directory');
+    const result = await checkStorage(path.join(blocker, 'sub'), new Date('2026-01-01T00:00:00.000Z'));
+    assert.equal(result.status, 'unavailable');
+    assert.match(result.detail.reason, /ENOTDIR/);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

@@ -104,15 +104,16 @@ the armed-switch refusal, which is a JSON result with exit 1.
 
 ## What this round does not do
 
-- **No `scope list`.** Listing the store is the natural complement and
-  is left for a later round; operators can read the store file
-  directly (it is plain JSON) or resolve entries via `check-scope
-  --store`.
-- **Built-in default paths still cannot be overridden from the target
-  file.** `DEFAULT_EXCLUDED_PATHS` (`/logout`, `/signout`, `/delete`,
-  `/reset-password`, `/unsubscribe`) remain built-in policy defaults
-  (round 52); the `--explain` suggestion says so. That is the second
-  open item from round 52 and is left for a later round.
+The two items recorded here as "left for a later round" are now
+closed; the section is kept so the history reads correctly:
+
+- ~~No `scope list`.~~ Closed in round 54: `sentinel scope list`
+  is the read-only complement to `scope add/remove` (see
+  [scope-list-default-path-v1](scope-list-default-path-v1.md)).
+- ~~Built-in default paths still cannot be overridden from the
+  target file.~~ Closed in round 54: a target file may declare
+  `default_excluded_paths`, which replaces the built-in defaults
+  for that target only.
 - **The decision logic is unchanged.** The store only remembers
   targets; `evaluate()` and `explain()` are untouched, and the plain
   `check-scope --target` path is byte-identical to before.

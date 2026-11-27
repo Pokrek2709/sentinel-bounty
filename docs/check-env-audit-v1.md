@@ -50,3 +50,17 @@ what was fixed, and what is still deliberately left out.
   truth for *how* each is checked and what its hint says. A config tool
   without a definition fails loudly (`not_verified`) instead of drifting
   silently.
+
+## Round 97 note
+
+Five untested branches found by inspection and pinned by tests in
+`tests/environment-checker.test.js` (no production change): the Node
+floor constant now has a drift-guard test against `package.json`
+`engines` (the round-41 claim that the mirror was "covered by a
+test" was true of the floor behavior, not of the mirror itself);
+`detectMuseEnvironment`'s `MUSE_` marker branch; both all-fail
+branches of `checkFirstAvailableCommand` (all-ENOENT →
+`unavailable`, mixed → `not_verified`); the `NOT_FOUND` code in
+`checkCommand`; and the `checkStorage` failure path (probe
+directory through a file → `unavailable`). The by-design gaps
+above are unchanged.

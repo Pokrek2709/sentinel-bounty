@@ -2,6 +2,26 @@
 
 This status records repository evidence, not planned capabilities.
 
+## Status update — 2026-11-28 (round 97)
+
+The table below is the 2026-11-21 snapshot, preserved as written.
+Since it, two rows changed:
+
+- **Phase 4 / 4b — public target support now exists, gated.**
+  Round 90 built the public HTTP adapter groundwork, round 93 added
+  the CLI invocation path (`sentinel target add` / `sentinel fetch`
+  with preview and explicit human approval), and round 94 drilled
+  the activation end to end with stubs. The table's "No public
+  target support" and "no invocation path" no longer hold. No
+  real-target fetch has been run; the first one still needs the
+  user's word, a registered target, and a verified authorization
+  reference.
+- **Windows CI is green.** The four red Windows runs of rounds
+  84/88/89/90 all failed on one environment-checker test
+  (`docker --version` exits non-zero on the runner); the round-91
+  fix was confirmed green on Windows CI (run 46052614644 for
+  `fd4ed99`, conclusion success).
+
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | 0: Muse Secure VM feasibility | Partial | A direct custom-skill trial produced [capability evidence](muse-capability-evidence-2026-11-18.md). Official manifest integration, quotas, and Sentinel cancellation remain open. |

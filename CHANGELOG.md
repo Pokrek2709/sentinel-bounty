@@ -7,6 +7,50 @@ are the reports' own first-implementation estimates, not test counts.
 
 ## [Unreleased]
 
+### Round 97: Close F2/F3/F7/F8 tails — edge tests, one matcher fix, stale docs (2026-11-28)
+
+- F2 (environment checker): five untested branches found by
+  inspection and pinned by tests, no production change — the Node
+  floor constant now has a drift-guard test against `package.json`
+  `engines` (the round-41 claim that the mirror was "covered by a
+  test" was true of the floor behavior, not of the mirror itself);
+  `detectMuseEnvironment`'s `MUSE_` marker branch;
+  `checkFirstAvailableCommand`'s all-fail branches (all-ENOENT →
+  `unavailable`, mixed → `not_verified`); the `NOT_FOUND` code in
+  `checkCommand`; and the `checkStorage` failure path (probe
+  directory through a file → `unavailable`). 5 new tests
+  (`tests/environment-checker.test.js`).
+- F7 (reporting): the hyphen gap in `resolveEvidenceClass`
+  (`src/analysis/validator.js`) is fixed — the matcher now treats
+  hyphens as spaces on both sides, so `sql-injection` resolves to
+  `sql injection` instead of staying its own class, and the same
+  fix applies to the per-class evidence checklist (same function).
+  One existing test expectation was updated deliberately
+  (`tests/report-stats.test.js`: `sql-injection` now resolves),
+  with new hyphen cases in the stats and evidence-checklist
+  tests. `docs/reporting-v1.md` no longer says "markdown and JSON
+  only" (six formats exist) and `docs/report-stats-v1.md` records
+  the gap as closed.
+- F3 (scope manager) and F8 (testing & release): docs only. The
+  open items in `docs/scope-explain-v1.md` and the "does not do"
+  list in `docs/scope-manage-v1.md` were stale since rounds 53–54
+  (scope add/remove/list and `default_excluded_paths` all exist)
+  and now record themselves as closed.
+  `docs/github-prototype-readiness.md` no longer claims no CLI
+  command resolves hosts or sends HTTP requests (the gated
+  `sentinel fetch` from rounds 93–94 does both, under
+  registration + preview + explicit approval), and
+  `docs/implementation-status.md` carries a dated 2026-11-28
+  addendum over the preserved 2026-11-21 snapshot (public-target
+  support exists, gated; Windows CI is green).
+- What remains, recorded as ceilings rather than chased: F2's Muse
+  attestation and skill-invocation verification and F3's
+  Meta-side ceiling (official manifest, quotas, native identity);
+  F7's HackerOne/Bugcrowd templates, still not verified against
+  the live platforms' forms; F8's official Muse skill release.
+  No behavior change to any CLI command surface; both SKILL.md
+  copies unchanged.
+
 ### Round 96: F6 policy hardening (2026-11-28)
 
 - Enforcement gap, found by this round and fixed: the

@@ -438,10 +438,13 @@ test('classOf normalizes the class and maps a missing or blank type to unknown',
 // normalized raw string. The spellings below were verified
 // against resolveEvidenceClass by probe before the test was
 // written (see the round report): 'SQLi' and 'Blind SQL
-// Injection' resolve, 'sql-injection' does not (the matcher
-// does not normalize hyphens), and 'auth bypass via JWT'
+// Injection' resolve, and 'auth bypass via JWT'
 // resolves to 'authentication bypass' by file-order precedence
-// (the auth-bypass class precedes the JWT class).
+// (the auth-bypass class precedes the JWT class). Round 97:
+// hyphenated spellings resolve too — the matcher now treats
+// hyphens as spaces, so 'sql-injection' is 'sql injection'
+// (before round 97 it stayed its own class, the documented gap
+// in docs/report-stats-v1.md).
 test('classOf resolves aliases and prefixed spellings to the canonical class id', () => {
   assert.equal(classOf({ vulnerability_type: 'SQLi' }), 'sql injection');
   assert.equal(classOf({ vulnerability_type: 'Blind SQL Injection' }), 'sql injection');
@@ -450,7 +453,10 @@ test('classOf resolves aliases and prefixed spellings to the canonical class id'
   assert.equal(classOf({ vulnerability_type: 'auth bypass via JWT' }), 'authentication bypass');
   assert.equal(classOf({ vulnerability_type: 'JWT' }), 'json web token weakness');
   assert.equal(classOf({ vulnerability_type: 'SSRF' }), 'server-side request forgery');
-  assert.equal(classOf({ vulnerability_type: 'sql-injection' }), 'sql-injection');
+  assert.equal(classOf({ vulnerability_type: 'sql-injection' }), 'sql injection');
+  assert.equal(classOf({ vulnerability_type: 'cross-site-scripting' }), 'cross-site scripting');
+  assert.equal(classOf({ vulnerability_type: 'Cross-Site-Scripting' }), 'cross-site scripting');
+  assert.equal(classOf({ vulnerability_type: 'x-sql-injection-y' }), 'sql injection');
   assert.equal(classOf({ vulnerability_type: 'Missing Authentication' }), 'missing authentication');
   assert.equal(classOf({ vulnerability_type: 42 }), '42');
 });

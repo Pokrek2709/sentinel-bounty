@@ -91,10 +91,11 @@ both formats.
   it matches the type string alone. When no class matches, the
   class is the normalized raw string (trim + lowercase, as
   before); a finding with a missing or blank
-  `vulnerability_type` counts under `unknown`. One documented
-  gap: the matcher does not normalize hyphens, so
-  `sql-injection` matches neither `sql injection` nor `sqli`
-  and stays its own class. This closes the raw-string
+  `vulnerability_type` counts under `unknown`. Round 97 closed
+  the hyphen gap: the matcher now treats hyphens as spaces on
+  both sides, so `sql-injection` resolves to `sql injection`
+  (before, it matched neither `sql injection` nor `sqli` and
+  stayed its own class). This closes the raw-string
   limitation from round 74's F5 (two spellings of one class
   were counted separately). Ordered by count descending, ties
   by class name ascending. `error` findings are not counted

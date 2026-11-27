@@ -2,7 +2,7 @@
 
 Phase 7 of Sentinel Bounty. Renders **validated** finding objects
 (conforming to `schemas/finding.schema.json`) into a bug-bounty report.
-Markdown by default, JSON with `--format json`.
+Markdown by default; `--format json|html|csv|summary|jsonl` renders the other formats.
 
 ## What is implemented
 
@@ -125,7 +125,7 @@ refusing the link would add no security.
 
 - No live data: the engine renders only finding objects supplied as
   files. It does not fetch, scan, or query any target.
-- No PDF output (markdown and JSON only).
+- No PDF output (Markdown, JSON, HTML, CSV, summary, and JSONL exist).
 - No report signing, submission, or platform upload.
 - No multi-program aggregation by default: a report covering more
   than one distinct `target_id` is refused

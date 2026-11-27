@@ -754,17 +754,24 @@ function getChecklists() {
 }
 
 // Resolve the evidence class for a vulnerability_type string, or null
-// for the generic fallback. Matching is trim + lowercase, then
-// equals-or-contains against the class's match strings; first match
-// in file order wins.
+// for the generic fallback. Matching is trim + lowercase with hyphens
+// treated as spaces, then equals-or-contains against the class's match
+// strings; first match in file order wins. (Round 97: hyphens were
+// not normalized before, so `sql-injection` matched neither
+// `sql injection` nor `sqli` and stayed its own class — the
+// documented gap in docs/report-stats-v1.md.)
+function normalizeClassString(value) {
+  return value.trim().toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ');
+}
+
 function resolveEvidenceClass(vulnerabilityType) {
-  const normalized = typeof vulnerabilityType === 'string' ? vulnerabilityType.trim().toLowerCase() : '';
+  const normalized = typeof vulnerabilityType === 'string' ? normalizeClassString(vulnerabilityType) : '';
   if (normalized === '') return null;
   const spec = getChecklists();
   if (!spec) return null;
   for (const entry of spec.classes) {
     for (const alias of entry.match) {
-      const match = alias.trim().toLowerCase();
+      const match = normalizeClassString(alias);
       if (normalized === match || normalized.includes(match)) return entry;
     }
   }

@@ -106,6 +106,12 @@ test('spec loads with fifteen classes and the generic fallback', () => {
 test('class resolution normalizes case, spacing, and substrings', () => {
   assert.equal(resolveEvidenceClass('  CROSS-SITE SCRIPTING  ').id, 'cross-site scripting');
   assert.equal(resolveEvidenceClass('Stored Cross-Site Scripting').id, 'cross-site scripting');
+  // Round 97: hyphenated spellings resolve — the matcher treats
+  // hyphens as spaces on both sides (before, 'sql-injection'
+  // matched neither 'sql injection' nor 'sqli').
+  assert.equal(resolveEvidenceClass('sql-injection').id, 'sql injection');
+  assert.equal(resolveEvidenceClass('cross-site-scripting').id, 'cross-site scripting');
+  assert.equal(resolveEvidenceClass('Cross-Site-Scripting').id, 'cross-site scripting');
   assert.equal(resolveEvidenceClass('xss').id, 'cross-site scripting');
   assert.equal(resolveEvidenceClass('Reflected XSS').id, 'cross-site scripting');
   assert.equal(resolveEvidenceClass('sqli').id, 'sql injection');

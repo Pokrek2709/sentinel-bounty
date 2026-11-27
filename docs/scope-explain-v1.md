@@ -141,9 +141,21 @@ the outcome:
 
 ## Open items
 
-- The scope policy itself is still a file the operator edits by hand;
-  there is no `sentinel scope add/remove` command. That is a separate
-  decision (operator tooling, not explainability).
-- Built-in default excluded paths cannot be overridden from the target
-  file. If a program ever needs one of them in scope, that is a policy
-  decision for the user, not a flag this round adds.
+Both open items recorded here are now closed by later rounds; the
+section is kept so the history reads correctly:
+
+- ~~The scope policy itself is still a file the operator edits by
+  hand; there is no `sentinel scope add/remove` command.~~ Closed
+  in round 53: `sentinel scope add` / `sentinel scope remove`
+  manage the persistent store (`<state-dir>/scope-targets.json`),
+  and round 54 added the read-only `sentinel scope list`.
+- ~~Built-in default excluded paths cannot be overridden from the
+  target file.~~ Closed in round 54: a target file may declare
+  `default_excluded_paths`, which replaces the built-in defaults
+  for that target only (see
+  [scope-list-default-path-v1](scope-list-default-path-v1.md)).
+
+What remains for Phase 3 as a whole is the Meta-side ceiling
+(official manifest, quotas, native identity) — not reachable by
+rounds — and any future scope-rule additions the operator wants
+(e.g. per-target method budgets beyond the existing rate limit).
