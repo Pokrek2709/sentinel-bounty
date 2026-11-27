@@ -1,0 +1,40 @@
+# CI guards (round 99): the Linux-side hardening for the lessons of the
+# four-red-run saga (rounds 91-92). Windows CI (windows-test.yml) runs
+# the full suite on windows-latest; this workflow runs the same suite
+# on Linux, plus the Windows simulation through the COMMITTED preload
+# (scripts/fake-win32.cjs — never /tmp, which the VM wipes on every
+# restart), verify-install, and the pre-push changelog rule.
+#
+# The workflow file itself is guarded by tests/ci-guards.test.js (job
+# names, step commands, no /tmp preload reference). Do not edit the
+# step commands without updating that test. fetch-depth: 0 is
+# load-bearing: the changelog step diffs the pushed range, and a
+# shallow checkout has no history to diff.
+name: ci-guards
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ci-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm test
+      - name: Windows simulation (committed preload)
+        run: node --test --require ./scripts/fake-win32.cjs
+        env:
+          TEMP: /tmp
+          TMP: /tmp
+          USERPROFILE: /tmp
+      - run: node bin/sentinel.js verify-install
+      - name: Changelog rule (code commits carry a CHANGELOG entry)
+        run: node scripts/pre-push-check.cjs --changelog-only --range ${{ github.event.before }}..${{ github.sha }}

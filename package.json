@@ -10,7 +10,9 @@
     "test": "node --test",
     "cli": "node bin/sentinel.js",
     "check-env": "node bin/sentinel.js check-env",
-    "check": "npm test"
+    "check": "npm test",
+    "pre-push": "node scripts/pre-push-check.cjs",
+    "win32": "node --test --require ./scripts/fake-win32.cjs"
   },
   "keywords": [
     "bug-bounty",

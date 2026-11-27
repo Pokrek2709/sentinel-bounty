@@ -261,6 +261,71 @@ async function checkOperatorSessions(stateDirectory) {
   return pass('operator-sessions', 'Operator sessions store is readable and valid.');
 }
 
+async function readGuardFile(filePath) {
+  // Returns the file content, or null when absent (a missing guard
+  // file is not this check's failure — see checkCiGuards). Any other
+  // read failure is reported, because an unreadable guard file is a
+  // proven problem, not an absence.
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
+
+async function checkCiGuards(skillDirectory) {
+  // Round 99: consistency of the CI guard files, when present. This
+  // is a consistency check, not a presence check — an installed
+  // single-copy layout may ship without .github/ or scripts/, so a
+  // skill with none of the four files passes vacuously (presence of
+  // the CI job itself is pinned by tests/ci-guards.test.js, not
+  // here). What fails here is inconsistency: a workflow that runs
+  // the Windows simulation through /tmp (wiped on every VM restart
+  // — the round-95 lesson), a preload that does not actually
+  // override process.platform, or a guard script that does not
+  // parse. The workflow must name the committed preload; a workflow
+  // that never runs the simulation fails the same way.
+  const workflowPath = path.join(skillDirectory, '.github', 'workflows', 'ci-guards.yml');
+  const preloadPath = path.join(skillDirectory, 'scripts', 'fake-win32.cjs');
+  const scriptPaths = [
+    path.join(skillDirectory, 'scripts', 'pre-push-check.cjs'),
+    path.join(skillDirectory, 'scripts', 'fetch-windows-logs.cjs'),
+  ];
+  let workflow;
+  let preload;
+  let scripts;
+  try {
+    workflow = await readGuardFile(workflowPath);
+    preload = await readGuardFile(preloadPath);
+    scripts = [];
+    for (const scriptPath of scriptPaths) scripts.push(await readGuardFile(scriptPath));
+  } catch (error) {
+    if (['EACCES', 'EPERM'].includes(error.code)) return fail('ci-guards', 'CI guard files could not be read (permission denied).');
+    return fail('ci-guards', 'CI guard files could not be read.');
+  }
+  if (workflow === null && preload === null && scripts.every((content) => content === null)) {
+    return pass('ci-guards', 'No CI guard files present; nothing to verify.');
+  }
+  if (workflow !== null) {
+    if (workflow.includes('/tmp/fake-win32.cjs')) return fail('ci-guards', 'CI workflow references /tmp/fake-win32.cjs, which the VM wipes on restart; it must reference scripts/fake-win32.cjs.');
+    if (!workflow.includes('scripts/fake-win32.cjs')) return fail('ci-guards', 'CI workflow does not run the Windows simulation through the committed preload scripts/fake-win32.cjs.');
+  }
+  if (preload !== null && (!preload.includes("Object.defineProperty(process, 'platform'") || !preload.includes("'win32'"))) {
+    return fail('ci-guards', 'Committed Windows simulation preload scripts/fake-win32.cjs does not override process.platform to win32.');
+  }
+  for (let i = 0; i < scriptPaths.length; i += 1) {
+    if (scripts[i] === null) continue;
+    try {
+      await execFileAsync(process.execPath, ['--check', scriptPaths[i]], { timeout: 10_000, windowsHide: true });
+    } catch (error) {
+      if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || error.killed) return fail('ci-guards', `CI guard script ${path.basename(scriptPaths[i])} could not be syntax-checked (timed out).`);
+      return fail('ci-guards', `CI guard script ${path.basename(scriptPaths[i])} does not parse as JavaScript (node --check failed).`);
+    }
+  }
+  return pass('ci-guards', 'CI guard files are consistent (workflow uses the committed preload; guard scripts parse).');
+}
+
 // Read-only install verification: every check is a local read (stat /
 // readFile) only. No writes, no network requests, no security tools.
 // Returns a frozen { checks, passed, failed, overall } summary; callers
@@ -281,6 +346,7 @@ async function runVerifyInstall({ skillDirectory, stateDirectory, nodeVersion = 
     await checkSkillFiles(skillDirectory),
     await checkSkillCopiesIdentical(skillDirectory),
     await checkOperatorSessions(stateDirectory),
+    await checkCiGuards(skillDirectory),
   ];
   const passed = checks.filter((check) => check.status === 'PASS').length;
   const failed = checks.length - passed;

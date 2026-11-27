@@ -313,3 +313,24 @@ test('CLI detect requires --input', async () => {
     /detect requires --input/,
   );
 });
+
+test('CLI help names every registered built-in detector (round 99)', async () => {
+  // Round 95 found the detect comment block never described the fifth
+  // detector (insecure-transport): the registry and the help had
+  // drifted silently. This test cross-checks the two sides: every id
+  // getDetector resolves by name must appear in the CLI help. A new
+  // detector must be added to the usage line (and its comment block)
+  // or this test fails — that is the point.
+  const detectorSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'detection', 'detector.js'), 'utf8');
+  const registered = [...new Set([...detectorSource.matchAll(/if \(spec === '([a-z0-9-]+)'\)/g)].map((m) => m[1]))];
+  assert.ok(registered.length >= 7, `expected at least 7 registered detector ids, got ${registered.join(', ')}`);
+  let stderr = '';
+  try {
+    await execFileAsync(process.execPath, [CLI], { timeout: 10_000 });
+    assert.fail('expected the CLI with no command to print usage and exit non-zero');
+  } catch (error) {
+    stderr = error.stderr || '';
+  }
+  assert.match(stderr, /^Usage:/m);
+  for (const id of registered) assert.ok(stderr.includes(id), `CLI help does not name detector ${id}`);
+});

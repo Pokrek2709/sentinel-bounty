@@ -77,9 +77,9 @@ test('verify-install passes on a well-formed install with inactive kill-switch',
   });
   const result = await runVerifyInstall({ skillDirectory, stateDirectory });
   assert.equal(result.overall, 'PASS');
-  assert.equal(result.passed, 10);
+  assert.equal(result.passed, 11);
   assert.equal(result.failed, 0);
-  assert.deepEqual(result.checks.map((check) => check.id), ['node-version', 'cli-reachable', 'cli-syntax', 'kill-switch', 'audit-log', 'state-permissions', 'scope-config', 'skill-files', 'skill-copies-identical', 'operator-sessions']);
+  assert.deepEqual(result.checks.map((check) => check.id), ['node-version', 'cli-reachable', 'cli-syntax', 'kill-switch', 'audit-log', 'state-permissions', 'scope-config', 'skill-files', 'skill-copies-identical', 'operator-sessions', 'ci-guards']);
   assert.ok(result.checks.every((check) => check.status === 'PASS' && typeof check.reason === 'string' && check.reason.length > 0));
 });
 
@@ -276,7 +276,8 @@ test('CLI verify-install exits 0 with one PASS line per check on a good install'
   assert.match(result.stdout, /^PASS skill-files: /m);
   assert.match(result.stdout, /^PASS skill-copies-identical: /m);
   assert.match(result.stdout, /^PASS operator-sessions: /m);
-  assert.match(result.stdout, /verify-install: 10 passed, 0 failed — PASS/);
+  assert.match(result.stdout, /^PASS ci-guards: /m);
+  assert.match(result.stdout, /verify-install: 11 passed, 0 failed — PASS/);
   assert.deepEqual(await snapshotTree(stateDirectory), beforeState);
 });
 
@@ -295,5 +296,5 @@ test('CLI verify-install exits non-zero with FAIL lines on a broken install', as
   assert.match(result.stdout, /^FAIL kill-switch: Kill-switch is ACTIVE/m);
   assert.match(result.stdout, /^FAIL audit-log: /m);
   assert.match(result.stdout, /^FAIL skill-files: /m);
-  assert.match(result.stdout, /verify-install: 7 passed, 3 failed — FAIL/);
+  assert.match(result.stdout, /verify-install: 8 passed, 3 failed — FAIL/);
 });

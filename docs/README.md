@@ -9,6 +9,7 @@ Every document in `docs/`, with one line each. Start with [adapt-to-agent](adapt
 - [github-prototype-readiness](github-prototype-readiness.md) — What this repository is safe to share as (a private experimental prototype) and what it is not; for anyone considering sharing the repo.
 - [implementation-status](implementation-status.md) — Phase-by-phase implementation status as of 2026-11-21, with evidence links; for reviewers tracking what is built versus still open.
 - [release-process-v1](release-process-v1.md) — Release process v1 (round 98): how a release is cut (CHANGELOG sections, version numbering, annotated tags), the version-numbering story (release line v0.x vs the pre-tagging 1.0.0 label), and the v0.1.0 / v0.2.0 release notes; for operators cutting a release and reviewers checking that a tag means what it says.
+- [ci-hardening-v1](ci-hardening-v1.md) — CI hardening v1 (round 99): the committed Windows-simulation preload, the ci-guards workflow, the pre-push gate, the changelog rule, the verify-install ci-guards check, and the Windows CI log-archive procedure; for operators pushing changes and reviewers checking that the guards hold.
 
 ## Core components (v1)
 

@@ -8,6 +8,33 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 99: CI hardening + regression (2026-11-28)
+
+- CI hardening for the lessons of the four-red-run saga (rounds
+  91–92): the Windows simulation preload is committed as
+  `scripts/fake-win32.cjs` (rounds 91–98 used a `/tmp` copy the VM
+  wipes on every restart), and a new `.github/workflows/ci-guards.yml`
+  runs the suite, the simulation through the committed preload,
+  `verify-install`, and the changelog rule on every push and pull
+  request; `windows-test.yml` is unchanged. A new pre-push gate
+  (`scripts/pre-push-check.cjs`, `npm run pre-push`) runs the same
+  four steps locally, and its changelog rule requires every
+  code-touching commit to carry its CHANGELOG.md entry in the same
+  commit (round 94's entry missed its commit and landed as
+  follow-up `683169c`); it is opt-in, never installed as a hook.
+  `verify-install` grows from 10 checks to 11 with `ci-guards`
+  (workflow/preload/script consistency, PASS-vacuous when no guard
+  files are present). A new log archiver
+  (`scripts/fetch-windows-logs.cjs`) downloads one Windows CI run's
+  logs into `logs_<check_suite_id>-<shortsha>/`, rate-limit aware.
+  Regression tests pin the paid-for lessons: simulation
+  effectiveness (`process.platform` really reads `win32`), the
+  workflow's shape, the changelog rule against scratch git repos,
+  the archiver against a stub API, the ci-guards check, and CLI-help
+  vs detector-registry completeness (round 95's missing fifth-detector
+  sentence). No phase moves: this round hardens CI, regression, and
+  procedure, not a capability.
+
 ## [0.2.0] — 2026-11-28
 
 The second tagged release. It covers rounds 91–98; round 92 made no code
