@@ -141,6 +141,20 @@ long the wait is.
   action still applied, but the operator must treat the result
   as an audit-integrity incident (the kill-switch/scope pattern).
 
+## Activation drill (round 94)
+
+The invocation path is drilled end to end in
+[public-fetch-activation-drill-v1](public-fetch-activation-drill-v1.md):
+the full chain (register → preview → mint → fetch), the refusal
+matrix and what each refusal spends, and the kill-switch drill
+(trigger-before-fetch, reset recovery, trip between token consume
+and adapter run, in-flight abort via direct cancel and via the
+cross-instance poller). Stub-only, lab state only — no real-target
+execution. The drill found and fixed one gap: the adapter's
+in-flight abort detail (`cancellation: 'KILL_SWITCH_ACTIVE'`)
+was dropped by the orchestration, so `runPublicFetch` now
+propagates it.
+
 ## Tests
 
 `tests/public-http-invocation.test.js` (17 tests):

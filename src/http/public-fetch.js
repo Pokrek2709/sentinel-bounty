@@ -297,7 +297,18 @@ async function runPublicFetch({ stateDir, url, approval, timeoutMs, maxBodyBytes
     scopeFingerprint: fingerprint,
   });
   if (!response.allowed) {
-    return result(false, response.reason, { targetId: target.targetId });
+    // The adapter's refusal carries a `cancellation` detail when the
+    // kill switch aborted a request in flight (round 94 drill
+    // finding: the orchestration dropped it, so the operator saw a
+    // bare PROCESS_FAILED and could not tell a kill-switch abort
+    // from any other process failure). Propagate it so the CLI
+    // result — and the audit trail the operator reads — names the
+    // cause. No other adapter detail is forwarded: the refusal
+    // reason stays the contract.
+    return result(false, response.reason, {
+      targetId: target.targetId,
+      ...(response.cancellation ? { cancellation: response.cancellation } : {}),
+    });
   }
   return result(true, 'HTTP_COMPLETED', {
     targetId: target.targetId,
