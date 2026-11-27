@@ -114,6 +114,73 @@ are the reports' own first-implementation estimates, not test counts.
   open decisions (which further detectors, auto-run, async)
   are unchanged.
 
+### Fourth real detector: hardcoded-credential over local text (round 89, 2026-11-28)
+
+- Windows run verdicts, checked first this round (the
+  round-88 API rate limit had reset): run 46034607189 for the
+  round-87 commit `e2d164b` completed 2026-11-27T16:33:24Z
+  with conclusion `success` — job `test` success, every step
+  success including `Run npm test`. This is the fourth green
+  Windows run in the project's history and the first green
+  run for the round-87 commit itself, so the round-87
+  detector change causes no Windows regression. The
+  round-88 commit `98f09cb` is RED: run 46039065088 completed
+  2026-11-27T17:07:30Z with conclusion `failure` — job `test`
+  failed at step `Run npm test` (setup, checkout, setup-node
+  all success). The failing test name is not retrievable
+  from the lab without repo-admin log access (log download
+  returns 403), so no fix was attempted — a blind fix is not
+  a fix. A bounded local investigation found no
+  Windows-hostile construct in the round-88 change (no
+  `os.EOL` / `path.sep` / `process.platform` use in the new
+  detector or its tests; the win32 simulation passes
+  833/0/16; the new CLI test follows the same temp-dir
+  pattern as the round-87 CLI test, which passed on Windows
+  in run 46034607189) — so the red run stays unexplained,
+  not resolved: it may be a flake in a timing-sensitive
+  pre-existing test or a genuine Windows-only issue
+  invisible without the log. The red `933e0e7` run is now
+  joined by a second unexplained red run on the same suite.
+- F5's fourth real detector: `hardcoded-credential`
+  (`src/detection/hardcoded-credential.js`, registered as the
+  built-in `--detector hardcoded-credential` alongside `stub`,
+  `secret-scan`, `dangerous-call`, and `insecure-crypto`; CLI
+  help and `runDetect` comment updated). It scans the
+  `content` string of an operator-supplied local input record
+  for credential-named variables assigned a quoted string
+  literal (password / passwd / pwd, API key names,
+  secret/token names — `=`, `:=`, or `:` operators) and
+  reports one finding per distinct assignment site in one
+  class — use of hard-coded credentials (CWE-798, high) —
+  confidence `potential`, never executing the code it scans.
+  No network, no scanner, no target; the detector only ever
+  sees text the operator hands it. Safety properties, all
+  tested: a finding NEVER carries the literal value — the
+  matched assignment is rebuilt as `<name><operator> "****"`
+  (fixed four asterisks, no length information) before any
+  finding is built, so no layer can leak it, and the
+  finding_id hashes the masked match, not the secret;
+  `finding_id` is deterministic
+  (`hardcoded-credential-` + SHA-256 of pattern + line +
+  column + masked match, first 16 hex); one finding per
+  assignment site; at most 100 findings per record with the
+  truncation recorded in `errors`, never silent; content
+  over 1,000,000 characters is skipped; a record without
+  usable content is counted in `skipped`, never thrown;
+  batch records follow the stub convention (batch `tool`
+  forced as `discovery_tool`). The detect → validate →
+  dedupe → report pipeline is proven end to end by test
+  (findings validate as `valid` under the generic checklist
+  — the class has no dedicated checklist — and the JSON and
+  Markdown reports were both tested to contain no assigned
+  literal). 15 new tests
+  (`tests/hardcoded-credential.test.js`); see
+  `docs/detection-hardcoded-credential-v1.md`. SKILL.md's
+  detector paragraph now names `hardcoded-credential` as the
+  fourth real detector (both copies, still 150 lines, `cmp`
+  passes); the open decisions (which further detectors,
+  auto-run, async) are unchanged.
+
 ### First real detector: secret-scan over local text (round 86, 2026-11-27)
 
 - Windows run verdict for the round-85 commit `82d68d4`
@@ -1726,30 +1793,39 @@ harden validator`).
 
 ## Known issues
 
-- **Windows CI native run: GREEN on the round-86 commit, RED once on the round-84 commit.**
-  GitHub Actions `windows-latest` passed `npm test` three times —
+- **Windows CI native run: GREEN on the round-87 commit, RED on the round-88 commit.**
+  GitHub Actions `windows-latest` passed `npm test` four times —
   run 45881977604, head `d2d1991`, 2026-11-26T19:13:08Z,
   conclusion `success`, the first green Windows run in the
   project's history (round 84) — run 45884755893, head
   `82d68d4`, 2026-11-26T19:36:10Z, conclusion `success` (round
-  86) — and run 45984432990, head `4c10a44`,
+  86) — run 45984432990, head `4c10a44`,
   2026-11-27T10:43:01Z, conclusion `success` (round 87), the
-  first green run for the round-86 commit itself. Between the
-  first two, run 45882467549 for head `933e0e7`
-  (round 84's docs-only commit) completed 2026-11-26T23:31:34Z
-  with conclusion `failure`: job `test` failed, step `Run npm
-  test` exit 1 after ~48 s (setup, checkout, setup-node all
-  success). The failing test name is not retrievable from the
-  lab without repo-admin log access (log download returns 403),
-  so no fix was attempted — a blind fix is not a fix. The red
-  run is now sandwiched between three green runs on the same
-  suite, which strengthens the flake hypothesis, but the
-  failing test name is still unknown, so the red run stays
-  unexplained, not resolved; the evidence that decides it is
-  the failing test name from the run log, which needs the
-  user's admin access. The ten run-54 failures were
-  fixed by name in round 83 after the user uploaded the run log;
-  the same path applies here when the user is awake.
+  first green run for the round-86 commit itself — and run
+  46034607189, head `e2d164b`, 2026-11-27T16:33:24Z,
+  conclusion `success` (round 89), the first green run for
+  the round-87 commit itself. Two runs are RED and unexplained.
+  Between the first two green runs, run 45882467549 for head
+  `933e0e7` (round 84's docs-only commit) completed
+  2026-11-26T23:31:34Z with conclusion `failure`: job `test`
+  failed, step `Run npm test` exit 1 after ~48 s (setup,
+  checkout, setup-node all success). And run 46039065088 for
+  head `98f09cb` (round 88's detector commit) completed
+  2026-11-27T17:07:30Z with conclusion `failure`: job `test`
+  failed at step `Run npm test` (setup, checkout, setup-node
+  all success). The failing test name is not retrievable from
+  the lab without repo-admin log access (log download returns
+  403), so no fix was attempted for either red run — a blind
+  fix is not a fix. A bounded local investigation in round 89
+  found no Windows-hostile construct in the round-88 change,
+  so the second red run stays unexplained, not resolved; it
+  may be a flake in a timing-sensitive pre-existing test or a
+  genuine Windows-only issue invisible without the log. The
+  evidence that decides either red run is the failing test
+  name from the run log, which needs the user's admin access.
+  The ten run-54 failures were fixed by name in round 83 after
+  the user uploaded the run log; the same path applies here
+  when the user is awake.
 - **Phases 0–1 cannot reach 100% by rounds.** They need Meta: an
   official manifest, quotas, native identity, and persona indexing.
   There is no public Muse skill registry — distribution is this GitHub

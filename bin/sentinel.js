@@ -93,7 +93,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1131,7 +1131,13 @@ async function runDetect(args) {
   // (MD5/SHA-1 hashes, ECB mode, DES/RC4 ciphers, Node's
   // deprecated createCipher()/createDecipher(), Math.random() /
   // random.random()) and reports one finding per distinct call
-  // site, never executing the code; a
+  // site, never executing the code; `hardcoded-credential`
+  // (round 89) is the fourth real detector — it scans the
+  // `content` string for credential-named variables assigned a
+  // quoted string literal (password, API key, secret/token) and
+  // reports one finding per distinct assignment site, carrying
+  // only the masked assignment (`<name><operator> "****"`) —
+  // never the literal value itself; a
   // path loads a custom detector module from inside the skill
   // directory (refused with a named DETECTOR_* error when it is
   // missing, malformed, a symlink, or outside the skill root).

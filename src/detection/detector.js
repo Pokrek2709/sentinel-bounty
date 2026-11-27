@@ -80,6 +80,7 @@ const { normalizeRawFinding } = require('./normalized-record');
 const { secretScanDetector } = require('./secret-scan');
 const { dangerousCallDetector } = require('./dangerous-call');
 const { insecureCryptoDetector } = require('./insecure-crypto');
+const { hardcodedCredentialDetector } = require('./hardcoded-credential');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -216,6 +217,8 @@ function runDetector(detector, input, defaults) {
 //     source 'dangerous-call'.
 //   - 'insecure-crypto' -> the third real detector (round 88),
 //     source 'insecure-crypto'.
+//   - 'hardcoded-credential' -> the fourth real detector (round 89),
+//     source 'hardcoded-credential'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -225,6 +228,7 @@ function getDetector(spec, skillRoot) {
   if (spec === 'secret-scan') return { detector: secretScanDetector, source: 'secret-scan' };
   if (spec === 'dangerous-call') return { detector: dangerousCallDetector, source: 'dangerous-call' };
   if (spec === 'insecure-crypto') return { detector: insecureCryptoDetector, source: 'insecure-crypto' };
+  if (spec === 'hardcoded-credential') return { detector: hardcodedCredentialDetector, source: 'hardcoded-credential' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');
