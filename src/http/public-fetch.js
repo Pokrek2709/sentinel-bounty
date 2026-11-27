@@ -19,7 +19,18 @@
 //      prefix (PUBLIC_HTTP_OUT_OF_SCOPE).
 //   5. The preview is shown: GET only, no headers/body/credentials,
 //      timeout and body cap. Nothing is executed yet.
-//   6. Explicit human approval — exactly one of:
+//   6. When the operator presents a session token
+//      (`--session-token`, round 98), the token is validated
+//      against the local operator-session store (live: active,
+//      inside its TTL, inside its lease) BEFORE the approval step
+//      — so a dead session can never burn a one-time approval
+//      token. A failure here is audited as
+//      PUBLIC_FETCH_SESSION_INVALID (never the token); a success
+//      is audited as PUBLIC_FETCH_SESSION_BOUND (session id,
+//      target, URL — metadata only) and the session id rides the
+//      result. No session token presented means no session check:
+//      a fetch without --session-token behaves exactly as before.
+//   7. Explicit human approval — exactly one of:
 //      (a) interactive confirmation: the CLI's `confirm` callback
 //          asks the operator (type YA); anything else denies, and
 //          nothing is executed;
@@ -29,7 +40,7 @@
 //          then fails (DNS included) still burns the approval.
 //      There is deliberately no `--yes` flag: a standing approval
 //      would defeat the gate this module exists to enforce.
-//   7. The adapter runs (its own gate re-validates everything:
+//   8. The adapter runs (its own gate re-validates everything:
 //      kill switch, hostname, authorization reference, scope,
 //      method, fingerprint, governor, the single-use in-process
 //      approval, then DNS resolution AFTER the approval, refusing
@@ -75,6 +86,10 @@ const {
   consumePublicFetchApproval,
   TOKEN_TTL_MS,
 } = require('./public-fetch-approvals');
+const {
+  validateOperatorSession,
+  storePathFor: sessionStorePathFor,
+} = require('../policy/operator-sessions');
 
 const SKILL_DIRECTORY = path.resolve(__dirname, '..', '..');
 const PUBLIC_FETCH_TIMEOUT_MS = 5_000;
@@ -104,6 +119,31 @@ async function appendFetchAudit(auditLog, event, details) {
   } catch {
     return false;
   }
+}
+
+// Validates an operator session token presented for this fetch.
+// Returns { valid: true, sessionId, auditLogged } or
+// { valid: false, reason, auditLogged }. A dead session is refused
+// BEFORE the approval step, so it can never burn a one-time
+// approval token. The audit event names the refusal or the
+// binding; the token itself is never logged. An absent token
+// (undefined/null/empty) means no session was presented and is not
+// an error — the caller decides whether a token was presented.
+async function validateFetchSession({ stateDir, sessionToken, auditLog, targetId, url, now }) {
+  let validated;
+  try {
+    validated = await validateOperatorSession({ storePath: sessionStorePathFor(stateDir), token: sessionToken, now });
+  } catch (error) {
+    const reason = typeof error.code === 'string' ? error.code : 'OPERATOR_SESSION_NOT_FOUND';
+    const auditLogged = await appendFetchAudit(auditLog, 'PUBLIC_FETCH_SESSION_INVALID', { targetId, url, reason });
+    return { valid: false, reason, auditLogged };
+  }
+  const auditLogged = await appendFetchAudit(auditLog, 'PUBLIC_FETCH_SESSION_BOUND', { sessionId: validated.sessionId, targetId, url });
+  return { valid: true, sessionId: validated.sessionId, auditLogged };
+}
+
+function sessionTokenPresented(sessionToken) {
+  return typeof sessionToken === 'string' && sessionToken.trim() !== '';
 }
 
 function defaultDeps(stateDir, deps = {}) {
@@ -193,7 +233,9 @@ async function previewPublicFetch({ stateDir, url, timeoutMs, maxBodyBytes, ...d
 // Mints a one-time approval token for one exact URL, after the
 // preview checks pass. The token is returned ONCE (the caller
 // prints it to the operator); the store holds only its hash.
-async function mintPublicFetchApprovalFor({ stateDir, url, timeoutMs, maxBodyBytes, ...deps }) {
+// When `sessionToken` is presented, the session is validated first:
+// a dead session refuses the mint before any token exists.
+async function mintPublicFetchApprovalFor({ stateDir, url, timeoutMs, maxBodyBytes, sessionToken, ...deps }) {
   const resolvedDeps = defaultDeps(stateDir, deps);
   const resolved = await resolveFetchContext({ stateDir, url, timeoutMs, maxBodyBytes, deps: resolvedDeps });
   if (!resolved.allowed) {
@@ -202,6 +244,12 @@ async function mintPublicFetchApprovalFor({ stateDir, url, timeoutMs, maxBodyByt
   }
   const { preview, fingerprint, target } = resolved.context;
   const now = resolvedDeps.clock();
+  if (sessionTokenPresented(sessionToken)) {
+    const session = await validateFetchSession({ stateDir, sessionToken, auditLog: resolvedDeps.auditLog, targetId: target.targetId, url: preview.url, now });
+    if (!session.valid) {
+      return { minted: false, reason: session.reason, targetId: target.targetId, auditLogged: session.auditLogged };
+    }
+  }
   const minted = await mintPublicFetchApproval({
     storePath: approvalStorePathFor(stateDir),
     targetId: target.targetId,
@@ -222,7 +270,7 @@ async function mintPublicFetchApprovalFor({ stateDir, url, timeoutMs, maxBodyByt
 // adapter requires is created and approved here, bound to the same
 // target/action/fingerprint — it is the mechanical half of the
 // human approval above, not a second approval.
-async function runPublicFetch({ stateDir, url, approval, timeoutMs, maxBodyBytes, ...deps }) {
+async function runPublicFetch({ stateDir, url, approval, timeoutMs, maxBodyBytes, sessionToken, ...deps }) {
   const resolvedDeps = defaultDeps(stateDir, deps);
   const limits = normalizeFetchLimits({ timeoutMs, maxBodyBytes });
   const resolved = await resolveFetchContext({ stateDir, url, timeoutMs: limits.timeoutMs, maxBodyBytes: limits.maxBodyBytes, deps: resolvedDeps });
@@ -231,6 +279,20 @@ async function runPublicFetch({ stateDir, url, approval, timeoutMs, maxBodyBytes
     return result(false, resolved.reason, { targetId: resolved.targetId, auditLogged });
   }
   const { preview, fingerprint, target, registry, entry } = resolved.context;
+  // A presented session token is validated BEFORE the approval
+  // step, so a dead session refuses the fetch without spending a
+  // one-time approval token (and, on the interactive path, the
+  // refusal still comes after the operator typed YA — the YA is
+  // not a stored credential, so nothing is lost but a keystroke;
+  // documented as a known limitation in the session doc).
+  let sessionId;
+  if (sessionTokenPresented(sessionToken)) {
+    const session = await validateFetchSession({ stateDir, sessionToken, auditLog: resolvedDeps.auditLog, targetId: target.targetId, url: preview.url, now: resolvedDeps.clock() });
+    if (!session.valid) {
+      return result(false, session.reason, { targetId: target.targetId, auditLogged: session.auditLogged });
+    }
+    sessionId = session.sessionId;
+  }
   if (!approval || (approval.kind !== 'interactive' && approval.kind !== 'token')) {
     return result(false, 'PUBLIC_HTTP_APPROVAL_REQUIRED', { targetId: target.targetId });
   }
@@ -307,12 +369,14 @@ async function runPublicFetch({ stateDir, url, approval, timeoutMs, maxBodyBytes
     // reason stays the contract.
     return result(false, response.reason, {
       targetId: target.targetId,
+      ...(sessionId ? { sessionId } : {}),
       ...(response.cancellation ? { cancellation: response.cancellation } : {}),
     });
   }
   return result(true, 'HTTP_COMPLETED', {
     targetId: target.targetId,
     url: preview.url,
+    ...(sessionId ? { sessionId } : {}),
     statusCode: response.statusCode,
     contentLength: response.contentLength,
     truncated: response.truncated,

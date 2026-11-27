@@ -235,7 +235,7 @@ test('CLI verify-install --fix tightens loose state and exits 0; without --fix i
   assert.equal(fixed.code, 0);
   assert.match(fixed.stdout, new RegExp(`fixed ${loose.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: 0o0644 -> 0o0600`));
   assert.match(fixed.stdout, /PASS state-permissions/);
-  assert.match(fixed.stdout, /verify-install: 7 passed, 0 failed — PASS/);
+  assert.match(fixed.stdout, /verify-install: 10 passed, 0 failed — PASS/);
   assert.equal(await modeOf(loose), 0o600);
 });
 

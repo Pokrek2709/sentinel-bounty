@@ -2,10 +2,65 @@
 
 All notable changes to this project are documented here. Entries are drawn
 from the capability reports in `~/workspace/sentinel-bounty/`
-(`capability-report-*.md`, rounds 1–32, 18–26 Nov 2026). Phase percentages
-are the reports' own first-implementation estimates, not test counts.
+(`capability-report-*.md`). Phase percentages are the reports' own
+first-implementation estimates, not test counts. Releases are cut on the
+v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
+
+## [0.2.0] — 2026-11-28
+
+The second tagged release. It covers rounds 91–98; round 92 made no code
+change (Windows log verification only) and has no entry.
+
+### Round 98: F0/F1 release packaging + local operator sessions (2026-11-28)
+
+- Release packaging: the CHANGELOG is restructured into release
+  sections — `## [0.2.0]` (rounds 91–98, this entry), `## [0.1.0]`
+  (rounds 34–90, the first tagged release on `c4c9060`), and the
+  pre-release baseline (rounds 1–32, retitled from the `[1.0.0]`
+  label that predated the tag line and was never a tagged release;
+  head commit `f42c61b` verified present in history after the
+  clone was deepened). Entries moved verbatim; `package.json`
+  `version` aligns to the release line (`1.0.0` → `0.2.0`) and
+  the new `docs/release-process-v1.md` records how a release is
+  cut, the numbering rules (MINOR for capability, PATCH for
+  fixes, MAJOR stays 0 until the Meta items and a first real
+  fetch are done), and why the other `1.0.0` numbers in the repo
+  (tool-config schema, check-env report format, `POLICY_VERSION`)
+  are not release versions. Tag `v0.2.0` (annotated) on the
+  round-98 commit.
+- `verify-install` is strengthened from 7 checks to 10:
+  `cli-syntax` (the entrypoint must parse as JavaScript —
+  `node --check`, never executed, writes nothing; absence is
+  `cli-reachable`'s failure, not this check's),
+  `skill-copies-identical` (both SKILL.md copies byte-identical;
+  a single-copy install passes vacuously), and
+  `operator-sessions` (the new session store must parse and be
+  valid). The stale "seventh check" wording in SKILL.md, the
+  docs index, and the repo README now names the ten checks.
+- Local operator sessions (`src/policy/operator-sessions.js`,
+  new `sentinel session start/heartbeat/list/status/revoke/rotate`,
+  21 tests): a bounded token (48-hex, returned once, stored only
+  as its SHA-256 hash), a heartbeat proving liveness, a lease
+  (default 30 minutes, max 2 hours — a lapsed lease cannot be
+  revived), a TTL (default 8 hours, max 24 hours, never extended
+  by heartbeat or rotation), and revocation (final, idempotent).
+  Start and rotate are refused while the kill switch is armed;
+  revoke, heartbeat, list, and status work while armed.
+  `sentinel fetch --session-token <token>` binds a fetch to a
+  live session, validated after the fetch context resolves and
+  before the approval step, so a dead session never burns a
+  one-time approval token; the binding is audited as
+  `PUBLIC_FETCH_SESSION_BOUND` (metadata only). A fetch without
+  `--session-token` behaves exactly as before. No Meta service is
+  involved — a session is local liveness, not platform identity.
+  See `docs/operator-sessions-v1.md`.
+- What remains, recorded as ceilings rather than chased: F0's
+  official manifest/registry and F1's official API, quotas, and
+  native identity all need Meta (final stage); F4's first real
+  fetch needs the user's word, a registered target, and a
+  verified authorization reference.
 
 ### Round 97: Close F2/F3/F7/F8 tails — edge tests, one matcher fix, stale docs (2026-11-28)
 
@@ -284,6 +339,11 @@ are the reports' own first-implementation estimates, not test counts.
   hypothesis — their logs were never supplied — and the
   confirmation is the next green Windows run, not this
   round's claim.
+
+## [0.1.0] — 2026-11-28
+
+The first tagged release, on the round-90 commit (`c4c9060`). It covers
+rounds 34–90. Rounds 1–32 are narrated in the pre-release baseline below.
 
 ### Round 90: user decisions executed — asset_url scrub, F6 policies, fifth detector, public HTTP adapter groundwork, first release tag (2026-11-28)
 
@@ -2034,7 +2094,13 @@ are the reports' own first-implementation estimates, not test counts.
   `shell: false` with fixed allowlisted args), malicious kill-switch
   state and audit-log lines (fail closed, hostile entries dropped).
 
-## [1.0.0] — 2026-11-26
+## Pre-release baseline — rounds 1–32 (2026-11-26)
+
+Round 98 note: this section was headed `## [1.0.0]` before the
+release-tag line existed. The `1.0.0` label was never a tagged release —
+the first tagged release is v0.1.0 (round 90) — and the section is
+retitled here without rewriting its content. Head commit `f42c61b`.
+
 
 First consolidated release of the lab-local Sentinel Bounty skill, as
 installed at `~/workspace/custom-skills/sentinel-bounty/`. Development ran

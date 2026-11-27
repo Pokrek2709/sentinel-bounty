@@ -55,6 +55,15 @@ const {
   runPublicFetch,
   renderPreviewText,
 } = require('../src/http/public-fetch');
+const {
+  storePathFor: sessionStorePathFor,
+  startOperatorSession,
+  heartbeatOperatorSession,
+  revokeOperatorSession,
+  rotateOperatorSession,
+  listOperatorSessions,
+  getOperatorSession,
+} = require('../src/policy/operator-sessions');
 
 // Classified rotation/token-file reasons that the rotate/revoke handlers
 // pass through verbatim (stable operator-facing codes, never raw paths).
@@ -86,7 +95,13 @@ function usage() {
     '  sentinel target add <host> --scope <path> --purpose <purpose> --auth-ref <reference> [--program <name>] [--state-dir <path>]',
     '  sentinel target list [--state-dir <path>] [--json]',
     '  sentinel target remove <host> [--state-dir <path>]',
-    '  sentinel fetch --url <url> [--state-dir <path>] [--timeout-ms <n>] [--max-body-bytes <n>] [--mint-approval] [--approve-token <token>]',
+    '  sentinel fetch --url <url> [--state-dir <path>] [--timeout-ms <n>] [--max-body-bytes <n>] [--mint-approval] [--approve-token <token>] [--session-token <token>]',
+    '  sentinel session start [--label <label>] [--ttl-seconds <n>] [--lease-seconds <n>] [--state-dir <path>]',
+    '  sentinel session heartbeat --token <token> [--state-dir <path>]',
+    '  sentinel session list [--state-dir <path>] [--json]',
+    '  sentinel session status <session-id> [--state-dir <path>] [--json]',
+    '  sentinel session revoke <session-id> [--state-dir <path>]',
+    '  sentinel session rotate <session-id> [--state-dir <path>]',
     '  sentinel kill-switch status [--state-dir <path>]',
     '  sentinel kill-switch trigger --actor <id> --reason <reason> [--state-dir <path>]',
     '  sentinel kill-switch reset --actor <id> [--state-dir <path>]',
@@ -438,14 +453,14 @@ async function runTargetCommand(args) {
 // never to the audit log.
 async function runFetchCommand(args) {
   const mintApproval = args.includes('--mint-approval');
-  const options = parseOptions(args.filter((argument) => argument !== '--mint-approval'), ['--url', '--state-dir', '--timeout-ms', '--max-body-bytes', '--approve-token']);
+  const options = parseOptions(args.filter((argument) => argument !== '--mint-approval'), ['--url', '--state-dir', '--timeout-ms', '--max-body-bytes', '--approve-token', '--session-token']);
   if (!options.url) throw new Error('fetch requires --url.');
   if (mintApproval && options.approveToken) throw new Error('fetch: --mint-approval and --approve-token are mutually exclusive.');
   const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
   const timeoutMs = options.timeoutMs === undefined ? undefined : Number(options.timeoutMs);
   const maxBodyBytes = options.maxBodyBytes === undefined ? undefined : Number(options.maxBodyBytes);
   if (mintApproval) {
-    const minted = await mintPublicFetchApprovalFor({ stateDir: stateDirectory, url: options.url, timeoutMs, maxBodyBytes });
+    const minted = await mintPublicFetchApprovalFor({ stateDir: stateDirectory, url: options.url, timeoutMs, maxBodyBytes, sessionToken: options.sessionToken });
     if (!minted.minted) {
       process.stdout.write(`${JSON.stringify({ minted: false, reason: minted.reason, targetId: minted.targetId || null, auditLogged: minted.auditLogged }, null, 2)}\n`);
       process.exitCode = minted.auditLogged === false ? 4 : 1;
@@ -486,9 +501,178 @@ async function runFetchCommand(args) {
       },
     };
   }
-  const fetched = await runPublicFetch({ stateDir: stateDirectory, url: options.url, approval, timeoutMs, maxBodyBytes });
+  const fetched = await runPublicFetch({ stateDir: stateDirectory, url: options.url, approval, timeoutMs, maxBodyBytes, sessionToken: options.sessionToken });
   process.stdout.write(`${JSON.stringify(fetched, null, 2)}\n`);
   if (!fetched.fetched) process.exitCode = fetched.auditLogged === false ? 4 : 1;
+}
+
+// Local operator sessions (Phase 1, round 98). The session token
+// is a bearer credential for the local lab: `session start` and
+// `session rotate` print it ONCE on stdout (JSON) and never again;
+// `list` and `status` never print it. Start and rotate create or
+// refresh access, so they are refused while the kill switch is
+// armed (same guard pattern as target add/remove); revoke removes
+// access and stays available while armed; heartbeat, list, and
+// status are liveness and inspection and work while armed. A
+// successful mutation writes an audit record
+// (OPERATOR_SESSION_STARTED / HEARTBEAT / REVOKED / ROTATED); a
+// mutation whose audit append fails reports `auditLogged: false`
+// and exits 4. A duplicate revoke is an idempotent no-op (exit 0,
+// no rewrite, no audit record). Module refusals print as JSON
+// `{ <verb>: false, reason }` with exit 1, never as a bare stderr
+// line, so operators can grep the reason code.
+function renderOperatorSessionListText(result) {
+  if (result.count === 0) return `No operator sessions in ${result.store}.`;
+  const lines = [`Operator sessions in ${result.store} (${result.count}):`];
+  for (const session of result.sessions) {
+    lines.push(`  ${session.sessionId} | ${session.label || '(no label)'} | ${session.status} | expires ${new Date(session.expiresAt).toISOString()} | lease ${session.leaseSeconds}s | heartbeats ${session.heartbeatCount} | rotations ${session.rotationCount}`);
+  }
+  return lines.join('\n');
+}
+
+function renderOperatorSessionStatusText(session) {
+  return [
+    `Operator session ${session.sessionId}:`,
+    `  Label: ${session.label || '(no label)'}`,
+    `  Status: ${session.status}`,
+    `  Created: ${new Date(session.createdAt).toISOString()}`,
+    `  Expires: ${new Date(session.expiresAt).toISOString()} (TTL remaining ${Math.floor(session.ttlRemainingMs / 1_000)}s)`,
+    `  Lease: ${session.leaseSeconds}s (remaining ${Math.floor(session.leaseRemainingMs / 1_000)}s)`,
+    `  Heartbeats: ${session.heartbeatCount}`,
+    `  Rotations: ${session.rotationCount}`,
+  ].join('\n');
+}
+
+function sessionRefusalReason(error) {
+  return typeof error.code === 'string' && error.code.startsWith('OPERATOR_SESSION_') ? error.code : null;
+}
+
+async function runSessionCommand(args) {
+  const [action, ...rest] = args;
+  if (action === 'list') {
+    const json = rest.includes('--json');
+    const options = parseOptions(rest.filter((argument) => argument !== '--json'), ['--state-dir']);
+    const storePath = sessionStorePathFor(path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY));
+    const result = await listOperatorSessions({ storePath });
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`${renderOperatorSessionListText(result)}\n`);
+    return;
+  }
+  if (action === 'status') {
+    const [value, ...optionArgs] = rest;
+    if (!value || value.startsWith('--')) throw new Error('session status requires a <session-id>.');
+    const json = optionArgs.includes('--json');
+    const options = parseOptions(optionArgs.filter((argument) => argument !== '--json'), ['--state-dir']);
+    const storePath = sessionStorePathFor(path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY));
+    try {
+      const session = await getOperatorSession({ storePath, sessionId: value });
+      if (json) {
+        process.stdout.write(`${JSON.stringify(session, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(`${renderOperatorSessionStatusText(session)}\n`);
+    } catch (error) {
+      const reason = sessionRefusalReason(error);
+      if (!reason) throw error;
+      process.stdout.write(`${JSON.stringify({ status: false, reason, sessionId: value }, null, 2)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (action === 'heartbeat') {
+    const options = parseOptions(rest, ['--token', '--state-dir']);
+    if (!options.token) throw new Error('session heartbeat requires --token.');
+    const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+    const storePath = sessionStorePathFor(stateDirectory);
+    try {
+      const beat = await heartbeatOperatorSession({ storePath, token: options.token });
+      const auditLogged = await appendOperatorAudit(stateDirectory, 'OPERATOR_SESSION_HEARTBEAT', { sessionId: beat.sessionId, heartbeatCount: beat.heartbeatCount });
+      process.stdout.write(`${JSON.stringify({ heartbeat: true, sessionId: beat.sessionId, expiresAt: new Date(beat.expiresAt).toISOString(), leaseExpiresAt: new Date(beat.leaseExpiresAt).toISOString(), heartbeatCount: beat.heartbeatCount, auditLogged }, null, 2)}\n`);
+      if (!auditLogged) process.exitCode = 4;
+    } catch (error) {
+      const reason = sessionRefusalReason(error);
+      if (!reason) throw error;
+      process.stdout.write(`${JSON.stringify({ heartbeat: false, reason }, null, 2)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (action === 'revoke') {
+    const [value, ...optionArgs] = rest;
+    if (!value || value.startsWith('--')) throw new Error('session revoke requires a <session-id>.');
+    const options = parseOptions(optionArgs, ['--state-dir']);
+    const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+    const storePath = sessionStorePathFor(stateDirectory);
+    try {
+      const result = await revokeOperatorSession({ storePath, sessionId: value });
+      if (!result.revoked) {
+        // Idempotent no-op: nothing was written and nothing was logged.
+        process.stdout.write(`${JSON.stringify({ ...result, store: storePath }, null, 2)}\n`);
+        return;
+      }
+      const auditLogged = await appendOperatorAudit(stateDirectory, 'OPERATOR_SESSION_REVOKED', { sessionId: result.sessionId });
+      process.stdout.write(`${JSON.stringify({ ...result, store: storePath, auditLogged }, null, 2)}\n`);
+      if (!auditLogged) process.exitCode = 4;
+    } catch (error) {
+      const reason = sessionRefusalReason(error);
+      if (!reason) throw error;
+      process.stdout.write(`${JSON.stringify({ revoked: false, reason, sessionId: value }, null, 2)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (action !== 'start' && action !== 'rotate') {
+    throw new Error('session requires an action: start, heartbeat, list, status, revoke, or rotate.');
+  }
+  const options = action === 'start'
+    ? parseOptions(rest, ['--label', '--ttl-seconds', '--lease-seconds', '--state-dir'])
+    : parseOptions(rest.slice(1), ['--state-dir']);
+  const stateDirectory = path.resolve(options.stateDir || DEFAULT_STATE_DIRECTORY);
+  const { killSwitch } = await killSwitchFor({ stateDir: stateDirectory });
+  const guard = await killSwitch.assertNotTriggered();
+  if (!guard.allowed) {
+    const key = action === 'start' ? 'started' : 'rotated';
+    process.stdout.write(`${JSON.stringify({ [key]: false, reason: 'OPERATOR_SESSION_REFUSED_KILL_SWITCH_ACTIVE', trigger: guard.trigger || null }, null, 2)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (action === 'start') {
+    const storePath = sessionStorePathFor(stateDirectory);
+    try {
+      const started = await startOperatorSession({
+        storePath,
+        ...(options.label !== undefined ? { label: options.label } : {}),
+        ...(options.ttlSeconds !== undefined ? { ttlMs: Number(options.ttlSeconds) * 1_000 } : {}),
+        ...(options.leaseSeconds !== undefined ? { leaseMs: Number(options.leaseSeconds) * 1_000 } : {}),
+      });
+      const auditLogged = await appendOperatorAudit(stateDirectory, 'OPERATOR_SESSION_STARTED', { sessionId: started.sessionId, label: options.label || '', expiresAt: new Date(started.expiresAt).toISOString() });
+      process.stdout.write(`${JSON.stringify({ started: true, sessionId: started.sessionId, token: started.token, expiresAt: new Date(started.expiresAt).toISOString(), leaseSeconds: started.leaseSeconds, auditLogged }, null, 2)}\n`);
+      if (!auditLogged) process.exitCode = 4;
+    } catch (error) {
+      const reason = sessionRefusalReason(error);
+      if (!reason) throw error;
+      process.stdout.write(`${JSON.stringify({ started: false, reason }, null, 2)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  const [value] = rest;
+  if (!value || value.startsWith('--')) throw new Error('session rotate requires a <session-id>.');
+  const storePath = sessionStorePathFor(stateDirectory);
+  try {
+    const rotated = await rotateOperatorSession({ storePath, sessionId: value });
+    const auditLogged = await appendOperatorAudit(stateDirectory, 'OPERATOR_SESSION_ROTATED', { sessionId: rotated.sessionId, rotationCount: rotated.rotationCount });
+    process.stdout.write(`${JSON.stringify({ rotated: true, sessionId: rotated.sessionId, token: rotated.token, expiresAt: new Date(rotated.expiresAt).toISOString(), rotationCount: rotated.rotationCount, auditLogged }, null, 2)}\n`);
+    if (!auditLogged) process.exitCode = 4;
+  } catch (error) {
+    const reason = sessionRefusalReason(error);
+    if (!reason) throw error;
+    process.stdout.write(`${JSON.stringify({ rotated: false, reason, sessionId: value }, null, 2)}\n`);
+    process.exitCode = 1;
+  }
 }
 
 async function runKillSwitch(action, args) {
@@ -1661,6 +1845,10 @@ async function main(argv) {
   }
   if (command === 'fetch') {
     await runFetchCommand(args);
+    return;
+  }
+  if (command === 'session') {
+    await runSessionCommand(args);
     return;
   }
   if (command === 'check-scope') {

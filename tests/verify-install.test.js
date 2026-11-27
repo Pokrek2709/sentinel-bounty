@@ -77,9 +77,9 @@ test('verify-install passes on a well-formed install with inactive kill-switch',
   });
   const result = await runVerifyInstall({ skillDirectory, stateDirectory });
   assert.equal(result.overall, 'PASS');
-  assert.equal(result.passed, 7);
+  assert.equal(result.passed, 10);
   assert.equal(result.failed, 0);
-  assert.deepEqual(result.checks.map((check) => check.id), ['node-version', 'cli-reachable', 'kill-switch', 'audit-log', 'state-permissions', 'scope-config', 'skill-files']);
+  assert.deepEqual(result.checks.map((check) => check.id), ['node-version', 'cli-reachable', 'cli-syntax', 'kill-switch', 'audit-log', 'state-permissions', 'scope-config', 'skill-files', 'skill-copies-identical', 'operator-sessions']);
   assert.ok(result.checks.every((check) => check.status === 'PASS' && typeof check.reason === 'string' && check.reason.length > 0));
 });
 
@@ -179,6 +179,53 @@ test('verify-install accepts SKILL.md at the installed-copy root', async (t) => 
   assert.match(result.checks.find((check) => check.id === 'skill-files').reason, /SKILL\.md is present/);
 });
 
+test('verify-install fails differing SKILL.md copies', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
+  const skillDirectory = path.join(base, 'skill');
+  const stateDirectory = path.join(base, 'state');
+  await makeSkillRoot(skillDirectory);
+  await makeStateDirectory(stateDirectory);
+  await fs.writeFile(path.join(skillDirectory, 'SKILL.md'), '# Sentinel Bounty (different)\n', { mode: 0o600 });
+  const result = await runVerifyInstall({ skillDirectory, stateDirectory });
+  const check = result.checks.find((item) => item.id === 'skill-copies-identical');
+  assert.equal(check.status, 'FAIL');
+  assert.match(check.reason, /copies differ/);
+  // One copy only: nothing to compare, so the check passes vacuously.
+  await fs.rm(path.join(skillDirectory, 'SKILL.md'));
+  const single = await runVerifyInstall({ skillDirectory, stateDirectory });
+  assert.equal(single.checks.find((item) => item.id === 'skill-copies-identical').status, 'PASS');
+});
+
+test('verify-install fails a corrupt operator sessions store', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
+  const skillDirectory = path.join(base, 'skill');
+  const stateDirectory = path.join(base, 'state');
+  await makeSkillRoot(skillDirectory);
+  await makeStateDirectory(stateDirectory);
+  await fs.writeFile(path.join(stateDirectory, 'operator-sessions.json'), '{broken', { mode: 0o600 });
+  const result = await runVerifyInstall({ skillDirectory, stateDirectory });
+  const check = result.checks.find((item) => item.id === 'operator-sessions');
+  assert.equal(check.status, 'FAIL');
+  assert.match(check.reason, /OPERATOR_SESSION_STORE_CORRUPT/);
+});
+
+test('verify-install fails a CLI entrypoint that does not parse', async (t) => {
+  const base = await makeTempDir(t, 'sentinel-verify-');
+  const skillDirectory = path.join(base, 'skill');
+  const stateDirectory = path.join(base, 'state');
+  await makeSkillRoot(skillDirectory);
+  await makeStateDirectory(stateDirectory);
+  await fs.writeFile(path.join(skillDirectory, 'bin', 'sentinel.js'), 'const broken = ;\n', { mode: 0o600 });
+  const result = await runVerifyInstall({ skillDirectory, stateDirectory });
+  const check = result.checks.find((item) => item.id === 'cli-syntax');
+  assert.equal(check.status, 'FAIL');
+  assert.match(check.reason, /does not parse as JavaScript/);
+  // A missing entrypoint is cli-reachable's failure, not this check's.
+  await fs.unlink(path.join(skillDirectory, 'bin', 'sentinel.js'));
+  const missing = await runVerifyInstall({ skillDirectory, stateDirectory });
+  assert.equal(missing.checks.find((item) => item.id === 'cli-syntax').status, 'PASS');
+});
+
 test('verify-install fails invalid scope-config JSON', async (t) => {
   const base = await makeTempDir(t, 'sentinel-verify-');
   const skillDirectory = path.join(base, 'skill');
@@ -221,12 +268,15 @@ test('CLI verify-install exits 0 with one PASS line per check on a good install'
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /^PASS node-version: /m);
   assert.match(result.stdout, /^PASS cli-reachable: /m);
+  assert.match(result.stdout, /^PASS cli-syntax: /m);
   assert.match(result.stdout, /^PASS kill-switch: /m);
   assert.match(result.stdout, /^PASS audit-log: /m);
   assert.match(result.stdout, /^PASS state-permissions: /m);
   assert.match(result.stdout, /^PASS scope-config: /m);
   assert.match(result.stdout, /^PASS skill-files: /m);
-  assert.match(result.stdout, /verify-install: 7 passed, 0 failed — PASS/);
+  assert.match(result.stdout, /^PASS skill-copies-identical: /m);
+  assert.match(result.stdout, /^PASS operator-sessions: /m);
+  assert.match(result.stdout, /verify-install: 10 passed, 0 failed — PASS/);
   assert.deepEqual(await snapshotTree(stateDirectory), beforeState);
 });
 
@@ -245,5 +295,5 @@ test('CLI verify-install exits non-zero with FAIL lines on a broken install', as
   assert.match(result.stdout, /^FAIL kill-switch: Kill-switch is ACTIVE/m);
   assert.match(result.stdout, /^FAIL audit-log: /m);
   assert.match(result.stdout, /^FAIL skill-files: /m);
-  assert.match(result.stdout, /verify-install: 4 passed, 3 failed — FAIL/);
+  assert.match(result.stdout, /verify-install: 7 passed, 3 failed — FAIL/);
 });

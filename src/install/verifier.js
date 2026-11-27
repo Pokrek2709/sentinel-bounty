@@ -2,9 +2,14 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { PersistentKillSwitch } = require('../policy/persistent-kill-switch');
 const { classifyStateReadError, hasNonDirectoryAncestor } = require('../policy/storage-errors');
 const { auditStatePermissions } = require('../policy/state-permissions');
+const { loadSessions } = require('../policy/operator-sessions');
+
+const execFileAsync = promisify(execFile);
 
 const MIN_NODE_MAJOR = 18;
 // Repo layout keeps the skill doc under skills/, an installed copy keeps it
@@ -48,6 +53,32 @@ async function checkCliReachable(skillDirectory) {
     if (error.code === 'ENOTDIR') return fail('cli-reachable', 'CLI entrypoint path is invalid (a path component is not a directory).');
     return fail('cli-reachable', 'CLI entrypoint bin/sentinel.js could not be read.');
   }
+}
+
+async function checkCliSyntax(skillDirectory) {
+  // Round 98: `cli-reachable` only stats the entrypoint — a
+  // half-written bin/sentinel.js (interrupted write) would pass it
+  // and fail at first use. This check runs `node --check` on it:
+  // a syntax check, never an execution, and it writes nothing.
+  // Absence or unreadability is cli-reachable's job, so this check
+  // passes vacuously there instead of double-counting the failure.
+  const entrypoint = path.join(skillDirectory, 'bin', 'sentinel.js');
+  let stat;
+  try {
+    stat = await fs.stat(entrypoint);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return pass('cli-syntax', 'No CLI entrypoint to check; cli-reachable reports it.');
+    if (['EACCES', 'EPERM'].includes(error.code)) return pass('cli-syntax', 'CLI entrypoint is not readable; cli-reachable reports it.');
+    return fail('cli-syntax', 'CLI entrypoint could not be checked.');
+  }
+  if (!stat.isFile()) return pass('cli-syntax', 'CLI entrypoint is not a file; cli-reachable reports it.');
+  try {
+    await execFileAsync(process.execPath, ['--check', entrypoint], { timeout: 10_000, windowsHide: true });
+  } catch (error) {
+    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || error.killed) return fail('cli-syntax', 'CLI entrypoint could not be syntax-checked (timed out).');
+    return fail('cli-syntax', 'CLI entrypoint bin/sentinel.js does not parse as JavaScript (node --check failed).');
+  }
+  return pass('cli-syntax', 'CLI entrypoint bin/sentinel.js parses as JavaScript (node --check).');
 }
 
 async function checkKillSwitch(stateDirectory, skillDirectory) {
@@ -183,6 +214,53 @@ async function checkSkillFiles(skillDirectory) {
   return fail('skill-files', 'Skill file SKILL.md is missing (checked skills/sentinel-bounty/SKILL.md and SKILL.md).');
 }
 
+async function checkSkillCopiesIdentical(skillDirectory) {
+  // Round 98: the repo layout keeps two copies of the skill
+  // contract (root and skills/sentinel-bounty/) that must stay
+  // byte-identical; the docs-crossref guard test pins the same
+  // property, and this is the runtime half of it. An installed
+  // single-copy layout has nothing to compare, so it passes
+  // vacuously — presence itself is skill-files' job.
+  const copies = [];
+  for (const candidate of SKILL_FILE_CANDIDATES) {
+    try {
+      copies.push(await fs.readFile(path.join(skillDirectory, candidate)));
+    } catch {
+      // Missing or unreadable: nothing to compare; skill-files
+      // reports presence and readability.
+    }
+  }
+  if (copies.length < 2) return pass('skill-copies-identical', 'Fewer than two readable SKILL.md copies; nothing to compare.');
+  if (copies[0].equals(copies[1])) return pass('skill-copies-identical', 'Both SKILL.md copies (root and skills/sentinel-bounty/) are byte-identical.');
+  return fail('skill-copies-identical', 'The two SKILL.md copies differ (root vs skills/sentinel-bounty/); they must be byte-identical.');
+}
+
+async function checkOperatorSessions(stateDirectory) {
+  // Round 98: the operator-session store is a new state file, so
+  // the installer validates it like the audit log — a corrupt
+  // store must fail loudly instead of passing as "no sessions".
+  // A missing file means no sessions yet, which passes.
+  const storePath = path.join(stateDirectory, 'operator-sessions.json');
+  try {
+    await fs.lstat(storePath);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      if (await hasNonDirectoryAncestor(storePath)) return fail('operator-sessions', 'Operator sessions path is invalid (a path component is not a directory).');
+      return pass('operator-sessions', 'No operator sessions file exists yet; nothing to verify.');
+    }
+    if (['EACCES', 'EPERM'].includes(error.code)) return fail('operator-sessions', 'Operator sessions store is not readable (permission denied).');
+    if (error.code === 'ENOTDIR') return fail('operator-sessions', 'Operator sessions path is invalid (a path component is not a directory).');
+    return fail('operator-sessions', 'Operator sessions store could not be read.');
+  }
+  try {
+    await loadSessions(storePath, { now: Date.now(), pruneExpired: false });
+  } catch (error) {
+    const code = typeof error.code === 'string' ? error.code : 'OPERATOR_SESSION_STORE_CORRUPT';
+    return fail('operator-sessions', `Operator sessions store is not valid (${code}).`);
+  }
+  return pass('operator-sessions', 'Operator sessions store is readable and valid.');
+}
+
 // Read-only install verification: every check is a local read (stat /
 // readFile) only. No writes, no network requests, no security tools.
 // Returns a frozen { checks, passed, failed, overall } summary; callers
@@ -195,11 +273,14 @@ async function runVerifyInstall({ skillDirectory, stateDirectory, nodeVersion = 
   const checks = [
     await checkNodeVersion(nodeVersion),
     await checkCliReachable(skillDirectory),
+    await checkCliSyntax(skillDirectory),
     await checkKillSwitch(stateDirectory, skillDirectory),
     await checkAuditLog(stateDirectory),
     await checkStatePermissions(stateDirectory),
     await checkScopeConfig(skillDirectory),
     await checkSkillFiles(skillDirectory),
+    await checkSkillCopiesIdentical(skillDirectory),
+    await checkOperatorSessions(stateDirectory),
   ];
   const passed = checks.filter((check) => check.status === 'PASS').length;
   const failed = checks.length - passed;

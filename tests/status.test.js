@@ -134,7 +134,7 @@ test('status: golden text + JSON on a known fixture state', async (t) => {
     });
     assert.deepEqual(status.scope, { targets: 3, invalidTargets: 1 });
     assert.deepEqual(status.retention, { set: true, maxArchives: 2, maxRecords: 100, error: null });
-    assert.deepEqual(status.verifyInstall, { passed: 7, failed: 0, overall: 'PASS' });
+    assert.deepEqual(status.verifyInstall, { passed: 10, failed: 0, overall: 'PASS' });
     assert.deepEqual(status.tools, STUB_TOOLS);
     assert.equal(renderOperatorStatusText(status), [
       `sentinel status — ${stateDir}`,
@@ -142,7 +142,7 @@ test('status: golden text + JSON on a known fixture state', async (t) => {
       'audit: 4 records (2 verified, 2 legacy, 0 broken), chain verified, last: 2026-11-26T00:00:03.000Z, 1 prune anchor',
       'scope: 3 targets (1 invalid)',
       'retention: max_archives=2, max_records=100',
-      'verify-install: 7 passed, 0 failed — PASS',
+      'verify-install: 10 passed, 0 failed — PASS',
       'tools: 2 available, 3 missing (docker, subfinder, katana)',
     ].join('\n'));
     // --json is deterministic: two collections render byte-identically.
@@ -313,7 +313,7 @@ test('status CLI: text and --json, unknown option fails', async (t) => {
   const text = await runCli(['status', '--state-dir', stateDir]);
   assert.equal(text.code, 0);
   assert.match(text.stdout, /^sentinel status — /);
-  assert.match(text.stdout, /verify-install: 7 passed, 0 failed — PASS/);
+  assert.match(text.stdout, /verify-install: 10 passed, 0 failed — PASS/);
   const json = await runCli(['status', '--state-dir', stateDir, '--json']);
   assert.equal(json.code, 0);
   const parsed = JSON.parse(json.stdout);

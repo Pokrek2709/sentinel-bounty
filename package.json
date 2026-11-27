@@ -1,6 +1,6 @@
 {
   "name": "sentinel-bounty",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "AI-Powered Bug Bounty Research Assistant - Modular multi-agent security tooling and research engine",
   "main": "src/index.js",
   "bin": {
