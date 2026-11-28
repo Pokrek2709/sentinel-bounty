@@ -95,6 +95,9 @@ const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
 const solidityReentrancyDetector = require('./solidity-reentrancy');
 const solidityAccessControlDetector = require('./solidity-access-control');
 const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-initializer');
+const solidityRoundingDetector = require('./solidity-rounding');
+const solidityTxOriginDetector = require('./solidity-tx-origin');
+const solidityWeakRandomnessDetector = require('./solidity-weak-randomness');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -279,6 +282,26 @@ function runDetector(detector, input, defaults) {
 //     initialize() with neither the `initializer` /
 //     `reinitializer` modifier nor any access control
 //     (CWE-862), source 'solidity-unprotected-initializer'.
+//   - 'solidity-rounding' -> the nineteenth real detector
+//     (round 110), the fourth SOLIDITY detector — it runs
+//     a separate analysis over the Solidity subset AST,
+//     flagging a `*` whose operand is directly a `/`
+//     (division before multiplication, CWE-682), source
+//     'solidity-rounding'.
+//   - 'solidity-tx-origin' -> the twentieth real detector
+//     (round 110), the fifth SOLIDITY detector — it runs
+//     a separate analysis over the Solidity subset AST,
+//     flagging a `==` / `!=` comparison containing
+//     `tx.origin` in a function or modifier body (CWE-862),
+//     source 'solidity-tx-origin'.
+//   - 'solidity-weak-randomness' -> the twenty-first real
+//     detector (round 110), the sixth SOLIDITY detector —
+//     it runs a separate analysis over the Solidity subset
+//     AST, flagging block entropy (block.timestamp /
+//     block.number / blockhash / block.difficulty /
+//     block.prevrandao / block.coinbase) inside a hash
+//     call, a modulo, or a seed initializer (CWE-338),
+//     source 'solidity-weak-randomness'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -303,6 +326,9 @@ function getDetector(spec, skillRoot) {
   if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
   if (spec === 'solidity-access-control') return { detector: solidityAccessControlDetector, source: 'solidity-access-control' };
   if (spec === 'solidity-unprotected-initializer') return { detector: solidityUnprotectedInitializerDetector, source: 'solidity-unprotected-initializer' };
+  if (spec === 'solidity-rounding') return { detector: solidityRoundingDetector, source: 'solidity-rounding' };
+  if (spec === 'solidity-tx-origin') return { detector: solidityTxOriginDetector, source: 'solidity-tx-origin' };
+  if (spec === 'solidity-weak-randomness') return { detector: solidityWeakRandomnessDetector, source: 'solidity-weak-randomness' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');

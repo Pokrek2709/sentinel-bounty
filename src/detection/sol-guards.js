@@ -265,6 +265,59 @@ function effectiveStateVars(contract, byName) {
   return vars;
 }
 
+// --- expression rendering --------------------------------------------------
+
+// Render an expression as short readable text for a finding's
+// evidence (`amount / total`, `msg.sender.call`, `keccak256(...)`).
+// Evidence only — the text is never re-parsed, so a nested
+// binary expression is parenthesized to stay unambiguous
+// (`(amount / total) * price`, not `amount / total * price`).
+// Argument contents are elided as `(...)`: a literal inside
+// an argument never lands in a finding. Anything the
+// renderer does not know is its node type, never a crash.
+function renderExpression(node) {
+  if (!node || typeof node !== 'object') return '<unknown>';
+  switch (node.type) {
+    case 'Identifier':
+      return node.name;
+    case 'Literal':
+      return String(node.value);
+    case 'MemberExpression': {
+      const object = renderExpression(node.object);
+      if (node.computed) return `${object}[...]`;
+      return `${object}.${node.property && node.property.name ? node.property.name : '?'}`;
+    }
+    case 'CallExpression':
+      return `${renderExpression(node.callee)}(...)`;
+    case 'NewExpression':
+      return `new ${node.callee}(...)`;
+    case 'BinaryExpression': {
+      const left = node.left && node.left.type === 'BinaryExpression'
+        ? `(${renderExpression(node.left)})` : renderExpression(node.left);
+      const right = node.right && node.right.type === 'BinaryExpression'
+        ? `(${renderExpression(node.right)})` : renderExpression(node.right);
+      return `${left} ${node.operator} ${right}`;
+    }
+    case 'AssignmentExpression': {
+      const right = node.right && node.right.type === 'BinaryExpression'
+        ? `(${renderExpression(node.right)})` : renderExpression(node.right);
+      return `${renderExpression(node.left)} ${node.operator} ${right}`;
+    }
+    case 'UnaryExpression':
+      return `${node.operator}${renderExpression(node.argument)}`;
+    case 'UpdateExpression':
+      return node.prefix
+        ? `${node.operator}${renderExpression(node.argument)}`
+        : `${renderExpression(node.argument)}${node.operator}`;
+    case 'ConditionalExpression':
+      return `${renderExpression(node.test)} ? ${renderExpression(node.consequent)} : ${renderExpression(node.alternate)}`;
+    case 'TupleExpression':
+      return `(${(node.elements || []).map((e) => (e ? renderExpression(e) : '')).join(', ')})`;
+    default:
+      return node.type;
+  }
+}
+
 module.exports = {
   ACCESS_MODIFIERS,
   ROLE_CALLS,
@@ -278,4 +331,5 @@ module.exports = {
   containsRevertCall,
   hasAccessControl,
   effectiveStateVars,
+  renderExpression,
 };

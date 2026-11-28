@@ -8,6 +8,88 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 110: Solidity rounding, tx.origin and weak-randomness detectors (2026-11-29)
+
+- Three Solidity detectors on the same subset parser (round
+  109's §13 "next step") — the first round where the
+  Solidity detectors diverge in CWE, because the flaws are
+  different kinds:
+  - `solidity-rounding` (nineteenth real detector, fourth
+    Solidity detector): a `*` whose operand is directly a
+    `/` — division before multiplication, the division
+    truncates before the multiplication runs (CWE-682
+    Incorrect Calculation, severity medium), one finding
+    per multiplication site. Multiply-first-divide-last
+    (`x * y / z`) and bare division are clean.
+  - `solidity-tx-origin` (twentieth real detector, fifth
+    Solidity detector): a `==` / `!=` comparison whose
+    subtree contains `tx.origin`, in a function or modifier
+    body (CWE-862 — the check validates the transaction
+    originator, not the immediate caller — not CWE-477,
+    because tx.origin is not an obsolete function; CWE-863
+    is the closest sibling and is documented as
+    considered), one finding per comparison site,
+    outermost only. This closes the pin round 109 left
+    behind: a function guarded only by tx.origin is
+    flagged by both detectors — complementary, not
+    duplicate.
+  - `solidity-weak-randomness` (twenty-first real detector,
+    sixth Solidity detector): block entropy
+    (`block.timestamp`, `block.number`, `blockhash(...)`,
+    `block.difficulty` / `block.prevrandao`,
+    `block.coinbase`) inside a hash call (`keccak256` /
+    `sha256` / `sha3`), as a modulo operand, or as a
+    seed-named initializer (CWE-338 Use of
+    Cryptographically Weak PRNG, severity medium; CWE-337
+    is the closest sibling and is documented as
+    considered), one finding per entropy-source site.
+    Block data in a deadline check, deadline arithmetic,
+    or a log is clean — the context restriction is the
+    whole point.
+- Shared this round, not duplicated: `renderExpression`
+  in `src/detection/sol-guards.js` (new) — the evidence
+  renderer all three detectors use (nested binary
+  children parenthesized, call arguments elided as
+  `(...)`, so a literal inside an argument never lands in
+  a finding).
+- The parser grows one small additive piece:
+  ContractDefinition nodes now keep their `modifiers`
+  (ModifierDefinition nodes with name, params, and body).
+  Before this round modifiers were parsed and discarded —
+  a contract whose only tx.origin check sat in a modifier
+  was invisible to every detector.
+- Pinned exclusions (tested): rounding — division and
+  multiplication in separate statements (needs data flow),
+  division inside a call argument of a multiplied value,
+  division before exponentiation, modifier bodies;
+  tx.origin — tx.origin as a plain value (assigned,
+  logged, passed as an argument) is clean, while
+  `require(tx.origin != address(0))` IS flagged (a
+  null-check the detector cannot tell from an
+  authorization check, false positive by design);
+  weak randomness — a seed variable used later is not
+  traced (no data flow), `block.gaslimit` is not a
+  source, modifier bodies are not scanned, a `blockhash`
+  call's arguments are not scanned for further sources
+  (the argument is a block selector, not entropy).
+- Tests: 1593 total (1588 pass, 0 fail, 5 skip) — 66 new
+  tests (`tests/solidity-rounding.test.js`,
+  `tests/solidity-tx-origin.test.js`,
+  `tests/solidity-weak-randomness.test.js`,
+  `tests/sol-parser.test.js`,
+  `tests/sol-guards.test.js`); verify-install 11/11.
+- Docs: three new docs
+  (`docs/detection-solidity-rounding-v1.md`,
+  `docs/detection-solidity-tx-origin-v1.md`,
+  `docs/detection-solidity-weak-randomness-v1.md`); §14
+  addendum in `docs/parser-taint-scope-v1.md`;
+  `docs/solidity-parser-v1.md` (modifiers),
+  `SKILL.md` (both copies, byte-identical) and
+  `docs/README.md` updated. Phase movement: F5 stays
+  100% (three more Solidity classes on the same parser;
+  the remaining Solidity limits are per-detector scope,
+  not a phase gap).
+
 ### Round 109: Solidity access-control and unprotected-initializer detectors (2026-11-29)
 
 - Two Solidity access-control detectors on the same subset

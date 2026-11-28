@@ -472,15 +472,23 @@ class Parser {
     this.expect('{', "'{' after contract header");
     const stateVars = [];
     const functions = [];
+    // Modifier definitions are kept (round 110): the
+    // tx.origin detector scans modifier bodies, where an
+    // authorization check usually lives. Before this
+    // round they were parsed and discarded — a contract
+    // whose only tx.origin check sat in a modifier was
+    // invisible to every detector.
+    const modifiers = [];
     while (!this.at('}') && !this.atEof()) {
       const part = this.parseContractPart(stateVars, functions);
       if (part && part.type === 'StateVariableDeclaration') stateVars.push(part);
       else if (part && part.type === 'FunctionDefinition') functions.push(part);
+      else if (part && part.type === 'ModifierDefinition') modifiers.push(part);
     }
     this.expect('}', "'}' after contract body");
     return {
       type: 'ContractDefinition', name: name.name, kind, bases,
-      stateVars, functions, line: start.line, column: start.column,
+      stateVars, functions, modifiers, line: start.line, column: start.column,
     };
   }
 

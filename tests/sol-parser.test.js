@@ -299,3 +299,27 @@ test('parser: a bare type name as a statement is an expression, not a declaratio
   assert.equal(statement.type, 'ExpressionStatement');
   assert.equal(statement.expression.type, 'CallExpression');
 });
+
+test('parser: modifier definitions are kept on the contract (round 110)', () => {
+  const ast = parse(`
+    contract C {
+      address public owner;
+      modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+      }
+      function f() external onlyOwner {
+        total = 1;
+      }
+    }
+  `);
+  const contract = ast.body[0];
+  assert.equal(contract.modifiers.length, 1);
+  assert.equal(contract.modifiers[0].type, 'ModifierDefinition');
+  assert.equal(contract.modifiers[0].name, 'onlyOwner');
+  assert.equal(contract.modifiers[0].body.type, 'BlockStatement');
+  // A contract without modifiers carries an empty array,
+  // not an absent field.
+  const bare = parse('contract D { function g() external {} }');
+  assert.deepEqual(bare.body[0].modifiers, []);
+});

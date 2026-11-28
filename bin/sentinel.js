@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1624,7 +1624,25 @@ async function runDetect(args) {
   // same subset AST, flagging an external/public initialize()
   // with neither the `initializer` / `reinitializer`
   // modifier nor any access control (CWE-862), one finding
-  // per initialize function; a path loads
+  // per initialize function; `solidity-rounding`
+  // (round 110) is the nineteenth real detector and the fourth
+  // Solidity detector — it runs a separate analysis over the
+  // same subset AST, flagging a `*` whose operand is directly
+  // a `/` (division before multiplication, CWE-682), one
+  // finding per multiplication site; `solidity-tx-origin`
+  // (round 110) is the twentieth real detector and the fifth
+  // Solidity detector — it runs a separate analysis over the
+  // same subset AST, flagging a `==` / `!=` comparison
+  // containing `tx.origin` in a function or modifier body
+  // (CWE-862), one finding per comparison site;
+  // `solidity-weak-randomness` (round 110) is the
+  // twenty-first real detector and the sixth Solidity
+  // detector — it runs a separate analysis over the same
+  // subset AST, flagging block entropy (block.timestamp /
+  // block.number / blockhash / block.difficulty /
+  // block.prevrandao / block.coinbase) inside a hash call,
+  // a modulo, or a seed initializer (CWE-338), one finding
+  // per entropy-source site; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a

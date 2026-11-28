@@ -684,3 +684,83 @@ form, so the guard could never fire through the parser).
   subset grammar. The next step is more Solidity classes
   on the same parser (round 110: rounding, tx.origin,
   weak randomness).
+
+## 14. Round-110 addendum (2026-11-29) — three Solidity classes: rounding, tx.origin, weak randomness
+
+Three more Solidity classes land on the same subset parser
+(round 109's §13 "next step"), each with its own CWE —
+this round is the first where the Solidity detectors
+diverge in CWE, because the flaws are different kinds:
+
+- `solidity-rounding` (nineteenth real detector, fourth
+  Solidity detector): a `*` whose operand is directly a
+  `/` — division before multiplication, the division
+  truncates before the multiplication runs (CWE-682
+  Incorrect Calculation, severity medium), one finding
+  per multiplication site. Multiply-first-divide-last
+  (`x * y / z`) and bare division are clean. See
+  `docs/detection-solidity-rounding-v1.md`.
+- `solidity-tx-origin` (twentieth real detector, fifth
+  Solidity detector): a `==` / `!=` comparison whose
+  subtree contains `tx.origin`, in a function or modifier
+  body (CWE-862 — the check validates the transaction
+  originator, not the immediate caller — not CWE-477,
+  because tx.origin is not an obsolete function; CWE-863
+  is the closest sibling and is documented as considered),
+  one finding per comparison site, outermost only. This
+  closes the pin round 109 left behind: the
+  access-control detectors deliberately do NOT treat
+  `require(tx.origin == ...)` as a guard, so a function
+  guarded only by tx.origin is flagged by both detectors
+  — complementary, not duplicate. See
+  `docs/detection-solidity-tx-origin-v1.md`.
+- `solidity-weak-randomness` (twenty-first real detector,
+  sixth Solidity detector): block entropy
+  (`block.timestamp`, `block.number`, `blockhash(...)`,
+  `block.difficulty` / `block.prevrandao`, `block.coinbase`)
+  inside a hash call (`keccak256` / `sha256` / `sha3`), as
+  a modulo operand, or as a seed-named initializer
+  (CWE-338 Use of Cryptographically Weak PRNG, severity
+  medium; CWE-337 is the closest sibling and is
+  documented as considered), one finding per
+  entropy-source site. Block data in a deadline check,
+  deadline arithmetic, or a log is clean — the context
+  restriction is the whole point. See
+  `docs/detection-solidity-weak-randomness-v1.md`.
+
+Shared this round, not duplicated: `renderExpression` in
+`src/detection/sol-guards.js` — the evidence renderer all
+three detectors use, so a division, a comparison, and a
+block-entropy source render the same way (nested binary
+children parenthesized, call arguments elided as `(...)`,
+so a literal inside an argument never lands in a
+finding).
+
+The parser grows one small additive piece to support
+these detectors: ContractDefinition nodes now keep their
+`modifiers` (ModifierDefinition nodes with name, params,
+and body). Before this round modifiers were parsed and
+discarded — a contract whose only tx.origin check sat in
+a modifier was invisible to every detector. A contract
+without modifiers carries an empty array, not an absent
+field.
+
+- **Deliberate exclusions, pinned by tests:**
+  rounding — division and multiplication in separate
+  statements (needs data flow), division inside a call
+  argument of a multiplied value, division before
+  exponentiation, modifier bodies; tx.origin — tx.origin
+  as a plain value (assigned, logged, passed as an
+  argument) is clean, while `require(tx.origin !=
+  address(0))` IS flagged (a null-check the detector
+  cannot tell from an authorization check, false positive
+  by design); weak randomness — a seed variable used
+  later is not traced (no data flow), `block.gaslimit`
+  is not a source, modifier bodies are not scanned.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset — and, by the
+  same logic, `@solidity-parser/parser` (evaluated,
+  not adopted) if the Solidity detector set outgrows the
+  subset grammar. The next step is more Solidity classes
+  on the same parser (round 111: oracle dependence,
+  signature replay).

@@ -6,7 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const parseSolidity = require('../src/detection/sol-parser.js');
-const { hasAccessControl, effectiveStateVars } = require('../src/detection/sol-guards.js');
+const { hasAccessControl, effectiveStateVars, renderExpression } = require('../src/detection/sol-guards.js');
 
 function fn(source) {
   const ast = parseSolidity(`contract C {
@@ -102,4 +102,33 @@ test('sol-guards: effectiveStateVars tolerates a missing base contract (round 10
   const byName = new Map(ast.body.map((c) => [c.name, c]));
   const vars = effectiveStateVars(byName.get('Leaf'), byName);
   assert.deepEqual([...vars], ['leafVar']);
+});
+
+test('sol-guards: renderExpression renders binary, member, and call expressions for evidence (round 110)', () => {
+  const ast = parseSolidity(`contract C {
+  function f(uint256 a, uint256 b, uint256 c) external pure returns (uint256) {
+    return a / b * c;
+  }
+}`);
+  const ret = ast.body[0].functions[0].body.body[0];
+  assert.equal(renderExpression(ret.argument), '(a / b) * c');
+  const ast2 = parseSolidity(`contract C {
+  function f(address who) external {
+    who.call{value: 1}("");
+  }
+}`);
+  const call = ast2.body[0].functions[0].body.body[0].expression;
+  assert.equal(renderExpression(call), 'who.call(...)');
+  const ast3 = parseSolidity(`contract C {
+  function f() external {
+    require(tx.origin == owner, "x");
+  }
+}`);
+  const req = ast3.body[0].functions[0].body.body[0].expression;
+  assert.equal(renderExpression(req.arguments[0]), 'tx.origin == owner');
+});
+
+test('sol-guards: renderExpression never crashes on an unknown node type (round 110)', () => {
+  assert.equal(renderExpression({ type: 'MysteryNode' }), 'MysteryNode');
+  assert.equal(renderExpression(null), '<unknown>');
 });
