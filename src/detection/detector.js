@@ -96,6 +96,8 @@ const { taintedXxeDetector } = require('./tainted-xxe');
 const { taintedRedosDetector } = require('./tainted-redos');
 const { taintedPrototypePollutionDetector } = require('./tainted-prototype-pollution');
 const taintedPickleDetector = require('./tainted-pickle');
+const taintedIncludeDetector = require('./tainted-include');
+const taintedUnserializeDetector = require('./tainted-unserialize');
 const solidityReentrancyDetector = require('./solidity-reentrancy');
 const solidityAccessControlDetector = require('./solidity-access-control');
 const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-initializer');
@@ -360,6 +362,20 @@ function runDetector(detector, input, defaults) {
 //     flagging tainted data reaching pickle / marshal /
 //     yaml.load / shelve deserialization sinks (CWE-502),
 //     source 'tainted-pickle'.
+//   - 'tainted-include' -> the thirtieth real detector
+//     (round 116), the FIRST PHP detector — it runs a
+//     separate taint analysis over the PHP subset AST
+//     (php-parser.js), NOT the JavaScript taint engine,
+//     flagging tainted data reaching include / require /
+//     include_once / require_once (CWE-98), source
+//     'tainted-include'.
+//   - 'tainted-unserialize' -> the thirty-first real
+//     detector (round 116), the SECOND PHP detector —
+//     it runs a separate taint analysis over the PHP
+//     subset AST (php-parser.js), NOT the JavaScript
+//     taint engine, flagging tainted data reaching
+//     unserialize() (CWE-502), source
+//     'tainted-unserialize'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -385,6 +401,8 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-redos') return { detector: taintedRedosDetector, source: 'tainted-redos' };
   if (spec === 'tainted-prototype-pollution') return { detector: taintedPrototypePollutionDetector, source: 'tainted-prototype-pollution' };
   if (spec === 'tainted-pickle') return { detector: taintedPickleDetector, source: 'tainted-pickle' };
+  if (spec === 'tainted-include') return { detector: taintedIncludeDetector, source: 'tainted-include' };
+  if (spec === 'tainted-unserialize') return { detector: taintedUnserializeDetector, source: 'tainted-unserialize' };
   if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
   if (spec === 'solidity-access-control') return { detector: solidityAccessControlDetector, source: 'solidity-access-control' };
   if (spec === 'solidity-unprotected-initializer') return { detector: solidityUnprotectedInitializerDetector, source: 'solidity-unprotected-initializer' };

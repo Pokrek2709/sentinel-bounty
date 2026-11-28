@@ -1260,3 +1260,108 @@ documented in `docs/detection-tainted-pickle-v1.md`.
   outgrows the subset. The next step is round 116
   (PHP parser + tainted include/unserialize), the
   fourth language round.
+
+## 20. Round-116 addendum (2026-11-29) — the fourth language: PHP
+
+The second language round after the JavaScript set closed
+in round 114. A hand-written stdlib-only PHP subset
+parser (`src/detection/php-parser.js`, documented in
+`docs/php-parser-v1.md`) plus the first two PHP
+detectors, `tainted-include` (CWE-98, severity high) and
+`tainted-unserialize` (CWE-502, severity high),
+documented in `docs/detection-tainted-include-v1.md` and
+`docs/detection-tainted-unserialize-v1.md`.
+
+- **PHP subset parser:** tokenizer + recursive-descent
+  parser over `<?php` / `<?=` / `<?` segments (HTML
+  between segments skipped, `?>` ends a segment even
+  inside a comment, the newline after `?>` belongs to
+  the close tag; `<?xml` is not an open tag). Covered:
+  function definitions (defaults, types, variadic
+  `...$rest`, by-reference `&$x`, return types parsed
+  and discarded, nested defs), assignment (chained,
+  `list()` and short-list targets, augmented, `??=`),
+  `if` / `elseif` / `else`, `foreach` / `for` /
+  `while` / `do-while`, `switch`, `try` / `catch` /
+  `finally` — braced AND alternative (`:` / `endif` /
+  `endforeach` / `endfor` / `endwhile` / `endswitch`)
+  suites — `return` / `break` / `continue` / `throw`,
+  `echo` / `print` / `exit` / `die`, `isset` / `empty`
+  / `unset`, `global` / `static` / `const`, `namespace`
+  / `use` / `declare`, `#[...]` attributes, and
+  expressions (interpolated double-quoted / backtick
+  strings with nested quotes, array literals `[]` /
+  `array()`, casts, `new`, `clone`, `instanceof`,
+  ternary including the short form, `??`, named
+  arguments, spread, `include` / `require` as
+  statements and expressions, `->` / `?->` / `::`
+  calls, concatenation). Fails loudly on class /
+  interface / trait / enum definitions, closures, `fn`
+  arrow functions, `match`, heredoc / nowdoc, `yield`,
+  `goto`, variable variables, dynamic member access,
+  and `__halt_compiler`. A shared config-driven PHP
+  taint analyzer (`src/detection/php-taint.js`) sits
+  between the parser and the two detectors, modeled
+  on the Python analyzer, not on the JavaScript taint
+  engine.
+- **Tainted include (`tainted-include`, CWE-98,
+  severity high):** tainted data reaching `include` /
+  `require` / `include_once` / `require_once` (the
+  kind is always `tainted-arg` — a language construct
+  cannot be aliased). Sources: function parameters,
+  the superglobals `$_GET` / `$_POST` / `$_REQUEST` /
+  `$_COOKIE` / `$_FILES` (bare and subscripted), and
+  `file_get_contents('php://input')`. `$_SERVER` /
+  `$_SESSION` / `$GLOBALS` / `$_ENV` are NOT sources.
+  Sanitizers: `basename()`, `(int)` / `(float)` /
+  `(bool)` casts, `intval` / `floatval` / `boolval`.
+  Guards: strict `in_array($x, $allowed, true)`
+  (strict `true` REQUIRED — non-strict is not a
+  guard), `array_key_exists($x, $allowed)`,
+  `isset($allowed[$x])` in an enclosing `if`, plus a
+  `switch ($var)` with NO `default` case; guards
+  intersect on branch join and a judged expression is
+  guarded iff all its variable leaves are guarded
+  (a Subscript is never a guarded expression — the
+  analyzer does not track array contents).
+- **Tainted unserialize (`tainted-unserialize`, CWE-502,
+  severity high):** tainted data reaching
+  `unserialize($data)` (judged argument positional 0
+  or named `data:`). Sources are the same superglobal
+  / `php://input` / parameter sources as the include
+  detector. `unserialize($data, ['allowed_classes' =>
+  false])` — positional argument 1 or named
+  `options:` — is CLEAN, and an empty allow-list is
+  likewise clean; a non-empty allow-list is still
+  flagged (listed classes can carry gadgets); options
+  passed as a variable are flagged (no constant
+  propagation). Sanitizers: `(int)` / `(float)` /
+  `(bool)` / `(array)` casts, `intval` / `floatval` /
+  `boolval`, `json_decode` / `json_encode`. A bare
+  `unserialize` always resolves to the global sink
+  (the PHP fallback); `\unserialize` is a sink; a
+  qualified `Foo\unserialize` is NOT a sink; a call
+  reached through a `use function` alias reports kind
+  `aliased-call` with any argument. `json_decode` is
+  NOT a sink, and allow-list guards do NOT apply to
+  this detector.
+- **Deliberate exclusions, pinned by tests:** variable
+  function calls (`$f($x)`), `call_user_func` /
+  `Closure::fromCallable`, object-attribute taint,
+  include / require cross-file resolution, the
+  early-return guard shape (the include detector
+  models only the consequent-branch shape), a
+  Subscript as a guarded expression, methods /
+  static calls through the call graph, `$_SERVER` /
+  `$_SESSION` / `$GLOBALS` / `$_ENV` as sources, a
+  `(string)` cast as a sanitizer, options passed as a
+  variable, a `use function` binding that shadows the
+  global fallback, a constant argument to a direct
+  sink call, a sanitized argument.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset; a vendored
+  full Python parser if the Python detector set
+  outgrows the subset; a vendored full PHP parser if
+  the PHP detector set outgrows the subset. The next
+  step is round 117 (AI verifier on the free NIM
+  model, F6).

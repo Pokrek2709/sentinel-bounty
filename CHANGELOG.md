@@ -8,6 +8,99 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 116: PHP subset parser and tainted-include/unserialize detectors (2026-11-29)
+
+- Second language round after the JavaScript set closed
+  in round 114. The fourth language on the project: a
+  hand-written stdlib-only PHP subset parser
+  (`src/detection/php-parser.js`, `docs/php-parser-v1.md`)
+  — tokenizer + recursive-descent parser over `<?php` /
+  `<?=` / `<?` segments (HTML between segments skipped,
+  `?>` ends a segment even inside a comment, the newline
+  after `?>` belongs to the close tag, `<?xml` is not an
+  open tag), covering function definitions (defaults,
+  types, variadic `...$rest`, by-reference `&$x`, return
+  types parsed and discarded, nested defs), assignment
+  (chained, `list()` and short-list targets, augmented,
+  `??=`), `if` / `elseif` / `else`, `foreach` / `for` /
+  `while` / `do-while`, `switch`, `try` / `catch` /
+  `finally` — braced AND alternative (`:` / `endif` /
+  `endforeach` / `endfor` / `endwhile` / `endswitch`)
+  suites — `return` / `break` / `continue` / `throw`,
+  `echo` / `print` / `exit` / `die`, `isset` / `empty` /
+  `unset`, `global` / `static` / `const`, `namespace` /
+  `use` / `declare`, `#[...]` attributes, and expressions
+  (interpolated strings with nested quotes, array
+  literals `[]` / `array()`, casts, `new`, `clone`,
+  `instanceof`, ternary including the short form, `??`,
+  named arguments, spread, `include` / `require` as
+  statements and expressions, `->` / `?->` / `::` calls,
+  concatenation). Fails loudly on class / interface /
+  trait / enum definitions, closures, `fn` arrow
+  functions, `match`, heredoc / nowdoc, `yield`, `goto`,
+  variable variables, dynamic member access, and
+  `__halt_compiler`. A shared config-driven PHP taint
+  analyzer (`src/detection/php-taint.js`) sits between
+  the parser and the two detectors, modeled on the
+  Python analyzer, not on the JavaScript taint engine.
+  No external PHP parser adopted (stdlib-only).
+- `tainted-include` (thirtieth real detector, FIRST PHP
+  detector, CWE-98 Improper Control of Filename for
+  Include/Require Statement in PHP Program, severity
+  high): tainted data reaching `include` / `require` /
+  `include_once` / `require_once` (statement and
+  expression forms; kind always `tainted-arg` — a
+  language construct cannot be aliased). Sources:
+  function parameters (round-95 fallback), the
+  superglobals `$_GET` / `$_POST` / `$_REQUEST` /
+  `$_COOKIE` / `$_FILES` (bare and subscripted), and
+  `file_get_contents('php://input')`. `$_SERVER` /
+  `$_SESSION` / `$GLOBALS` / `$_ENV` are NOT sources.
+  Sanitizers: `basename()`, `(int)` / `(float)` /
+  `(bool)` casts, `intval` / `floatval` / `boolval`.
+  Guards: strict `in_array($x, $allowed, true)`
+  (strict `true` REQUIRED), `array_key_exists($x,
+  $allowed)`, `isset($allowed[$x])` in an enclosing
+  `if`, plus a `switch ($var)` with NO `default` case;
+  guards intersect on branch join and a judged
+  expression is guarded iff all its variable leaves
+  are guarded. The early-return guard shape and a
+  Subscript as a guarded expression are NOT modeled
+  (pinned by tests). One finding per sink site,
+  confidence `potential`, never carrying a literal
+  value or source line.
+- `tainted-unserialize` (thirty-first real detector,
+  SECOND PHP detector, CWE-502 Deserialization of
+  Untrusted Data, severity high): tainted data reaching
+  `unserialize($data)` (judged argument positional 0
+  or named `data:`). Sources are the same superglobal
+  / `php://input` / parameter sources as the include
+  detector. `unserialize($data, ['allowed_classes' =>
+  false])` — positional argument 1 or named
+  `options:` — is CLEAN, and an empty allow-list is
+  likewise clean; a non-empty allow-list is still
+  flagged (listed classes can carry gadgets); options
+  passed as a variable are flagged (no constant
+  propagation). Sanitizers: `(int)` / `(float)` /
+  `(bool)` / `(array)` casts, `intval` / `floatval` /
+  `boolval`, `json_decode` / `json_encode`. A bare
+  `unserialize` always resolves to the global sink (the
+  PHP fallback); `\unserialize` is a sink; a qualified
+  `Foo\unserialize` is NOT a sink; a call reached
+  through a `use function` alias reports kind
+  `aliased-call` with any argument. `json_decode` is
+  NOT a sink, and allow-list guards do NOT apply to
+  this detector. One finding per sink site, confidence
+  `potential`, never carrying a literal value or source
+  line.
+- The detectors are wired into `src/detection/detector.js`,
+  `bin/sentinel.js` (usage line and description),
+  `SKILL.md` (both copies, byte-identical), and
+  `docs/README.md`; the scope document gains addendum
+  §20. Total detectors now 31 (5 regex + 13
+  parser-based JavaScript + 10 Solidity + 1 Python +
+  2 PHP).
+
 ### Round 115: Python subset parser and tainted-pickle detector (2026-11-29)
 
 - First language round after the JavaScript set closed in

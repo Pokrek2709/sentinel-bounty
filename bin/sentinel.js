@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|tainted-xxe|tainted-redos|tainted-prototype-pollution|tainted-pickle|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|tainted-xxe|tainted-redos|tainted-prototype-pollution|tainted-pickle|tainted-include|tainted-unserialize|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1705,7 +1705,21 @@ async function runDetect(args) {
   // taint engine, flagging tainted data reaching pickle
   // / marshal / yaml.load / shelve deserialization
   // sinks (CWE-502), one finding per sink site, never
-  // carrying a literal value; a path loads
+  // carrying a literal value; `tainted-include` (round
+  // 116) is the thirtieth real detector and the FIRST
+  // PHP detector — it runs a separate taint analysis
+  // over the PHP subset AST (`php-parser.js`), NOT the
+  // JavaScript taint engine, flagging tainted data
+  // reaching `include` / `require` / `include_once` /
+  // `require_once` (CWE-98), one finding per sink site,
+  // never carrying a literal value;
+  // `tainted-unserialize` (round 116) is the
+  // thirty-first real detector and the SECOND PHP
+  // detector — it runs a separate taint analysis over
+  // the PHP subset AST, NOT the JavaScript taint
+  // engine, flagging tainted data reaching
+  // `unserialize()` (CWE-502), one finding per sink
+  // site, never carrying a literal value; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a
