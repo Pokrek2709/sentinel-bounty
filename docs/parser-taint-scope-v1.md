@@ -838,3 +838,76 @@ shape being missed, and the fix is pinned by the two
   subset grammar. The next step is more Solidity classes
   on the same parser (round 112: unchecked external
   calls, cross-function reentrancy).
+
+## 16. Round-112 addendum (2026-11-29) — two Solidity classes: unchecked call, cross-function reentrancy
+
+The last two Solidity classes on the map before the
+round returns to JavaScript (round 113: XXE + ReDoS).
+Both run over the same subset parser and share
+`walkExpression` / `renderExpression` in
+`sol-guards.js`; neither touches the JavaScript taint
+engine, and neither grows the parser — no new node
+types, no new fields. The parser fact this round
+reused is the tuple-declaration shape §15 exposed:
+a plain declaration's initial value lives on the
+declarator, a tuple declaration's at statement level,
+and the unchecked-call detector reads both — binding
+only the tuple's FIRST NAMED element, because `.call`
+returns `(bool, bytes)` and only the bool says
+whether the call worked.
+
+- **Unchecked call (`solidity-unchecked-call`,
+  CWE-252):** a low-level call (`.call` /
+  `.delegatecall` / `.staticcall` / `.send`) whose
+  return value is never checked in the same function
+  or modifier body. A check is a direct check
+  (require / assert / if / while / do-while / for-test
+  / return) or an assigned-then-checked variable —
+  name-based, so a variable bound to the call and
+  mentioned in a check position anywhere later in the
+  same body is clean. `.transfer` is not a sink (it
+  reverts on failure); an unchecked ERC20 `transfer`
+  is a separate class, pinned out of scope.
+- **Cross-function reentrancy
+  (`solidity-cross-function-reentrancy`, CWE-841):**
+  the first detector that analyzes ACROSS functions:
+  function A (external / public) performs an external
+  call (`.call` / `.transfer` / `.send`) and then
+  READS a state variable, while a different
+  external / public function B of the same contract
+  WRITES it. One finding per (call site, variable, B)
+  triple. Same-file base contracts count (their state
+  variables and functions are visible to the derived
+  contract). The read rule is position-based — a read
+  after the sink's source position, not inside the
+  sink's own subtree — so a read inside a branch
+  after the call counts (over-approximation, stated
+  in the detector doc, unlike round 108's
+  segment-based rule). The guard rule is `A guarded
+  AND B guarded`: one `nonReentrant` alone is not
+  enough, analyzed not assumed, and both one-sided
+  cases are pinned as findings. The analysis tracks
+  declaration scopes and function parameters, so a
+  local or parameter shadowing a state variable is
+  not a read of it.
+
+- **Deliberate exclusions, pinned by tests:**
+  unchecked call — a checked call of any of the
+  forms above, `.transfer`, an unchecked ERC20
+  transfer, a call inside a comment or string;
+  cross-function reentrancy — a pair guarded on
+  both sides, an internal reader or writer, a
+  constructor or modifier as the writer, a read
+  before the call only, a read inside the call's
+  own arguments, a write-after-call in the same
+  function (round 108 territory), a writer of a
+  different variable, `delegatecall` and `this.`
+  calls as sinks, a local / parameter shadowing
+  the state variable.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset — and, by
+  the same logic, `@solidity-parser/parser`
+  (evaluated, not adopted) if the Solidity detector
+  set outgrows the subset grammar. The next step is
+  back to JavaScript (round 113: XXE + ReDoS), the
+  first JavaScript classes since round 107.

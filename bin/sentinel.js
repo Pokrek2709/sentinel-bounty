@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1657,7 +1657,21 @@ async function runDetect(args) {
   // authorization whose signed message carries no nonce,
   // no deadline, and no EIP-712 domain separator (CWE-294),
   // one finding per ecrecover site, in function and
-  // modifier bodies; a path loads
+  // modifier bodies; `solidity-unchecked-call` (round 112)
+  // is the twenty-fourth real detector and the ninth
+  // Solidity detector — it runs a separate analysis over
+  // the same subset AST, flagging a low-level call
+  // (`.call` / `.delegatecall` / `.staticcall` / `.send`)
+  // whose return value is never checked in the same
+  // function or modifier body (CWE-252), one finding per
+  // unchecked call site; `solidity-cross-function-reentrancy`
+  // (round 112) is the twenty-fifth real detector and the
+  // tenth Solidity detector — it runs a separate analysis
+  // over the same subset AST, flagging a function that
+  // performs an external call and then reads a state
+  // variable while a different external/public function of
+  // the same contract writes it (CWE-841), one finding per
+  // (call site, variable, writing function) triple; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a

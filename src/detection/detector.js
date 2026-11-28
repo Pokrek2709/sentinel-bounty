@@ -100,6 +100,8 @@ const solidityTxOriginDetector = require('./solidity-tx-origin');
 const solidityWeakRandomnessDetector = require('./solidity-weak-randomness');
 const solidityOracleDependenceDetector = require('./solidity-oracle-dependence');
 const soliditySignatureReplayDetector = require('./solidity-signature-replay');
+const solidityUncheckedCallDetector = require('./solidity-unchecked-call');
+const solidityCrossFunctionReentrancyDetector = require('./solidity-cross-function-reentrancy');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -321,6 +323,22 @@ function runDetector(detector, input, defaults) {
 //     carries no nonce, no deadline, and no EIP-712
 //     domain separator (CWE-294), source
 //     'solidity-signature-replay'.
+//   - 'solidity-unchecked-call' -> the twenty-fourth
+//     real detector (round 112), the ninth SOLIDITY
+//     detector — it runs a separate analysis over the
+//     Solidity subset AST, flagging a low-level call
+//     (`.call` / `.delegatecall` / `.staticcall` /
+//     `.send`) whose return value is never checked in
+//     the same function or modifier body (CWE-252),
+//     source 'solidity-unchecked-call'.
+//   - 'solidity-cross-function-reentrancy' -> the
+//     twenty-fifth real detector (round 112), the tenth
+//     SOLIDITY detector — it runs a separate analysis
+//     over the Solidity subset AST, flagging a function
+//     that performs an external call and then reads a
+//     state variable while a different external/public
+//     function of the same contract writes it (CWE-841),
+//     source 'solidity-cross-function-reentrancy'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -350,6 +368,8 @@ function getDetector(spec, skillRoot) {
   if (spec === 'solidity-weak-randomness') return { detector: solidityWeakRandomnessDetector, source: 'solidity-weak-randomness' };
   if (spec === 'solidity-oracle-dependence') return { detector: solidityOracleDependenceDetector, source: 'solidity-oracle-dependence' };
   if (spec === 'solidity-signature-replay') return { detector: soliditySignatureReplayDetector, source: 'solidity-signature-replay' };
+  if (spec === 'solidity-unchecked-call') return { detector: solidityUncheckedCallDetector, source: 'solidity-unchecked-call' };
+  if (spec === 'solidity-cross-function-reentrancy') return { detector: solidityCrossFunctionReentrancyDetector, source: 'solidity-cross-function-reentrancy' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');

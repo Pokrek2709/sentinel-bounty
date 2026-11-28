@@ -48,6 +48,63 @@ v0.x tag line (see `docs/release-process-v1.md`).
   missed; the fix is pinned by the two "through a
   variable" tests.
 
+### Round 112: Solidity unchecked-external-calls and cross-function-reentrancy detectors (2026-11-29)
+
+- Two Solidity detectors on the same subset parser (round
+  111's §15 "next step"), the last two Solidity classes
+  on the map before the round returns to JavaScript
+  (round 113: XXE + ReDoS). No parser growth — no new
+  node types, no new fields:
+  - `solidity-unchecked-call` (twenty-fourth real
+    detector, ninth Solidity detector): a low-level call
+    (`.call` / `.delegatecall` / `.staticcall` /
+    `.send`) whose return value is never checked in the
+    same function or modifier body (CWE-252 Unchecked
+    Return Value, severity high — not CWE-841, because
+    nothing is checked at all rather than ordered
+    wrongly), one finding per unchecked call site. A
+    check is direct (require / assert / if / while /
+    do-while / for-test / return) or assigned-then-checked
+    (name-based, anywhere later in the same body). A
+    tuple declaration binds only its first NAMED element
+    (the bool of `.call`'s `(bool, bytes)` return), so
+    checking only the bytes does not check the call.
+    `.transfer` is not a sink (it reverts on failure);
+    an unchecked ERC20 `transfer` is a separate class,
+    pinned out of scope.
+  - `solidity-cross-function-reentrancy` (twenty-fifth
+    real detector, tenth Solidity detector): the first
+    detector that analyzes ACROSS functions — function A
+    (external / public) performs an external call
+    (`.call` / `.transfer` / `.send`) and then READS a
+    state variable, while a different external / public
+    function B of the same contract WRITES it (CWE-841
+    Improper Enforcement of Behavioral Workflow,
+    severity high — the same CWE as single-function
+    reentrancy, because the ordering assumption is broken
+    by the interleaving), one finding per (call site,
+    variable, writing function) triple. The read rule is
+    position-based (a read after the sink, not inside
+    its subtree), so a read inside a branch after the
+    call counts. The guard rule is `A guarded AND B
+    guarded` — one `nonReentrant` alone is not enough,
+    analyzed not assumed, both one-sided cases pinned
+    as findings. Same-file base contracts count. A write
+    after the call in the same function is single-function
+    reentrancy territory, not this detector's;
+    `delegatecall` and `this.` calls are not sinks;
+    locals and parameters shadowing a state variable are
+    not reads of it.
+- Shared this round, not duplicated: nothing new — both
+  detectors reuse `walkExpression` / `renderExpression`
+  in `sol-guards.js` and the §15 tuple-declaration
+  reading (plain vs statement-level initial value).
+  All 53 new tests passed on the first run.
+- Tests: 1679 total (1674 pass, 0 fail, 5 skip) — 53 new
+  tests (`tests/solidity-unchecked-call.test.js`,
+  `tests/solidity-cross-function-reentrancy.test.js`);
+  verify-install 11/11.
+
 ### Round 110: Solidity rounding, tx.origin and weak-randomness detectors (2026-11-29)
 
 - Three Solidity detectors on the same subset parser (round
