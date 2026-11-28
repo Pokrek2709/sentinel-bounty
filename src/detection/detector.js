@@ -92,6 +92,8 @@ const { taintedSsrfDetector } = require('./tainted-ssrf');
 const { taintedLdapDetector } = require('./tainted-ldap');
 const { taintedXpathDetector } = require('./tainted-xpath');
 const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
+const { taintedXxeDetector } = require('./tainted-xxe');
+const { taintedRedosDetector } = require('./tainted-redos');
 const solidityReentrancyDetector = require('./solidity-reentrancy');
 const solidityAccessControlDetector = require('./solidity-access-control');
 const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-initializer');
@@ -339,6 +341,12 @@ function runDetector(detector, input, defaults) {
 //     state variable while a different external/public
 //     function of the same contract writes it (CWE-841),
 //     source 'solidity-cross-function-reentrancy'.
+//   - 'tainted-xxe' -> the twenty-sixth real detector
+//     (round 113), the eleventh parser-based one, source
+//     'tainted-xxe'.
+//   - 'tainted-redos' -> the twenty-seventh real detector
+//     (round 113), the twelfth parser-based one, source
+//     'tainted-redos'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -360,6 +368,8 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-ldap') return { detector: taintedLdapDetector, source: 'tainted-ldap' };
   if (spec === 'tainted-xpath') return { detector: taintedXpathDetector, source: 'tainted-xpath' };
   if (spec === 'tainted-open-redirect') return { detector: taintedOpenRedirectDetector, source: 'tainted-open-redirect' };
+  if (spec === 'tainted-xxe') return { detector: taintedXxeDetector, source: 'tainted-xxe' };
+  if (spec === 'tainted-redos') return { detector: taintedRedosDetector, source: 'tainted-redos' };
   if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
   if (spec === 'solidity-access-control') return { detector: solidityAccessControlDetector, source: 'solidity-access-control' };
   if (spec === 'solidity-unprotected-initializer') return { detector: solidityUnprotectedInitializerDetector, source: 'solidity-unprotected-initializer' };

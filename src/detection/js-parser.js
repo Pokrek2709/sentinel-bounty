@@ -1260,12 +1260,22 @@ class Parser {
     return this.parsePostfix();
   }
 
-  parsePostfix() {
+  // Parse a primary expression plus its postfix operators
+  // (member access, calls, tagged templates, postfix
+  // update). With `allowCalls` false, call postfixes are
+  // NOT consumed: that is the `new` target grammar (round
+  // 113) — `new RegExp(d)` must parse as a NewExpression
+  // with callee `RegExp` and arguments `[d]`, not as
+  // `new (RegExp(d))`. A `?.(` optional call is likewise
+  // not a member access, so it stops the member parse
+  // before the `?.` is consumed.
+  parsePostfix(allowCalls = true) {
     let expr = this.parsePrimary();
     for (;;) {
       const token = this.peek();
       if (token.type === 'punct' && (token.value === '++' || token.value === '--')) {
         // Postfix update only when on the same line (ASI).
+        if (!allowCalls) break;
         if (token.line !== expr.line && expr.type !== 'MemberExpression') break;
         const op = this.next();
         expr = { type: 'UpdateExpression', operator: op.value, argument: expr, prefix: false, line: op.line, column: op.column };
@@ -1285,6 +1295,10 @@ class Parser {
         continue;
       }
       if (token.type === 'punct' && token.value === '?.') {
+        // An optional call is not a member access (round
+        // 113): stop before consuming the `?.` so the
+        // caller sees it.
+        if (!allowCalls && this.peek(1).value === '(') break;
         this.next();
         if (this.at('(')) {
           const args = this.parseArguments();
@@ -1328,6 +1342,7 @@ class Parser {
         continue;
       }
       if (token.type === 'punct' && token.value === '(') {
+        if (!allowCalls) break;
         const args = this.parseArguments();
         expr = {
           type: 'CallExpression', callee: expr, arguments: args, optional: false,
@@ -1338,6 +1353,8 @@ class Parser {
       if (token.type === 'template') {
         // Tagged template: treat as a call with the template
         // as its single argument (taint flows through it).
+        // Not a member access (round 113).
+        if (!allowCalls) break;
         const tpl = this.next();
         const template = this.parseTemplateLiteral(tpl);
         expr = {
@@ -1528,7 +1545,13 @@ class Parser {
           return this.parseClass(false);
         case 'new': {
           const start = this.next();
-          const callee = this.parsePostfix();
+          // Round 113: the callee of `new` is a member
+          // expression, not a call — `new RegExp(d)` is a
+          // NewExpression with callee `RegExp` and
+          // arguments `[d]`; parsing the callee with calls
+          // allowed mis-parsed it as `new (RegExp(d))`
+          // with empty arguments.
+          const callee = this.parsePostfix(false);
           let args = [];
           if (this.at('(')) args = this.parseArguments();
           return { type: 'NewExpression', callee, arguments: args, line: start.line, column: start.column };

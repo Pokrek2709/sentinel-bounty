@@ -911,3 +911,125 @@ whether the call worked.
   set outgrows the subset grammar. The next step is
   back to JavaScript (round 113: XXE + ReDoS), the
   first JavaScript classes since round 107.
+
+## 17. Round-113 addendum (2026-11-29) — two JavaScript classes: XXE + ReDoS
+
+The return to JavaScript after the Solidity set closed in
+round 112 — the first JavaScript classes since round 107.
+Both detectors run on the shared taint engine
+(`src/detection/taint-engine.js`) as thin configs; both
+are documented in `docs/detection-tainted-xxe-v1.md` and
+`docs/detection-tainted-redos-v1.md`. Round 113 is the
+second round to EXTEND the shared engine for a new sink
+shape (round 104 was the first), and the first round to
+fix the subset parser's `new` target grammar.
+
+- **XXE (`tainted-xxe`, CWE-611, severity high):** a
+  tainted XML string reaching an XML parser that
+  resolves entities. Sinks: `libxmljs.parseXml` /
+  `libxmljs.parseXmlString` (gated — see below),
+  `parseFromString` (xmldom, method sink),
+  `parseString` / `parseStringPromise` (xml2js, method
+  sinks), `parser.write` (sax, fixed two-part sink).
+  Only the first argument (the XML string) is judged.
+  `JSON.parse` is not a sink; a bare `parseXml` is not
+  a sink (only the `libxmljs` root is); a three-part
+  call is not resolved. xmldom expands internal
+  entities by default and does not fetch external
+  entities in current versions, and xml2js (over sax)
+  likewise expands internal entities by default — so a
+  finding on those sinks is a potential vector needing
+  version-specific verification, stated in the doc.
+- **ReDoS (`tainted-redos`, CWE-1333, severity
+  medium):** a tainted regex pattern reaching regex
+  construction or use. Sinks: bare `RegExp` (covers
+  `RegExp(tainted)` and, via the engine extension,
+  `new RegExp(tainted)`), and the method sinks
+  `match` / `search` / `replace` / `split` (first
+  argument judged). `match` / `search` coerce a
+  string argument to a RegExp, so a tainted string
+  pattern is a vector; `replace` / `split` match a
+  string argument literally, so only a tainted RegExp
+  object is a vector there — the engine cannot tell
+  the two apart, so a finding there is `potential`
+  and the operator checks the pattern's type.
+  `regex.test` / `regex.exec` are NOT sinks (the
+  danger lives in the receiver pattern, which the
+  engine cannot analyze for catastrophic
+  backtracking); `matchAll` is out of the brief's
+  named scope. There is NO regex-complexity analysis:
+  the engine never inspects pattern text — a tainted
+  pattern is flagged because the attacker controls
+  it, not because the pattern is proven catastrophic
+  (nested quantifiers such as `(a+)+`, `(a|a)*`,
+  `(a*)*` are the documented examples of what the
+  attacker could supply). A clean pattern is never
+  flagged, however catastrophic it looks.
+
+**Engine extension 1 — `dangerousOptions` (XXE).** A
+sink entry may carry `{ argIndex, props }`: the finding
+fires only when the named argument is an object literal
+containing one of the named properties with a strictly
+equal literal value (identifier key or string key).
+Anything else — no such argument, a variable, an object
+without the property, a non-literal value — is not a
+finding: the dangerous configuration cannot be
+established, and the library default is safe. The gate
+applies on the direct path (`judgeSinkCall`) and on the
+aliased-call path of `checkSinkCall` alike. A literal
+value is inspected only for this boolean decision and
+never carried into a finding. Only the libxmljs pair
+uses it (`noent: true` at argument 1 — libxmljs
+substitutes entities only then). The gate is
+config-driven and additive: detectors that declare no
+`dangerousOptions` behave exactly as before.
+
+**Engine extension 2 — `new` expressions are
+sink-checked like calls (ReDoS).** `evalExpr` now calls
+`checkSinkCall` for `NewExpression` nodes as well as
+`CallExpression` nodes, so `new RegExp(tainted)` flags
+exactly like `RegExp(tainted)`. No earlier detector
+declares a sink named like a constructor, so the change
+is invisible to them. A `new` expression whose callee
+is itself a call (`new (f(x))`) evaluates the callee so
+a sink nested in it is still checked.
+
+**Parser fix — `new` target grammar (ReDoS).** The
+subset parser mis-parsed `new RegExp(d)` as `new
+(RegExp(d))`: `parsePostfix()` greedily consumed the
+argument list as a call on the callee, leaving the
+NewExpression with empty arguments. `parsePostfix`
+now takes `allowCalls` (default true); the `new` case
+parses its callee with calls disallowed, so the callee
+is a member expression (`RegExp`, `Foo.bar`,
+`Foo['bar']`) and the argument list belongs to the
+NewExpression — `new RegExp(d)` is a NewExpression
+with callee `RegExp` and arguments `[d]`, `new
+Foo.bar(d)` with callee `Foo.bar`, `new Foo()` and
+`new Foo` unchanged. Call postfixes after the
+NewExpression (`new Foo().bar`, `(new Foo())()`) are
+still parsed by the outer postfix loop. Only the `new`
+case changes behavior; every other `parsePostfix`
+caller keeps the default.
+
+- **Deliberate exclusions, pinned by tests:** XXE —
+  libxmljs without the `noent: true` literal (no
+  options, `noent: false`, an options object without
+  `noent`, options in a variable), a bare `parseXml`,
+  a non-`libxmljs` root, `.write` on anything not
+  named `parser`, `JSON.parse`, `xpath.parse`,
+  `document.querySelector`, a sink in a comment or
+  string, an unknown / relative / dynamic require;
+  ReDoS — a clean pattern (however catastrophic it
+  looks), a sanitized pattern, a tainted second
+  argument (`RegExp` flags, `replace`'s replacement),
+  `test` / `exec` / `matchAll`, a three-part
+  `window.RegExp`, `RegExp` as a value (not a call),
+  arbitrary constructors (`new Foo`, `new Date`), a
+  sink in a comment or string, an unmapped module
+  member.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset. The next
+  step is round 114 (prototype pollution), the last
+  JavaScript class on the approved map before the
+  language rounds (Python, PHP).

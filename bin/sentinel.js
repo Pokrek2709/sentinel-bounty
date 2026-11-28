@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|tainted-xxe|tainted-redos|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1671,7 +1671,24 @@ async function runDetect(args) {
   // performs an external call and then reads a state
   // variable while a different external/public function of
   // the same contract writes it (CWE-841), one finding per
-  // (call site, variable, writing function) triple; a path loads
+  // (call site, variable, writing function) triple;
+  // `tainted-xxe` (round 113) is the twenty-sixth real
+  // detector and the eleventh parser-based one — it reuses
+  // the same taint engine on XML parser sinks (libxmljs
+  // parseXml / parseXmlString gated on a `noent: true`
+  // options literal, xmldom parseFromString, xml2js
+  // parseString / parseStringPromise, sax parser.write),
+  // reporting a sink call only when its first argument
+  // (the XML string) is tainted or the call is reached
+  // through an alias, never carrying a literal value;
+  // `tainted-redos` (round 113) is the twenty-seventh
+  // real detector and the twelfth parser-based one — it
+  // reuses the same taint engine on regex construction
+  // and use (`RegExp` / `new RegExp`, match / search /
+  // replace / split), reporting a sink call only when
+  // its first argument (the pattern) is tainted or the
+  // call is reached through an alias, never carrying a
+  // literal value; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a

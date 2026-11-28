@@ -105,6 +105,67 @@ v0.x tag line (see `docs/release-process-v1.md`).
   `tests/solidity-cross-function-reentrancy.test.js`);
   verify-install 11/11.
 
+### Round 113: tainted-XXE and ReDoS detectors on the shared taint engine (2026-11-29)
+
+- Two JavaScript detectors on the shared taint engine (round
+  112's §16 "next step"), the return to JavaScript after the
+  Solidity set closed in round 112 — the first JavaScript
+  classes since round 107:
+  - `tainted-xxe` (twenty-sixth real detector, eleventh
+    parser-based detector): a tainted XML string reaching
+    an XML parser that resolves entities (CWE-611 Improper
+    Limitation of XML External Entity Reference, severity
+    high), one finding per sink call site. Sinks:
+    `libxmljs.parseXml` / `libxmljs.parseXmlString` (gated
+    on a `noent: true` options literal — the library
+    default does not substitute entities), xmldom
+    `parseFromString`, xml2js `parseString` /
+    `parseStringPromise`, sax `parser.write`. Only the
+    first argument (the XML string) is judged. `JSON.parse`
+    is not a sink; a bare `parseXml` is not a sink; a
+    three-part call is not resolved. xmldom / xml2js
+    findings need version-specific verification (they
+    expand internal entities by default; external-entity
+    fetching depends on the version).
+  - `tainted-redos` (twenty-seventh real detector, twelfth
+    parser-based detector): a tainted regex pattern
+    reaching regex construction or use (CWE-1333 Regular
+    Expression Denial of Service, severity medium —
+    availability only), one finding per sink call site.
+    Sinks: bare `RegExp` (`RegExp(tainted)` and `new
+    RegExp(tainted)`), and the method sinks `match` /
+    `search` / `replace` / `split` (first argument
+    judged). `match` / `search` coerce a string argument
+    to a RegExp; `replace` / `split` match a string
+    literally, so only a tainted RegExp object is a vector
+    there (pinned, `potential`). `regex.test` / `regex.exec`
+    are not sinks (the danger lives in the receiver
+    pattern); `matchAll` is out of scope. There is NO
+    regex-complexity analysis — a tainted pattern is
+    flagged because the attacker controls it, not because
+    it is proven catastrophic; a clean pattern is never
+    flagged, however catastrophic it looks.
+- Shared engine, extended twice (the second round to extend
+  it, after round 104): a config-driven `dangerousOptions`
+  gate on a sink entry (the finding fires only when the
+  named argument is an object literal carrying one of the
+  named properties with a strictly equal literal value —
+  used only by the libxmljs pair), and `new` expressions
+  sink-checked like calls (`new RegExp(tainted)` flags
+  exactly like `RegExp(tainted)`). Both extensions are
+  additive: detectors that declare neither behave exactly
+  as before. The subset parser's `new` target grammar is
+  fixed too: `new RegExp(d)` used to mis-parse as `new
+  (RegExp(d))` with empty arguments (`parsePostfix` now
+  takes `allowCalls`; the `new` case parses its callee
+  with calls disallowed).
+- Tests: 1765 total (1760 pass, 0 fail, 5 skip) — 86 new
+  tests (`tests/tainted-xxe.test.js`,
+  `tests/tainted-redos.test.js`, battery entries in
+  `tests/inter-procedural-taint.test.js`, libxmljs cases
+  in `tests/import-resolution.test.js`);
+  verify-install 11/11.
+
 ### Round 110: Solidity rounding, tx.origin and weak-randomness detectors (2026-11-29)
 
 - Three Solidity detectors on the same subset parser (round

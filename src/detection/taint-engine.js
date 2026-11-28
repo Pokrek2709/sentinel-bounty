@@ -48,7 +48,22 @@
 // (properties whose assignment is a sink). A sink entry
 // may name `argIndex` — the judged argument (the first by
 // default); a tainted argument outside the judged index is
-// not covered, by design. A config may also carry import
+// not covered, by design. A sink entry may also carry
+// `dangerousOptions` (round 113): { argIndex, props } —
+// the finding is reported ONLY when the named argument is
+// an object literal containing one of the named properties
+// with a strictly equal literal value (XXE: libxmljs only
+// substitutes entities when `noent: true` is passed
+// literally). Any other shape — no options argument, a
+// variable, an object without the property — is not a
+// finding: the dangerous configuration cannot be
+// established, and the library default is safe. A literal
+// value is inspected only for this boolean decision and
+// never carried into a finding. `new` expressions are
+// sink-checked like calls (round 113: `new RegExp(...)`
+// is the primary ReDoS sink); no earlier detector declares
+// a sink named like a constructor, so earlier detectors
+// behave exactly as before. A config may also carry import
 // tables for round-106 import resolution: `moduleRoots`
 // (module name -> sink root, e.g. 'child_process' ->
 // 'child_process') and `moduleBareSinks` (module name ->
@@ -84,6 +99,16 @@
 //   position constant). A tainted argument outside the
 //   judged index is not covered — the round-100 pin stands,
 //   generalized.
+// - `new` expressions are sink-checked like calls (round
+//   113): a `new RegExp(tainted)` flags exactly like
+//   `RegExp(tainted)`. No earlier detector declares a sink
+//   named like a constructor, so the change is invisible
+//   to them. A sink entry may gate on a dangerous options
+//   literal (`dangerousOptions`, round 113): the finding
+//   fires only when the named argument is an object
+//   literal carrying one of the named properties with a
+//   strictly equal literal value; anything else (absent,
+//   variable, without the property) is not a finding.
 // - Assignment sinks (`el.innerHTML = x`) are judged on
 //   the assigned value; method sinks
 //   (`el.insertAdjacentHTML(...)`) match by method name
@@ -1073,6 +1098,18 @@ class TaintAnalyzer {
       case 'NewExpression': {
         const argTaints = (node.arguments || []).map((arg) => this.evalExpr(arg));
         if (node.type === 'CallExpression') this.checkSinkCall(node, argTaints);
+        // Round 113: `new` expressions are sink-checked
+        // like calls (`new RegExp(tainted)` is the primary
+        // ReDoS sink). No earlier detector declares a sink
+        // named like a constructor, so this is invisible
+        // to them.
+        if (node.type === 'NewExpression') this.checkSinkCall(node, argTaints);
+        if (node.type === 'NewExpression' && node.callee.type === 'CallExpression') {
+          // `new (f(x))` — the parenthesized call runs
+          // before construction; evaluate it so a sink
+          // nested in it is still checked.
+          this.evalExpr(node.callee);
+        }
         if (node.type === 'CallExpression') {
           // Sanitizer: the return value is clean regardless
           // of argument taint (the arguments were already
@@ -1240,11 +1277,18 @@ class TaintAnalyzer {
   // the sink's judged argument (the first argument by
   // default; a sink entry may name another index with
   // `argIndex`). A call with no judged argument, or a
-  // clean one, is not a finding.
+  // clean one, is not a finding. `callNode` is the call
+  // expression itself (its position is the finding's, and
+  // a `dangerousOptions` gate reads its arguments).
   judgeSinkCall(sink, sinkEntry, callNode, callText, argTaints) {
     const index = sinkEntry && typeof sinkEntry.argIndex === 'number' ? sinkEntry.argIndex : 0;
     const judged = argTaints[index];
     if (judged && judged.tainted) {
+      // Round 113: a sink entry may gate on a dangerous
+      // options literal (XXE: libxmljs `noent: true`).
+      // Without the literal, the dangerous configuration
+      // cannot be established, so no finding.
+      if (sinkEntry && sinkEntry.dangerousOptions && !optionsEnable(callNode, sinkEntry.dangerousOptions)) return;
       this.emitFinding(sink, callNode, 'tainted-arg', {
         call: callText,
         chain: judged.chain,
@@ -1264,7 +1308,7 @@ class TaintAnalyzer {
     if (callee.type === 'MemberExpression') {
       const name = memberName(callee);
       if (name && sinks[name]) {
-        this.judgeSinkCall(name, sinks[name], callee, name, argTaints);
+        this.judgeSinkCall(name, sinks[name], node, name, argTaints);
         return;
       }
       // Import-resolved member call: require('mod').method
@@ -1276,7 +1320,7 @@ class TaintAnalyzer {
         const callText = callee.object && callee.object.type === 'CallExpression'
           ? `require('${requireModuleName(callee.object, this)}').${memberPropertyName(callee)}`
           : name;
-        this.judgeSinkCall(canonical, sinks[canonical], callee, callText, argTaints);
+        this.judgeSinkCall(canonical, sinks[canonical], node, callText, argTaints);
         return;
       }
       // A method sink matches by method name alone,
@@ -1286,7 +1330,7 @@ class TaintAnalyzer {
       // list.
       const prop = memberPropertyName(callee);
       if (prop && methodSinks && methodSinks[prop]) {
-        this.judgeSinkCall(prop, methodSinks[prop], callee, name || prop, argTaints);
+        this.judgeSinkCall(prop, methodSinks[prop], node, name || prop, argTaints);
       }
       return;
     }
@@ -1294,11 +1338,11 @@ class TaintAnalyzer {
       // A bare-name sink (`unserialize(d)`) is a direct sink
       // call; anything else is judged by its alias binding.
       if (sinks[callee.name]) {
-        this.judgeSinkCall(callee.name, sinks[callee.name], callee, callee.name, argTaints);
+        this.judgeSinkCall(callee.name, sinks[callee.name], node, callee.name, argTaints);
         return;
       }
       if (methodSinks && methodSinks[callee.name]) {
-        this.judgeSinkCall(callee.name, methodSinks[callee.name], callee, callee.name, argTaints);
+        this.judgeSinkCall(callee.name, methodSinks[callee.name], node, callee.name, argTaints);
         return;
       }
       const binding = this.lookup(callee.name);
@@ -1316,6 +1360,9 @@ class TaintAnalyzer {
         // carries the taint evidence when it is tainted.
         const entry = (sinks && sinks[aliasSink])
           || (methodSinks && methodSinks[aliasSink]);
+        // Round 113: the same dangerous-options gate as
+        // the direct path.
+        if (entry && entry.dangerousOptions && !optionsEnable(node, entry.dangerousOptions)) return;
         const index = entry && typeof entry.argIndex === 'number' ? entry.argIndex : 0;
         const judged = argTaints[index] || argTaints[0];
         this.emitFinding(aliasSink, callee, 'aliased-call', judged, {
@@ -1394,6 +1441,31 @@ function requireMemberName(node, analyzer) {
     }
   }
   return null;
+}
+
+// Does a call node's argument carry a dangerous options
+// literal (round 113)? `spec` is { argIndex, props } —
+// true only when the named argument is an object literal
+// containing one of the named properties with a strictly
+// equal literal value. Anything else — no such argument,
+// a variable, an object without the property, a non-literal
+// value — is false: the dangerous configuration cannot be
+// established from the call text. A literal value is
+// inspected only for this boolean decision, never carried
+// into a finding.
+function optionsEnable(callNode, spec) {
+  if (!spec || typeof spec.argIndex !== 'number' || !spec.props) return true;
+  const arg = (callNode.arguments || [])[spec.argIndex];
+  if (!arg || arg.type !== 'ObjectExpression') return false;
+  for (const prop of arg.properties || []) {
+    if (!prop || prop.type !== 'Property' || prop.computed) continue;
+    let name = null;
+    if (prop.key && prop.key.type === 'Identifier') name = prop.key.name;
+    else if (prop.key && prop.key.type === 'Literal' && typeof prop.key.value === 'string') name = prop.key.value;
+    if (name === null || !Object.prototype.hasOwnProperty.call(spec.props, name)) continue;
+    if (prop.value && prop.value.type === 'Literal' && prop.value.value === spec.props[name]) return true;
+  }
+  return false;
 }
 
 // The canonical sink name an expression resolves to when

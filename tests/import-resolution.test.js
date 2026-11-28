@@ -29,6 +29,8 @@ const ssrf = require('../src/detection/tainted-ssrf');
 const ldap = require('../src/detection/tainted-ldap');
 const xpath = require('../src/detection/tainted-xpath');
 const openRedirect = require('../src/detection/tainted-open-redirect');
+const xxe = require('../src/detection/tainted-xxe');
+const redos = require('../src/detection/tainted-redos');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -84,6 +86,7 @@ test('import tables: the documented module allow-lists are exact', () => {
     'ldapts': 'client',
   });
   assert.deepEqual(xpath.MODULE_ROOTS, { 'xpath': 'xpath' });
+  assert.deepEqual(xxe.MODULE_ROOTS, { 'libxmljs': 'libxmljs' });
   // Only js-yaml maps to the yaml root: its API really is
   // yaml.load / loadAll. The `yaml` package is NOT mapped —
   // its API is `parse`, not `load`.
@@ -92,10 +95,13 @@ test('import tables: the documented module allow-lists are exact', () => {
   // receiver variable names (db/pool/...), not modules, and
   // XSS sinks are DOM globals, not module members. Open
   // redirect has none either: res / response / reply / ctx
-  // are request-handler parameters, not modules.
+  // are request-handler parameters, not modules. ReDoS has
+  // none either: `RegExp` and the string methods are
+  // built-ins, not module members.
   assert.equal(sql.MODULE_ROOTS, undefined);
   assert.equal(xss.MODULE_ROOTS, undefined);
   assert.equal(openRedirect.MODULE_ROOTS, undefined);
+  assert.equal(redos.MODULE_ROOTS, undefined);
 });
 
 // ------------------------------------------------------- pattern (a)
@@ -115,6 +121,7 @@ test('import resolution: direct require member calls resolve to the canonical si
     [deserialize, 'yaml.load', 'function h(d) { require("js-yaml").load(d); }'],
     [ldap, 'client.search', 'function h(d) { require("ldapjs").search("dc=example,dc=com", d); }'],
     [xpath, 'xpath.select', 'function h(d) { require("xpath").select(d, doc); }'],
+    [xxe, 'libxmljs.parseXml', 'function h(d) { require("libxmljs").parseXml(d, { noent: true }); }'],
   ];
   for (const [detect, sink, content] of cases) {
     assertOneFinding(run(detect, content), sink, 'tainted-arg', content);
@@ -156,6 +163,8 @@ test('import resolution: namespace aliases (require + bare-root identity) resolv
     [deserialize, 'yaml.load', 'const y = require("js-yaml"); function h(d) { y.load(d); }'],
     [ldap, 'client.search', 'const c = require("ldapjs"); function h(d) { c.search("dc=example,dc=com", d); }'],
     [xpath, 'xpath.select', 'const x = require("xpath"); function h(d) { x.select(d, doc); }'],
+    [xxe, 'libxmljs.parseXml', 'const x = require("libxmljs"); function h(d) { x.parseXml(d, { noent: true }); }'],
+    [xxe, 'libxmljs.parseXml', 'const mylib = libxmljs; function h(d) { mylib.parseXml(d, { noent: true }); }'],
     [sql, 'db.query', 'const mydb = db; function h(d) { mydb.query(d); }'],
   ];
   for (const [detect, sink, content] of cases) {
@@ -197,6 +206,7 @@ test('import resolution: destructured require resolves to the canonical sink', (
     [deserialize, 'yaml.loadAll', 'const { loadAll } = require("js-yaml"); function h(d) { loadAll(d); }'],
     [ldap, 'client.search', 'const { search } = require("ldapjs"); function h(d) { search("dc=example,dc=com", d); }'],
     [xpath, 'xpath.select', 'const { select } = require("xpath"); function h(d) { select(d, doc); }'],
+    [xxe, 'libxmljs.parseXml', 'const { parseXml } = require("libxmljs"); function h(d) { parseXml(d, { noent: true }); }'],
   ];
   for (const [detect, sink, content] of cases) {
     assertOneFinding(run(detect, content), sink, 'aliased-call', content);
@@ -250,6 +260,9 @@ test('import resolution: ESM imports resolve (named, default, namespace)', () =>
     [xpath, 'xpath.select', 'tainted-arg', 'import xpath from "xpath"; function h(d) { xpath.select(d, doc); }'],
     [xpath, 'xpath.select', 'aliased-call', 'import { select } from "xpath"; function h(d) { select(d, doc); }'],
     [xpath, 'xpath.select', 'tainted-arg', 'import * as xpath from "xpath"; function h(d) { xpath.select(d, doc); }'],
+    [xxe, 'libxmljs.parseXml', 'tainted-arg', 'import libxmljs from "libxmljs"; function h(d) { libxmljs.parseXml(d, { noent: true }); }'],
+    [xxe, 'libxmljs.parseXml', 'aliased-call', 'import { parseXml } from "libxmljs"; function h(d) { parseXml(d, { noent: true }); }'],
+    [xxe, 'libxmljs.parseXml', 'tainted-arg', 'import * as libxmljs from "libxmljs"; function h(d) { libxmljs.parseXml(d, { noent: true }); }'],
   ];
   for (const [detect, sink, kind, content] of cases) {
     assertOneFinding(run(detect, content), sink, kind, content);
@@ -297,6 +310,13 @@ test('import resolution: dynamic, relative, unknown, and re-exported imports sta
     // SQL has no import mapping at all.
     [sql, 'function h(d) { require("pg").query(d); }'],
     [sql, 'const { query } = require("pg"); function h(d) { query(d); }'],
+    // XXE has a mapping, but the `noent: true` gate still
+    // applies through a require call: without the literal
+    // the call is not a finding.
+    [xxe, 'function h(d) { require("libxmljs").parseXml(d); }'],
+    [xxe, 'function h(d) { const x = require("libxmljs"); x.parseXml(d, { noent: false }); }'],
+    // ReDoS has no import mapping at all.
+    [redos, 'function h(d) { require("regexp").RegExp(d); }'],
     // A shadowed `require` disables the resolution (like
     // the sanitizer shadowing rule).
     [commandExec, 'function require(x) { return x; } function h(d) { require("child_process").exec(d); }'],
