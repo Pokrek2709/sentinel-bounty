@@ -1,6 +1,6 @@
 // Tests for round 101 (Phase 5): inter-procedural taint
 // (call graph) + sanitizer modeling, on the shared taint
-// engine all four parser-based detectors run on.
+// engine all seven parser-based detectors run on.
 //
 // Positive cases prove taint flows from a call site into a
 // callee (the chain names the cross-function flow), through
@@ -21,6 +21,9 @@ const deserialize = require('../src/detection/tainted-deserialize');
 const commandExec = require('../src/detection/tainted-command-execution');
 const sql = require('../src/detection/tainted-sql');
 const xss = require('../src/detection/tainted-xss');
+const ssti = require('../src/detection/tainted-ssti');
+const pathTraversal = require('../src/detection/tainted-path-traversal');
+const ssrf = require('../src/detection/tainted-ssrf');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -56,6 +59,30 @@ const DETECTORS = [
     call: (arg) => `document.write(${arg})`,
     vuln: 'cross-site scripting',
     cwe: 'CWE-79',
+  },
+  {
+    name: 'tainted-ssti',
+    detect: ssti,
+    sink: 'ejs.render',
+    call: (arg) => `ejs.render(${arg})`,
+    vuln: 'server-side template injection',
+    cwe: 'CWE-1336',
+  },
+  {
+    name: 'tainted-path-traversal',
+    detect: pathTraversal,
+    sink: 'fs.readFile',
+    call: (arg) => `fs.readFile(${arg})`,
+    vuln: 'path traversal',
+    cwe: 'CWE-22',
+  },
+  {
+    name: 'tainted-ssrf',
+    detect: ssrf,
+    sink: 'fetch',
+    call: (arg) => `fetch(${arg})`,
+    vuln: 'server-side request forgery',
+    cwe: 'CWE-918',
   },
 ];
 
@@ -261,7 +288,7 @@ function defineTests(det) {
 
 for (const det of DETECTORS) defineTests(det);
 
-test('engine: all four detectors share one taint engine module', () => {
+test('engine: all seven detectors share one taint engine module', () => {
   assert.deepEqual([...engine.SANITIZERS].sort(), [
     'Boolean', 'Number', 'Number.parseFloat', 'Number.parseInt', 'parseFloat', 'parseInt',
   ]);
@@ -269,10 +296,16 @@ test('engine: all four detectors share one taint engine module', () => {
   assert.equal(commandExec.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(sql.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(xss.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(ssti.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(pathTraversal.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(ssrf.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(deserialize.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(commandExec.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(sql.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(xss.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(ssti.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(pathTraversal.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(ssrf.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(typeof engine.createTaintDetector, 'function');
   assert.equal(typeof engine.TaintAnalyzer, 'function');
   assert.equal(engine.MAX_CALL_DEPTH, 8);

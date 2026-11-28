@@ -8,6 +8,65 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 105: three AST detectors — tainted-SSTI, path-traversal, SSRF (2026-11-28)
+
+- Three parser-based detectors on the shared taint engine
+  (`src/detection/taint-engine.js`), all thin wrappers
+  with no new sink shape (round 104's config tables
+  already cover them): `tainted-ssti` (CWE-1336,
+  severity high — template-engine sinks `ejs.render` /
+  `compile`, `pug.compile` / `render`,
+  `nunjucks.renderString`, `handlebars.compile`,
+  first argument judged; CWE-1336 is the
+  template-engine-specific CWE, not the broader CWE-94;
+  a constant template with a tainted data object is not
+  flagged), `tainted-path-traversal` (CWE-22, severity
+  high — `fs` path sinks `readFile` / `readFileSync` /
+  `writeFile` / `writeFileSync` / `createReadStream` /
+  `createWriteStream` / `readdir` / `readdirSync` /
+  `unlink` / `unlinkSync`, first argument judged;
+  `path.join` does not sanitize; path containment
+  checks are not modeled as sanitizers), and
+  `tainted-ssrf` (CWE-918, severity high —
+  outbound-request sinks `fetch`, `request`, `http.get` /
+  `request`, `https.get` / `request`, `axios.get` / `post`
+  / `put` / `delete` / `request`, first argument judged;
+  the bare names `fetch` and `request` ARE sinks —
+  distinctive globals, unlike `query` or `render`; an
+  options object as the first argument is judged as a
+  whole). Each reports a sink call only when its judged
+  argument is tainted (`tainted-arg`, chain proves the
+  flow, inter-procedural since round 101) or when the
+  call is reached through an alias (`aliased-call`).
+- One small additive engine fix (`aliasSinkOf` in
+  `src/detection/taint-engine.js`): a bare-name sink
+  bound to a new name (`const f = fetch`,
+  `const f = unserialize`) now resolves as an alias of
+  that sink — before this fix only member-expression
+  aliases resolved. The fix only affects identifiers
+  that ARE bare-name sinks; the pre-existing AST
+  detectors are unchanged (their test files pass
+  unmodified). Deliberate exclusions, pinned by tests:
+  SSTI `renderFile` / `nunjucks.render` / `res.render` /
+  bare `render` / three-part calls / tainted data
+  object; traversal `existsSync` / `mkdir` /
+  `res.sendFile` / `fs.promises.*` / bare `readFile` /
+  tainted second argument; SSRF `window.fetch` /
+  `XMLHttpRequest.open` / `WebSocket` / three-part
+  calls / tainted second argument / a destructured
+  alias colliding with a bare sink name. A bare
+  identifier literally named `get` does not parse
+  (round-101 keyword limitation) — a record calling
+  `get(...)` is skipped, not silently scanned.
+- Tests: 19 new tests each in `tests/tainted-ssti.test.js`
+  and `tests/tainted-path-traversal.test.js`, 20 in
+  `tests/tainted-ssrf.test.js` (all sink spellings, taint
+  flows, aliases, safe patterns, envelope, resolution
+  limits); the round-101 inter-procedural battery now
+  parameterizes over all seven parser-based detectors
+  (+66 tests). Full suite green; no behavior change to
+  the four existing AST detectors.
+
 ### Round 104: fourth AST detector — tainted-xss (2026-11-28)
 
 - Fourth parser-based detector (`tainted-xss`, CWE-79,

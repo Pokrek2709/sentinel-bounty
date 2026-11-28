@@ -1200,6 +1200,12 @@ function aliasSinkOf(node, analyzer) {
     return null;
   }
   if (node.type === 'Identifier') {
+    // A bare-name sink bound to a new name (`const f =
+    // fetch`, `const f = unserialize`) is an alias of
+    // that sink: the bare name IS the sink value, so the
+    // binding carries it. (Round 105: without this, only
+    // member-expression aliases resolved.)
+    if (analyzer.config.sinks[node.name]) return node.name;
     const binding = analyzer.lookup(node.name);
     return binding ? binding.aliasSink : null;
   }

@@ -86,6 +86,9 @@ const { taintedDeserializeDetector } = require('./tainted-deserialize');
 const { taintedCommandExecutionDetector } = require('./tainted-command-execution');
 const { taintedSqlDetector } = require('./tainted-sql');
 const { taintedXssDetector } = require('./tainted-xss');
+const { taintedSstiDetector } = require('./tainted-ssti');
+const { taintedPathTraversalDetector } = require('./tainted-path-traversal');
+const { taintedSsrfDetector } = require('./tainted-ssrf');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -235,6 +238,13 @@ function runDetector(detector, input, defaults) {
 //     the third parser-based one, source 'tainted-sql'.
 //   - 'tainted-xss' -> the ninth real detector (round 104),
 //     the fourth parser-based one, source 'tainted-xss'.
+//   - 'tainted-ssti' -> the tenth real detector (round 105),
+//     the fifth parser-based one, source 'tainted-ssti'.
+//   - 'tainted-path-traversal' -> the eleventh real detector
+//     (round 105), the sixth parser-based one, source
+//     'tainted-path-traversal'.
+//   - 'tainted-ssrf' -> the twelfth real detector (round 105),
+//     the seventh parser-based one, source 'tainted-ssrf'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -250,6 +260,9 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-command-execution') return { detector: taintedCommandExecutionDetector, source: 'tainted-command-execution' };
   if (spec === 'tainted-sql') return { detector: taintedSqlDetector, source: 'tainted-sql' };
   if (spec === 'tainted-xss') return { detector: taintedXssDetector, source: 'tainted-xss' };
+  if (spec === 'tainted-ssti') return { detector: taintedSstiDetector, source: 'tainted-ssti' };
+  if (spec === 'tainted-path-traversal') return { detector: taintedPathTraversalDetector, source: 'tainted-path-traversal' };
+  if (spec === 'tainted-ssrf') return { detector: taintedSsrfDetector, source: 'tainted-ssrf' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');

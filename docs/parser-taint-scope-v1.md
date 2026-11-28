@@ -369,3 +369,81 @@ over all four parser-based detectors.
   grammar outgrows the subset, or a second language
   parser; import resolution (round 106). The next AST
   class is SSTI + path traversal + SSRF (round 105).
+
+## 9. Round-105 addendum (2026-11-28) — three AST classes on the shared engine
+
+Three AST detector classes shipped in round 105, all
+thin wrappers over `createTaintDetector(config)` with
+their sink tables and finding metadata, no new sink
+shape — round 104's config tables (`sinks`,
+`methodSinks`, `assignmentSinks`, per-sink `argIndex`)
+already cover everything these three need:
+
+- **SSTI** (`tainted-ssti`, CWE-1336, severity high):
+  template-engine sinks `ejs.render` / `ejs.compile`,
+  `pug.compile` / `pug.render`,
+  `nunjucks.renderString`, `handlebars.compile` —
+  first argument (the template string) judged. CWE
+  choice: CWE-1336 is the template-engine-specific
+  CWE; CWE-94 is the broader code-injection parent
+  and is less precise for SSTI (see
+  `docs/detection-tainted-ssti-v1.md`). A constant
+  template with a tainted data object is NOT flagged
+  — only the template string is judged.
+- **Path traversal** (`tainted-path-traversal`, CWE-22,
+  severity high): `fs` path-taking sinks `readFile` /
+  `readFileSync` / `writeFile` / `writeFileSync` /
+  `createReadStream` / `createWriteStream` / `readdir` /
+  `readdirSync` / `unlink` / `unlinkSync` — first
+  argument (the path) judged. `path.join` does not
+  sanitize (the joined path stays tainted); path
+  containment checks are NOT modeled as sanitizers.
+- **SSRF** (`tainted-ssrf`, CWE-918, severity high):
+  outbound-request sinks `fetch`, `request`,
+  `http.get` / `http.request`, `https.get` /
+  `https.request`, `axios.get` / `post` / `put` /
+  `delete` / `request` — first argument (the URL)
+  judged. The bare names `fetch` and `request` ARE
+  sinks (distinctive globals, unlike `query` or
+  `render`); an options object as the first argument
+  is judged as a whole (its properties' taint joins).
+
+The inter-procedural test battery now parameterizes
+over all seven parser-based detectors.
+
+- **Engine fix (additive):** `aliasSinkOf` now resolves
+  a bare-name sink bound to a new name (`const f =
+  fetch`, `const f = unserialize`) as an alias of that
+  sink. Before this fix only member-expression aliases
+  resolved, so a bare-name sink could not be aliased
+  at all. The fix checks `config.sinks[node.name]`
+  before the binding lookup and only affects
+  identifiers that ARE bare-name sinks; every other
+  identifier resolves exactly as before, and the
+  pre-existing AST detectors are unchanged (their test
+  files pass unmodified).
+- **Deliberate exclusions, pinned by tests:** SSTI —
+  `ejs.renderFile` / `pug.renderFile` (a file path, not
+  a template string), `nunjucks.render` (a template
+  NAME), `res.render` (an Express view name), a bare
+  `render(...)`, a three-part call, a tainted data
+  object; path traversal — `fs.existsSync` (a check,
+  not a sink), `fs.mkdir`, `res.sendFile`,
+  `fs.promises.*` (three-part), a bare `readFile(...)`,
+  a tainted second argument; SSRF — `window.fetch`,
+  `XMLHttpRequest.open` (client-side), `WebSocket`,
+  a three-part call, a tainted second argument, and a
+  destructured alias whose name collides with a bare
+  sink name (`const { request } = http` is judged as
+  the bare `request` sink, not as the alias, because
+  the direct-sink check runs first). A bare identifier
+  literally named `get` does not parse (the round-101
+  keyword limitation — `unexpected keyword get`), so a
+  record calling `get(...)` directly is skipped and
+  destructuring a member named `get` is unusable in
+  scanned code.
+- **Still open from §5:** Acorn (vendored) if the
+  grammar outgrows the subset, or a second language
+  parser; import resolution (round 106). The next AST
+  class is tainted LDAP + XPath + open redirect
+  (round 107).
