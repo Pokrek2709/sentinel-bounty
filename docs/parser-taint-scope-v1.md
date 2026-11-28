@@ -313,3 +313,59 @@ parameterizes over all three parser-based detectors.
   grammar outgrows the subset, or a second language
   parser; import resolution (round 106). The next AST
   class is tainted XSS (round 104).
+
+## 8. Round-104 addendum (2026-11-28) — the fourth AST class extends the shared engine
+
+The fourth AST detector class shipped in round 104, and
+it is the first one that EXTENDS the shared engine
+(round 103 needed no engine change): `tainted-xss` is a
+thin wrapper over `createTaintDetector(config)` with its
+sink tables and finding metadata (CWE-79, severity
+high), but XSS sinks are not all calls, so the engine
+gained three config-driven capabilities, all additive —
+a detector that defines neither new table behaves
+exactly as before (all pre-existing AST tests pass
+unchanged):
+
+- **Assignment sinks** (`assignmentSinks`): a property
+  whose assignment is a sink, judged on the assigned
+  value — `innerHTML` and `outerHTML`, any receiver
+  (`el.innerHTML`, `document.body.innerHTML`,
+  `el['innerHTML']`, `el.innerHTML += x`). Evidence
+  kind `tainted-assign`, type `ast-assign`, carrying
+  the assigned-to target and the property.
+- **Method sinks** (`methodSinks`): calls matched by
+  method name alone, whatever the receiver —
+  `insertAdjacentHTML`, which exists only on DOM
+  elements, so the name is distinctive enough.
+- **Judged-argument index** (`argIndex` on a sink
+  entry, default 0): `insertAdjacentHTML` judges its
+  second argument — the HTML — because its first is
+  the position constant. The round-100 "first argument
+  only" pin is generalized, not dropped: one judged
+  argument per sink, and a tainted argument outside
+  the judged index is still not covered.
+
+The inter-procedural test battery now parameterizes
+over all four parser-based detectors.
+
+- **Sinks:** two fixed-root calls (`document.write`,
+  `document.writeln`), one method sink
+  (`insertAdjacentHTML`, second argument judged), two
+  assignment properties (`innerHTML`, `outerHTML`).
+  `textContent` / `innerText` are safe by
+  construction and are not sinks; jQuery `.html()` is
+  not a sink in this round (a no-argument `.html()`
+  is a getter; no jQuery modeling).
+- **Deliberate exclusions, pinned by tests:** a
+  three-part call (`window.document.write(...)`) is
+  not resolved; a destructured method sink
+  (`const { insertAdjacentHTML } = el`) is not
+  resolved (the destructuring rule keys on the
+  receiver name); `Object.assign` into `innerHTML`
+  is not a sink; `document.write`'s second and later
+  arguments are not judged.
+- **Still open from §5:** Acorn (vendored) if the
+  grammar outgrows the subset, or a second language
+  parser; import resolution (round 106). The next AST
+  class is SSTI + path traversal + SSRF (round 105).

@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1552,7 +1552,14 @@ async function runDetect(args) {
   // client, conn — `query` and `execute` each), reporting a
   // sink call only when its first argument is tainted or
   // the call is reached through an alias, never carrying a
-  // literal value; a path loads a custom detector module
+  // literal value; `tainted-xss` (round 104) is the ninth
+  // real detector and the fourth parser-based one — it
+  // reuses the same taint engine on HTML sinks (innerHTML /
+  // outerHTML assignment, document.write / writeln, and
+  // insertAdjacentHTML, which judges its second argument,
+  // the HTML), reporting a sink only when the judged value
+  // is tainted or the call is reached through an alias,
+  // never carrying a literal value; a path loads a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a
   // symlink, or outside the skill root).

@@ -8,6 +8,52 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 104: fourth AST detector — tainted-xss (2026-11-28)
+
+- Fourth parser-based detector (`tainted-xss`, CWE-79,
+  severity high): tracks taint from function parameters and
+  `process.argv` to HTML sinks on the shared taint engine
+  (`src/detection/taint-engine.js`). XSS sinks are not all
+  calls, so this round is the first to EXTEND the engine
+  for a new sink shape (round 103 needed no engine
+  change): assignment sinks (`innerHTML`, `outerHTML` —
+  judged on the assigned value, any receiver, including
+  `+=` and computed properties), method sinks
+  (`insertAdjacentHTML` — matched by method name alone,
+  whatever the receiver), and a per-sink judged-argument
+  index (`argIndex`, default 0: `insertAdjacentHTML`
+  judges its second argument, the HTML, because its first
+  is the position constant). All three are config tables
+  in the engine; the three earlier AST detectors define
+  neither new table and behave exactly as before — the
+  round-100 "first argument only" pin is generalized to
+  "one judged argument per sink", not dropped.
+- Sinks (JavaScript): `document.write` / `document.writeln`
+  (fixed-root calls, first argument judged), `insertAdjacentHTML`
+  (second argument judged), `innerHTML` / `outerHTML`
+  assignments. A sink is reported only when the judged
+  value is tainted (`tainted-arg`, chain proves the flow,
+  inter-procedural since round 101), when the assigned
+  value is tainted (`tainted-assign`, new evidence type
+  `ast-assign` carrying the target and property), or when
+  the call is reached through an alias (`aliased-call`:
+  `const w = document.write`, `const { write } = document`,
+  `const f = el.insertAdjacentHTML`). Deliberate
+  exclusions, pinned by tests: `textContent` / `innerText`
+  are safe by construction; jQuery `.html()` is not a sink
+  (no jQuery modeling); a three-part call
+  (`window.document.write(...)`) is not resolved; a
+  destructured method sink is not resolved; `Object.assign`
+  into `innerHTML` is not a sink; `document.write`'s second
+  and later arguments are not judged.
+- Tests: 21 new tests in `tests/tainted-xss.test.js` (all
+  sink shapes, taint flows, aliases, safe patterns,
+  envelope, resolution limits); the round-101
+  inter-procedural battery now parameterizes over all four
+  parser-based detectors (tainted-xss joins the three
+  earlier ones). Full suite green; no behavior change to
+  the three existing AST detectors.
+
 ### Round 103: third AST detector — tainted-sql (2026-11-28)
 
 - Third parser-based detector (`tainted-sql`, CWE-89,

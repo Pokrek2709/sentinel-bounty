@@ -36,12 +36,19 @@
 //      the rationale — encoding functions do NOT cleanse).
 //
 // The engine is parameterized by a detector config (sink
-// table, finding metadata); `createTaintDetector(config)`
+// tables, finding metadata); `createTaintDetector(config)`
 // builds the detector envelope (record/batch handling, caps,
-// determinism, no-secret rule) both parser-based detectors
-// share. The two detector modules are thin wrappers that
-// supply their config and re-export the constants tests and
-// `detector.js` rely on.
+// determinism, no-secret rule) all parser-based detectors
+// share. The detector modules are thin wrappers that supply
+// their config and re-export the constants tests and
+// `detector.js` rely on. A config carries up to three sink
+// tables: `sinks` (fixed member calls and bare names),
+// `methodSinks` (calls matched by method name alone,
+// whatever the receiver), and `assignmentSinks`
+// (properties whose assignment is a sink). A sink entry
+// may name `argIndex` — the judged argument (the first by
+// default); a tainted argument outside the judged index is
+// not covered, by design.
 //
 // Design invariants (tested, not assumed) — see
 // docs/inter-procedural-taint-v1.md and
@@ -61,8 +68,18 @@
 //   parameters-as-sources, as in round 95. Import resolution
 //   is NOT modeled (`require('child_process').exec` and
 //   `const cp = child_process` stay unresolved). Only the
-//   first argument of a sink is judged (a tainted argument
-//   vector is not covered — the round-100 pin stands).
+//   judged argument of a sink is judged (the first argument
+//   by default; a sink entry may name another index —
+//   insertAdjacentHTML judges its second argument, the
+//   HTML, because its first is the position constant). A
+//   tainted argument outside the judged index is not
+//   covered — the round-100 pin stands, generalized.
+// - Assignment sinks (`el.innerHTML = x`) are judged on
+//   the assigned value; method sinks
+//   (`el.insertAdjacentHTML(...)`) match by method name
+//   alone, whatever the receiver. Both are config tables
+//   like `sinks`; a detector that defines neither behaves
+//   exactly as before.
 // - Bindings are function-scoped (block scoping is not
 //   modeled — the round-95 simplification). A callee is
 //   analyzed with the scope stack live at the call site, so
@@ -142,6 +159,17 @@ function memberName(node) {
   else if (node.computed && node.property.type === 'Literal' && typeof node.property.value === 'string') prop = node.property.value;
   if (prop === null) return null;
   return `${object}.${prop}`;
+}
+
+// The property name of a member expression (`innerHTML`
+// for `el.innerHTML` and for `el['innerHTML']`); otherwise
+// null. Used for method sinks and assignment sinks, which
+// match by property name alone.
+function memberPropertyName(node) {
+  if (!node || node.type !== 'MemberExpression') return null;
+  if (!node.computed && node.property.type === 'Identifier') return node.property.name;
+  if (node.computed && node.property.type === 'Literal' && typeof node.property.value === 'string') return node.property.value;
+  return null;
 }
 
 function capChain(chain) {
@@ -395,14 +423,27 @@ class TaintAnalyzer {
       this.dropped += 1;
       return;
     }
-    const sinkLabel = sinks[sink].label;
+    // The sink label lives in whichever sink table the
+    // sink came from (`sinks`, `methodSinks`, or
+    // `assignmentSinks`).
+    const sinkEntry = sinks[sink]
+      || (this.config.methodSinks && this.config.methodSinks[sink])
+      || (this.config.assignmentSinks && this.config.assignmentSinks[sink]);
+    const sinkLabel = sinkEntry.label;
     const where = `line ${line}, column ${column}`;
     let description;
     let title;
     let evidence;
     if (kind === 'tainted-arg') {
       title = `Tainted ${sinkLabel} in supplied JavaScript`;
-      description = `A ${sinkLabel} (${detectorName}) was found in operator-supplied JavaScript at ${where}, with a tainted first argument. Taint flow: ${taintInfo.chain.join(' → ')}. The detector parses the code and tracks the flow; it never executes the code. Whether the call is reachable with attacker-controlled input in production is unproven — verify out of band before reporting.`;
+      // The judged argument is the first by default; a sink
+      // entry may name another index (insertAdjacentHTML
+      // judges its second argument), and the description
+      // names it so the finding stays precise.
+      const argPhrase = taintInfo.argIndex
+        ? `a tainted argument (argument ${taintInfo.argIndex + 1})`
+        : 'a tainted first argument';
+      description = `A ${sinkLabel} (${detectorName}) was found in operator-supplied JavaScript at ${where}, with ${argPhrase}. Taint flow: ${taintInfo.chain.join(' → ')}. The detector parses the code and tracks the flow; it never executes the code. Whether the call is reachable with attacker-controlled input in production is unproven — verify out of band before reporting.`;
       evidence = [{
         type: 'ast-call',
         sink,
@@ -412,7 +453,7 @@ class TaintAnalyzer {
         call: taintInfo.call,
         taint: { source: taintInfo.chain[0], chain: [...taintInfo.chain] },
       }];
-    } else {
+    } else if (kind === 'aliased-call') {
       title = `Aliased ${sinkLabel} in supplied JavaScript`;
       description = `A ${sinkLabel} (${detectorName}) was found in operator-supplied JavaScript at ${where}, reached through the alias '${aliasInfo.name}' bound to ${sink}. The regex detector cannot see aliased calls; this finding exists because the code was parsed. The detector never executes the code. Whether the call is reachable with attacker-controlled input in production is unproven — verify out of band before reporting.`;
       evidence = [{
@@ -426,6 +467,19 @@ class TaintAnalyzer {
         ...(taintInfo && taintInfo.tainted
           ? { taint: { source: taintInfo.chain[0], chain: [...taintInfo.chain] } }
           : {}),
+      }];
+    } else if (kind === 'tainted-assign') {
+      title = `Tainted ${sinkLabel} in supplied JavaScript`;
+      description = `An ${sinkLabel} (${detectorName}) was found in operator-supplied JavaScript at ${where}, with a tainted assigned value. Taint flow: ${taintInfo.chain.join(' → ')}. The detector parses the code and tracks the flow; it never executes the code. Whether the assignment is reachable with attacker-controlled input in production is unproven — verify out of band before reporting.`;
+      evidence = [{
+        type: 'ast-assign',
+        sink,
+        kind,
+        line,
+        column,
+        target: taintInfo.call,
+        property: taintInfo.property,
+        taint: { source: taintInfo.chain[0], chain: [...taintInfo.chain] },
       }];
     }
     this.findings.push({
@@ -442,7 +496,7 @@ class TaintAnalyzer {
         `Observe the finding for ${sink} at ${where}.`,
         'Verify out of band whether the call is reachable with attacker-controlled input before reporting — the detector never executes the code, so exploitability is unproven.',
       ],
-      proof_of_concept: `Matched ${sink} at ${where}: ${kind === 'tainted-arg' ? taintInfo.call : aliasInfo.name}`,
+      proof_of_concept: `Matched ${sink} at ${where}: ${kind === 'aliased-call' ? aliasInfo.name : taintInfo.call}`,
       evidence,
       discovery_tool: detectorName,
     });
@@ -966,6 +1020,22 @@ class TaintAnalyzer {
         } else if (node.left.type === 'MemberExpression') {
           this.evalExpr(node.left.object);
           if (node.left.computed) this.evalExpr(node.left.property);
+          // An assignment to a sink property
+          // (`el.innerHTML = x`) is judged on the assigned
+          // value: the property is the sink, the receiver
+          // is irrelevant. Compound assignment (`+=`) judges
+          // the right-hand value only — the engine does not
+          // track property taint, so a tainted prior value
+          // of the property itself is not visible here.
+          const { assignmentSinks } = this.config;
+          const prop = memberPropertyName(node.left);
+          if (prop && assignmentSinks && assignmentSinks[prop] && rightTaint.tainted) {
+            this.emitFinding(prop, node.left, 'tainted-assign', {
+              call: renderMember(node.left) || prop,
+              property: prop,
+              chain: rightTaint.chain,
+            }, null);
+          }
         } else {
           this.assignPattern(node.left, rightTaint);
         }
@@ -1045,25 +1115,45 @@ class TaintAnalyzer {
     }
   }
 
-  // Judge one call: direct sink with a tainted first
-  // argument, or an aliased sink call with any first
-  // argument. Zero-argument calls cannot carry attacker
-  // data and are not reported.
+  // Judge one direct sink call against its sink entry:
+  // the sink's judged argument (the first argument by
+  // default; a sink entry may name another index with
+  // `argIndex`). A call with no judged argument, or a
+  // clean one, is not a finding.
+  judgeSinkCall(sink, sinkEntry, callNode, callText, argTaints) {
+    const index = sinkEntry && typeof sinkEntry.argIndex === 'number' ? sinkEntry.argIndex : 0;
+    const judged = argTaints[index];
+    if (judged && judged.tainted) {
+      this.emitFinding(sink, callNode, 'tainted-arg', {
+        call: callText,
+        chain: judged.chain,
+        argIndex: index || undefined,
+      }, null);
+    }
+  }
+
+  // Judge one call: direct sink with a tainted judged
+  // argument, or an aliased sink call with any argument.
+  // Zero-argument calls cannot carry attacker data and
+  // are not reported.
   checkSinkCall(node, argTaints) {
-    const { sinks } = this.config;
+    const { sinks, methodSinks } = this.config;
     if (!argTaints || argTaints.length === 0) return;
     const callee = node.callee;
     if (callee.type === 'MemberExpression') {
       const name = memberName(callee);
       if (name && sinks[name]) {
-        const first = argTaints[0];
-        if (first.tainted) {
-          this.emitFinding(name, callee, 'tainted-arg', {
-            call: name,
-            chain: first.chain,
-          }, null);
-        }
+        this.judgeSinkCall(name, sinks[name], callee, name, argTaints);
         return;
+      }
+      // A method sink matches by method name alone,
+      // whatever the receiver (`el.insertAdjacentHTML(...)`):
+      // the method exists only on DOM elements, so the name
+      // is distinctive enough to judge without a receiver
+      // list.
+      const prop = memberPropertyName(callee);
+      if (prop && methodSinks && methodSinks[prop]) {
+        this.judgeSinkCall(prop, methodSinks[prop], callee, name || prop, argTaints);
       }
       return;
     }
@@ -1071,19 +1161,23 @@ class TaintAnalyzer {
       // A bare-name sink (`unserialize(d)`) is a direct sink
       // call; anything else is judged by its alias binding.
       if (sinks[callee.name]) {
-        const first = argTaints[0];
-        if (first.tainted) {
-          this.emitFinding(callee.name, callee, 'tainted-arg', {
-            call: callee.name,
-            chain: first.chain,
-          }, null);
-        }
+        this.judgeSinkCall(callee.name, sinks[callee.name], callee, callee.name, argTaints);
+        return;
+      }
+      if (methodSinks && methodSinks[callee.name]) {
+        this.judgeSinkCall(callee.name, methodSinks[callee.name], callee, callee.name, argTaints);
         return;
       }
       const binding = this.lookup(callee.name);
       if (binding && binding.aliasSink) {
-        const first = argTaints[0];
-        this.emitFinding(binding.aliasSink, callee, 'aliased-call', first, {
+        // The aliased call is reported with any argument;
+        // the judged argument (not necessarily the first)
+        // carries the taint evidence when it is tainted.
+        const entry = (sinks && sinks[binding.aliasSink])
+          || (methodSinks && methodSinks[binding.aliasSink]);
+        const index = entry && typeof entry.argIndex === 'number' ? entry.argIndex : 0;
+        const judged = argTaints[index] || argTaints[0];
+        this.emitFinding(binding.aliasSink, callee, 'aliased-call', judged, {
           name: callee.name,
         });
       }
@@ -1093,13 +1187,17 @@ class TaintAnalyzer {
 
 // The canonical sink name an expression resolves to when
 // used as an alias initializer (`yaml.load`,
-// `yaml['load']`, or an identifier already aliased to one);
-// otherwise null.
+// `yaml['load']`, `el.insertAdjacentHTML`, or an
+// identifier already aliased to one); otherwise null. A
+// method sink resolves by its method name alone.
 function aliasSinkOf(node, analyzer) {
   if (!node) return null;
   if (node.type === 'MemberExpression') {
     const name = memberName(node);
-    return name && analyzer.config.sinks[name] ? name : null;
+    if (name && analyzer.config.sinks[name]) return name;
+    const prop = memberPropertyName(node);
+    if (prop && analyzer.config.methodSinks && analyzer.config.methodSinks[prop]) return prop;
+    return null;
   }
   if (node.type === 'Identifier') {
     const binding = analyzer.lookup(node.name);
@@ -1224,6 +1322,7 @@ module.exports = {
   SANITIZERS,
   JS_LANGUAGES,
   memberName,
+  memberPropertyName,
   renderMember,
   collectParamNames,
   findingIdFor,
