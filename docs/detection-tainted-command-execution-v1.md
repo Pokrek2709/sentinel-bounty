@@ -169,13 +169,14 @@ tainted argument.)
   for exactly this reason — the operator triages it,
   and the validator's `false_positive` verdict exists
   for exactly that. See `docs/sanitizer-modeling-v1.md`.
-- **No import resolution.** A sink reached as
-  `require('child_process').exec(...)` is not resolved to
-  `child_process.exec`, and an object alias of the root
-  (`const cp = child_process; cp.exec(...)`) is not
-  resolved either. Destructuring of a name already in scope
-  (`const { exec } = child_process`) IS resolved — that is
-  not an import.
+- **Import resolution (round 106).** A sink reached as
+  `require('child_process').exec(...)` now resolves to
+  `child_process.exec`, as does an object alias of the root
+  (`const cp = child_process; cp.exec(...)`) and the ESM
+  forms (`import { exec }`, `import cp from`, `import * as
+  cp from`). Destructuring of a name already in scope
+  (`const { exec } = child_process`) was already resolved.
+  See `docs/import-resolution-v1.md`.
 - **First argument only.** A tainted argument vector (the
   second argument of `spawn` / `spawnSync` / `execFile` /
   `execFileSync`) is not judged in this round; only the

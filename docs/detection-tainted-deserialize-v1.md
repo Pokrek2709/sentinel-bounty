@@ -154,11 +154,14 @@ tainted argument.)
   triages it, and the validator's `false_positive`
   verdict exists for exactly that. See
   `docs/sanitizer-modeling-v1.md`.
-- **No import resolution.** A sink imported under its own
-  name (`import { load } from 'js-yaml'`) is not resolved
-  to `yaml.load`. Destructuring of a name already in scope
-  (`const { load } = yaml`) IS resolved — that is not an
-  import.
+- **Import resolution (round 106).** A sink imported under
+  its own name (`import { load } from 'js-yaml'`) now
+  resolves to `yaml.load`, as do `require('js-yaml')`
+  forms. Only `js-yaml` maps to the `yaml` root — the
+  `yaml` package is not mapped (its API is `parse`, not
+  `load`). Destructuring of a name already in scope
+  (`const { load } = yaml`) was already resolved. See
+  `docs/import-resolution-v1.md`.
 - **Subset grammar.** Class fields, decorators, and other
   constructs outside the subset (see
   `docs/parser-taint-scope-v1.md` §2.2) fail the parse and

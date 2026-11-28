@@ -174,16 +174,17 @@ tainted on any path stays tainted.
   for exactly this reason — the operator triages it,
   and the validator's `false_positive` verdict exists
   for exactly that. See `docs/sanitizer-modeling-v1.md`.
-- **No import resolution.** A sink reached as
-  `require('fs').write(...)` is not resolved, and a
-  three-part call (`window.document.write(...)`) is
-  not resolved either. Destructuring of a fixed root
-  (`const { write } = document`) IS resolved — that is
-  not an import. A destructured method sink
-  (`const { insertAdjacentHTML } = el`) is NOT
+- **Import resolution (round 106).** This detector has no
+  import mapping: its sinks are DOM globals, not module
+  members, so `require('fs').write(...)` is still not a
+  sink. A three-part call (`window.document.write(...)`)
+  is still not resolved either. Destructuring of a fixed
+  root (`const { write } = document`) was already
+  resolved. A destructured method sink
+  (`const { insertAdjacentHTML } = el`) is still NOT
   resolved: the destructuring rule keys on the receiver
   name, and `insertAdjacentHTML` has no fixed receiver.
-  Import resolution is round 106.
+  See `docs/import-resolution-v1.md`.
 - **Judged argument only.** `document.write` judges
   its first argument only — a tainted second or later
   argument (`document.write('static', x)`) is not

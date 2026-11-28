@@ -447,3 +447,77 @@ over all seven parser-based detectors.
   parser; import resolution (round 106). The next AST
   class is tainted LDAP + XPath + open redirect
   (round 107).
+
+## 10. Round-106 addendum (2026-11-29) — import resolution on the shared engine
+
+The last §5 item is done. A sink reached through an
+import now resolves to its canonical sink, for every
+parser-based detector at once:
+
+- **Four spellings resolve** — direct require member
+  (`require('child_process').exec(d)`), namespace alias
+  (`const cp = require('child_process'); cp.exec(d)`),
+  destructured require (`const { exec } =
+  require('child_process'); exec(d)`), and the ESM
+  equivalents (`import { exec }`, `import cp from`,
+  `import * as cp from`). Direct calls are judged like
+  any direct sink call (finding only when the judged
+  argument is tainted); aliased calls follow the alias
+  rule (reported with any argument).
+- **Import tables are per detector** (`moduleRoots` /
+  `moduleBareSinks` in each wrapper's config, pinned by
+  tests): `child_process` / `node:child_process`,
+  `fs` / `node:fs`, `http` / `node:http`, `https` /
+  `node:https`, `axios`, `ejs`, `pug`, `nunjucks`,
+  `handlebars`, `js-yaml` → `yaml`; `request` →
+  bare sink `request`, `node-fetch` → bare sink
+  `fetch`. SQL and XSS carry no table (their sink roots
+  are receiver names / DOM globals, not modules). Only
+  `js-yaml` maps to `yaml` — the `yaml` package is not
+  mapped (its API is `parse`, not `load`).
+- **A bare-root identity resolves too** — an identifier
+  that IS a sink root binds as that root (`const cp =
+  child_process`, `const mydb = db`). This retires the
+  round-100/103/104/105 pins that said those aliases
+  were unresolved; the affected pin tests were updated
+  (the cases moved to `tests/import-resolution.test.js`
+  as positives, the comments in the detector test files
+  record the move).
+- **The parser tracks import bindings** (round 106):
+  side-effect, default, namespace, and named imports
+  (with `as` aliases) with a string-literal module
+  specifier. Anything outside that set falls back to
+  the pre-round-106 structural skip, so a record with
+  an exotic import still scans. Import bindings are
+  hoisted like function declarations. Dynamic import
+  (`import('mod')`) is skipped structurally.
+- **The round-105 quirk is reconciled, not changed:**
+  a destructured name colliding with a bare sink
+  (`request`) is judged as the bare sink, because the
+  direct-sink check runs first — whether the source is
+  a bare identifier or a require call.
+- **Engine changes (additive, in
+  `src/detection/taint-engine.js`):** bindings carry a
+  fourth field (`module`: `{ kind: 'root', root }` or
+  `{ kind: 'bare', sink }`); `moduleBindingOf`,
+  `requireModuleName`, and `requireMemberName` resolve
+  require calls, module-bound identifiers, and
+  sink-root identities; `aliasSinkOf` resolves
+  import-resolved members; `checkSinkCall` judges the
+  canonical sink as a direct call and module-bare
+  aliases as aliased calls; `bindImportDeclaration`
+  binds ESM specifiers against the import tables.
+- **Deliberate exclusions, pinned by tests:** dynamic
+  require, a concatenated module name, an unknown
+  module, a relative path, re-export (named and star),
+  a module-object assignment (`module.exports =
+  require(...)`), object-property indirection (the
+  deep-alias pin — identifier re-aliasing propagates,
+  property indirection does not), a shadowed
+  `require`, and `require('pg').query` / `require('yaml').load`
+  (no mapping). A bare identifier named `get` still
+  does not parse (the round-101 keyword limitation).
+- **Still open from §5:** Acorn (vendored) if the
+  grammar outgrows the subset, or a second language
+  parser. The next AST class is tainted LDAP + XPath +
+  open redirect (round 107).

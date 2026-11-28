@@ -200,12 +200,10 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // is NOT judged in this round — only the first
     // argument (the path) is.
     'function h(a) { fs.readFile("/etc/passwd", a); }',
-    // require('fs').readFile is not resolved (no import
-    // resolution in this round).
-    'function h(d) { require("fs").readFile(d); }',
-    // An object alias of the fs root is not resolved
-    // either.
-    'const myfs = fs; function h(d) { myfs.readFile(d); }',
+    // Round 106 moved the import cases out of this list:
+    // require('fs').readFile and an object alias of the
+    // fs root now resolve (see
+    // tests/import-resolution.test.js).
   ];
   for (const content of contents) {
     const result = run(content);

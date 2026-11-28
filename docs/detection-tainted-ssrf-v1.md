@@ -215,12 +215,16 @@ non-resolution). Two quirks stay, pinned by tests:
   not recognized as a sanitizer, so guarded fetches
   can still be flagged; that is future work, not a
   silent gap.
-- **No import resolution.** A sink reached as
-  `require('http').get(...)` is not resolved, and a
-  three-part call (`app.http.get(...)`) is not
-  resolved either. Destructuring of a fixed root
-  (`const { put } = axios`) IS resolved — that is
-  not an import. Import resolution is round 106.
+- **Import resolution (round 106).** A sink reached as
+  `require('http').get(...)` now resolves to `http.get`,
+  and so do the ESM forms and module aliases
+  (`require('request')` resolves to bare sink `request`).
+  A three-part call (`app.http.get(...)`) is still not
+  resolved. Destructuring of a fixed root
+  (`const { put } = axios`) was already resolved. The
+  bare-sink collision rule stands: a destructured name
+  colliding with a bare sink (`request`) is judged as
+  the bare sink. See `docs/import-resolution-v1.md`.
 - **Judged argument only.** Only the first argument
   (the URL) is judged — a tainted second argument
   (options, body, config) is not judged in this

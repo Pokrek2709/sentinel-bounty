@@ -173,13 +173,14 @@ tainted on any path stays tainted.
   for exactly this reason — the operator triages it,
   and the validator's `false_positive` verdict exists
   for exactly that. See `docs/sanitizer-modeling-v1.md`.
-- **No import resolution.** A sink reached as
-  `require('pg').query(...)` is not resolved to
-  `pool.query` / `client.query`, and an object alias of
-  a root (`const mydb = db; mydb.query(...)`) is not
-  resolved either. Destructuring of a name already in scope
-  (`const { query } = db`) IS resolved — that is
-  not an import. Import resolution is round 106.
+- **Import resolution (round 106).** An object alias of a
+  root (`const mydb = db; mydb.query(...)`) now resolves
+  to `db.query`. `require('pg').query(...)` is still NOT
+  a sink: `pg` is not a known module for this detector —
+  its sink roots are receiver variable names, not modules.
+  Destructuring of a name already in scope
+  (`const { query } = db`) was already resolved. See
+  `docs/import-resolution-v1.md`.
 - **First argument only.** A tainted second argument
   (the parameter vector) is not judged in this round;
   only the SQL string (first argument) is. By

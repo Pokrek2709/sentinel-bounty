@@ -203,12 +203,10 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // A tainted second argument is NOT judged in this round
     // — only the first argument (the URL) is.
     'function h(a) { http.get("https://example.com", a); }',
-    // require('http').get is not resolved (no import
-    // resolution in this round).
-    'function h(d) { require("http").get(d); }',
-    // An object alias of the http root is not resolved
-    // either.
-    'const myhttp = http; function h(d) { myhttp.get(d); }',
+    // Round 106 moved the import cases out of this list:
+    // require('http').get and an object alias of the http
+    // root now resolve (see
+    // tests/import-resolution.test.js).
     // A destructured alias whose name collides with a
     // BARE sink name (`request`) is judged as the bare
     // sink, not as the alias: the direct-sink check runs

@@ -81,6 +81,16 @@ const SINK_ROOTS = {
   YAML: ['load', 'loadAll'],
 };
 
+// Import resolution (round 106): module name -> sink root.
+// Only `js-yaml` maps here: its API really is
+// `yaml.load` / `loadAll`. The `yaml` package is NOT
+// mapped — its API is `parse`, not `load`, so mapping it
+// would manufacture findings for calls that cannot be
+// `yaml.load` at runtime.
+const MODULE_ROOTS = {
+  'js-yaml': 'yaml',
+};
+
 const CONFIG = {
   detectorName: 'tainted-deserialize',
   vulnerabilityType: 'insecure deserialization',
@@ -90,6 +100,7 @@ const CONFIG = {
   remediation: 'Never deserialize untrusted input with these calls: use a data-only format (JSON) or a safe loader (yaml.safe_load, pickle only on bytes you produced yourself) and validate the result.',
   sinks: SINKS,
   sinkRoots: SINK_ROOTS,
+  moduleRoots: MODULE_ROOTS,
 };
 
 const taintedDeserializeDetector = createTaintDetector(CONFIG);
@@ -98,6 +109,7 @@ module.exports = taintedDeserializeDetector;
 module.exports.taintedDeserializeDetector = taintedDeserializeDetector;
 module.exports.SINKS = SINKS;
 module.exports.SINK_ROOTS = SINK_ROOTS;
+module.exports.MODULE_ROOTS = MODULE_ROOTS;
 module.exports.MAX_CONTENT_CHARS = MAX_CONTENT_CHARS;
 module.exports.MAX_FINDINGS_PER_RECORD = MAX_FINDINGS_PER_RECORD;
 module.exports.findingIdFor = (sink, lineNumber, column, kind) => (

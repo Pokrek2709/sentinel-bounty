@@ -254,8 +254,10 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // Object.assign into innerHTML is not a sink in this
     // round (no assignment-expression shape).
     'function h(x) { Object.assign(el, {innerHTML: x}); }',
-    // require('fs').write is not a sink (no import
-    // resolution in this round).
+    // require('fs').write is not a sink: `fs` has no
+    // import mapping for this detector (its sinks are DOM
+    // sinks, not module members), and `write` is not an
+    // XSS sink member. (Round 106.)
     'function h(d) { require("fs").write(d); }',
   ];
   for (const content of contents) {

@@ -48,7 +48,12 @@
 // (properties whose assignment is a sink). A sink entry
 // may name `argIndex` — the judged argument (the first by
 // default); a tainted argument outside the judged index is
-// not covered, by design.
+// not covered, by design. A config may also carry import
+// tables for round-106 import resolution: `moduleRoots`
+// (module name -> sink root, e.g. 'child_process' ->
+// 'child_process') and `moduleBareSinks` (module name ->
+// bare sink name, e.g. 'request' -> 'request'). Detectors
+// without them simply resolve nothing through imports.
 //
 // Design invariants (tested, not assumed) — see
 // docs/inter-procedural-taint-v1.md and
@@ -66,14 +71,19 @@
 // - Methods (`obj.method(...)`) are NOT resolved through the
 //   call graph (documented limit); they are analyzed with
 //   parameters-as-sources, as in round 95. Import resolution
-//   is NOT modeled (`require('child_process').exec` and
-//   `const cp = child_process` stay unresolved). Only the
-//   judged argument of a sink is judged (the first argument
-//   by default; a sink entry may name another index —
-//   insertAdjacentHTML judges its second argument, the
-//   HTML, because its first is the position constant). A
-//   tainted argument outside the judged index is not
-//   covered — the round-100 pin stands, generalized.
+//   IS modeled since round 106 (see
+//   docs/import-resolution-v1.md): a sink reached through a
+//   require call or an ESM import resolves to its canonical
+//   sink, for modules in the detector's import tables only
+//   (`moduleRoots` / `moduleBareSinks`); dynamic require, a
+//   relative path, an unknown module, and re-export stay
+//   unresolved. Only the judged argument of a sink is
+//   judged (the first argument by default; a sink entry may
+//   name another index — insertAdjacentHTML judges its
+//   second argument, the HTML, because its first is the
+//   position constant). A tainted argument outside the
+//   judged index is not covered — the round-100 pin stands,
+//   generalized.
 // - Assignment sinks (`el.innerHTML = x`) are judged on
 //   the assigned value; method sinks
 //   (`el.insertAdjacentHTML(...)`) match by method name
@@ -209,14 +219,21 @@ function cloneTaint(taint) {
   return { tainted: taint.tainted, chain: [...taint.chain] };
 }
 
-// A binding: { tainted, chain, aliasSink, fnTarget } —
+// A binding: { tainted, chain, aliasSink, fnTarget, module } —
 // aliasSink is the canonical sink name this identifier is
 // bound to (or null); fnTarget is the call-graph record of
 // the user function this identifier is bound to (or null),
 // so `const g = parse` resolves a later call `g(x)` to
-// `parse`.
-function bindingFor(taint, aliasSink = null, fnTarget = null) {
-  return { tainted: taint.tainted, chain: [...taint.chain], aliasSink, fnTarget };
+// `parse`; module is the import binding this identifier
+// carries (or null): { kind: 'root', root } when the
+// identifier IS a module (`const cp =
+// require('child_process')` — `cp.exec` resolves to
+// `child_process.exec`), or { kind: 'bare', sink } when
+// the identifier IS the sink itself (`const rq =
+// require('request')` — `rq(...)` resolves to bare sink
+// `request`). Round 106; see docs/import-resolution-v1.md.
+function bindingFor(taint, aliasSink = null, fnTarget = null, module = null) {
+  return { tainted: taint.tainted, chain: [...taint.chain], aliasSink, fnTarget, module };
 }
 
 function cloneBinding(binding) {
@@ -225,7 +242,18 @@ function cloneBinding(binding) {
     chain: [...binding.chain],
     aliasSink: binding.aliasSink,
     fnTarget: binding.fnTarget,
+    module: binding.module || null,
   };
+}
+
+// Module bindings compare by value (they are built fresh
+// at each bind site, so identity comparison would never
+// agree): same kind and same root/sink.
+function sameModule(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.kind !== b.kind) return false;
+  return a.kind === 'root' ? a.root === b.root : a.sink === b.sink;
 }
 
 // Bound names of a parameter / pattern node.
@@ -405,6 +433,7 @@ class TaintAnalyzer {
           chain: capChain(left.tainted ? left.chain : right.chain),
           aliasSink: left.aliasSink === right.aliasSink ? left.aliasSink : null,
           fnTarget: left.fnTarget === right.fnTarget ? left.fnTarget : null,
+          module: sameModule(left.module, right.module) ? left.module : null,
         });
       }
       merged.push(scope);
@@ -571,11 +600,75 @@ class TaintAnalyzer {
 
   // Analyze a whole program: hoisted declarations first,
   // then the top-level walk, then the fallback pass for the
-  // program scope.
+  // program scope. Import bindings are hoisted like
+  // function declarations (real JavaScript hoists imports),
+  // so a sink call textually before its import still
+  // resolves; the walk re-binds them idempotently when it
+  // reaches the statement.
   analyzeProgram(program) {
     this.registerHoistedFunctions(program.body);
+    this.registerImportBindings(program.body);
     this.walkStatements(program.body);
     this.runFallbackForCurrentScope();
+  }
+
+  // Bind every import declaration in a statement list
+  // (top-level only — imports are module-level in real
+  // JavaScript). Idempotent: called once up front and
+  // again by the walk when it reaches each statement.
+  registerImportBindings(statements) {
+    for (const stmt of statements || []) {
+      if (stmt && stmt.type === 'ImportDeclaration') this.bindImportDeclaration(stmt);
+    }
+  }
+
+  // Bind one import declaration against the detector's
+  // import tables. A named import of a sink member binds
+  // the local name to the canonical sink (`import { exec }
+  // from 'child_process'` -> `child_process.exec`); a
+  // default or namespace import of a known module binds
+  // the local name to the module; a default import of a
+  // module that IS a bare sink binds it to that sink
+  // (`import rq from 'request'` -> bare `request`).
+  // Unknown modules bind clean with no sink info
+  // (equivalent to the old structural skip for taint
+  // purposes).
+  bindImportDeclaration(node) {
+    const source = node.source && typeof node.source.value === 'string' ? node.source.value : null;
+    const moduleRoots = this.config.moduleRoots || {};
+    const moduleBareSinks = this.config.moduleBareSinks || {};
+    const sinkRoots = this.config.sinkRoots || {};
+    for (const spec of node.specifiers || []) {
+      if (spec.type === 'ImportSpecifier') {
+        const imported = spec.imported && spec.imported.name;
+        const local = spec.local && spec.local.name;
+        if (!imported || !local) continue;
+        const root = source !== null ? moduleRoots[source] : null;
+        if (root && sinkRoots[root] && sinkRoots[root].includes(imported)) {
+          this.declare(local, bindingFor(clean(), `${root}.${imported}`));
+        } else {
+          this.declare(local, bindingFor(clean()));
+        }
+      } else if (spec.type === 'ImportDefaultSpecifier') {
+        const local = spec.local && spec.local.name;
+        if (!local) continue;
+        if (source !== null && moduleRoots[source]) {
+          this.declare(local, bindingFor(clean(), null, null, { kind: 'root', root: moduleRoots[source] }));
+        } else if (source !== null && moduleBareSinks[source]) {
+          this.declare(local, bindingFor(clean(), null, null, { kind: 'bare', sink: moduleBareSinks[source] }));
+        } else {
+          this.declare(local, bindingFor(clean()));
+        }
+      } else if (spec.type === 'ImportNamespaceSpecifier') {
+        const local = spec.local && spec.local.name;
+        if (!local) continue;
+        if (source !== null && moduleRoots[source]) {
+          this.declare(local, bindingFor(clean(), null, null, { kind: 'root', root: moduleRoots[source] }));
+        } else {
+          this.declare(local, bindingFor(clean()));
+        }
+      }
+    }
   }
 
   // The round-95 over-approximation for a call the engine
@@ -805,10 +898,17 @@ class TaintAnalyzer {
         this.evalExpr(node.object);
         this.walkStatement(node.body);
         return;
+      case 'ImportDeclaration':
+        // Round 106: bind import specifiers against the
+        // detector's import tables (see
+        // bindImportDeclaration). Exotic import forms never
+        // reach here — the parser falls back to the
+        // structural skip for those (specifiers: []).
+        this.bindImportDeclaration(node);
+        return;
       case 'BreakStatement':
       case 'ContinueStatement':
       case 'EmptyStatement':
-      case 'ImportDeclaration':
       case 'ExportAllDeclaration':
         return;
       default:
@@ -828,20 +928,38 @@ class TaintAnalyzer {
       case 'Identifier': {
         let aliasSink = null;
         let fnTarget = null;
+        let module = null;
         if (initNode) {
           aliasSink = aliasSinkOf(initNode, this);
+          module = moduleBindingOf(initNode, this);
           if (initNode.type === 'Identifier') fnTarget = this.lookupFunction(initNode.name);
         }
         this.declare(pattern.name, bindingFor(
           initTaint.tainted ? tainted([...initTaint.chain, pattern.name]) : clean(),
           aliasSink,
           fnTarget,
+          module,
         ));
         return;
       }
       case 'ObjectPattern': {
-        // Destructured sink: `const { load } = yaml`.
-        const rootName = initNode && initNode.type === 'Identifier' ? initNode.name : null;
+        // Destructured sink: `const { load } = yaml`. The
+        // root may be a bare identifier, a require call
+        // (`const { exec } = require('child_process')`), or
+        // an identifier bound to a module (`const { exec }
+        // = cp` where cp is bound to a module root).
+        let rootName = null;
+        if (initNode && initNode.type === 'Identifier') {
+          const binding = this.lookup(initNode.name);
+          if (binding && binding.module && binding.module.kind === 'root') rootName = binding.module.root;
+          else rootName = initNode.name;
+        } else if (initNode) {
+          const moduleName = requireModuleName(initNode, this);
+          if (moduleName !== null) {
+            const moduleRoots = this.config.moduleRoots || {};
+            rootName = moduleRoots[moduleName] || null;
+          }
+        }
         const sinkProps = rootName ? this.config.sinkRoots[rootName] : null;
         for (const prop of pattern.properties || []) {
           if (prop.type === 'RestElement') {
@@ -1006,8 +1124,10 @@ class TaintAnalyzer {
         if (node.left.type === 'Identifier') {
           let aliasSink = null;
           let fnTarget = null;
+          let module = null;
           if (node.operator === '=') {
             aliasSink = aliasSinkOf(node.right, this);
+            module = moduleBindingOf(node.right, this);
             if (node.right.type === 'Identifier') fnTarget = this.lookupFunction(node.right.name);
           }
           const prior = node.operator === '=' ? null : this.lookup(node.left.name);
@@ -1016,6 +1136,7 @@ class TaintAnalyzer {
             combined.tainted ? tainted([...combined.chain, node.left.name]) : clean(),
             aliasSink,
             fnTarget,
+            module,
           ));
         } else if (node.left.type === 'MemberExpression') {
           this.evalExpr(node.left.object);
@@ -1146,6 +1267,18 @@ class TaintAnalyzer {
         this.judgeSinkCall(name, sinks[name], callee, name, argTaints);
         return;
       }
+      // Import-resolved member call: require('mod').method
+      // or alias.method where alias is bound to a module
+      // root (round 106). The canonical sink is judged
+      // as a direct call.
+      const canonical = requireMemberName(callee, this);
+      if (canonical && sinks[canonical]) {
+        const callText = callee.object && callee.object.type === 'CallExpression'
+          ? `require('${requireModuleName(callee.object, this)}').${memberPropertyName(callee)}`
+          : name;
+        this.judgeSinkCall(canonical, sinks[canonical], callee, callText, argTaints);
+        return;
+      }
       // A method sink matches by method name alone,
       // whatever the receiver (`el.insertAdjacentHTML(...)`):
       // the method exists only on DOM elements, so the name
@@ -1169,20 +1302,98 @@ class TaintAnalyzer {
         return;
       }
       const binding = this.lookup(callee.name);
-      if (binding && binding.aliasSink) {
+      // An alias of a sink — a destructured member
+      // (`const { exec } = child_process`), a member alias
+      // (`const e = child_process.exec`), a bare-name alias
+      // (`const f = fetch`), or a module that IS the sink
+      // (`const rq = require('request')`, round 106).
+      const aliasSink = binding
+        && (binding.aliasSink
+          || (binding.module && binding.module.kind === 'bare' ? binding.module.sink : null));
+      if (aliasSink) {
         // The aliased call is reported with any argument;
         // the judged argument (not necessarily the first)
         // carries the taint evidence when it is tainted.
-        const entry = (sinks && sinks[binding.aliasSink])
-          || (methodSinks && methodSinks[binding.aliasSink]);
+        const entry = (sinks && sinks[aliasSink])
+          || (methodSinks && methodSinks[aliasSink]);
         const index = entry && typeof entry.argIndex === 'number' ? entry.argIndex : 0;
         const judged = argTaints[index] || argTaints[0];
-        this.emitFinding(binding.aliasSink, callee, 'aliased-call', judged, {
+        this.emitFinding(aliasSink, callee, 'aliased-call', judged, {
           name: callee.name,
         });
       }
     }
   }
+}
+
+// A `require('...')` call with a string-literal module
+// name, or null (dynamic require, a non-string argument,
+// or a shadowed `require` — a user binding named `require`
+// disables the resolution, like the sanitizer shadowing
+// rule). `require` itself is never a sink.
+function requireModuleName(node, analyzer) {
+  if (!node || node.type !== 'CallExpression') return null;
+  if (!node.callee || node.callee.type !== 'Identifier' || node.callee.name !== 'require') return null;
+  if (analyzer.lookup('require') !== undefined) return null;
+  const arg = (node.arguments || [])[0];
+  if (!arg || arg.type !== 'Literal' || typeof arg.value !== 'string') return null;
+  return arg.value;
+}
+
+// The module binding an initializer expression carries:
+// a require call to a known module, an identifier already
+// bound to a module, or an identifier that IS a sink root
+// (`const cp = child_process` — the bare root name is the
+// module in this name-based engine). Otherwise null. A
+// relative path (`require('./lib')`) or an unknown module
+// carries nothing — both stay unresolved (round 106 pins).
+function moduleBindingOf(node, analyzer) {
+  if (!node) return null;
+  const moduleName = requireModuleName(node, analyzer);
+  if (moduleName !== null) {
+    const roots = analyzer.config.moduleRoots || {};
+    const bare = analyzer.config.moduleBareSinks || {};
+    if (roots[moduleName]) return { kind: 'root', root: roots[moduleName] };
+    if (bare[moduleName]) return { kind: 'bare', sink: bare[moduleName] };
+    return null;
+  }
+  if (node.type === 'Identifier') {
+    const binding = analyzer.lookup(node.name);
+    if (binding && binding.module) return binding.module;
+    if (analyzer.config.sinkRoots && analyzer.config.sinkRoots[node.name]) {
+      return { kind: 'root', root: node.name };
+    }
+  }
+  return null;
+}
+
+// The canonical sink name of a member expression reached
+// through an import: `require('mod').method` or
+// `alias.method` where alias is bound to a module root.
+// Otherwise null. The property must be a sink member of
+// the root (`require('fs').readFile` resolves;
+// `require('fs').write` does not — `write` is not a sink
+// member of `fs`).
+function requireMemberName(node, analyzer) {
+  if (!node || node.type !== 'MemberExpression') return null;
+  const prop = memberPropertyName(node);
+  if (!prop) return null;
+  const roots = analyzer.config.sinkRoots || {};
+  const moduleRoots = analyzer.config.moduleRoots || {};
+  const moduleName = requireModuleName(node.object, analyzer);
+  if (moduleName !== null) {
+    const root = moduleRoots[moduleName];
+    if (root && roots[root] && roots[root].includes(prop)) return `${root}.${prop}`;
+    return null;
+  }
+  if (node.object && node.object.type === 'Identifier') {
+    const binding = analyzer.lookup(node.object.name);
+    if (binding && binding.module && binding.module.kind === 'root') {
+      const root = binding.module.root;
+      if (roots[root] && roots[root].includes(prop)) return `${root}.${prop}`;
+    }
+  }
+  return null;
 }
 
 // The canonical sink name an expression resolves to when
@@ -1197,7 +1408,10 @@ function aliasSinkOf(node, analyzer) {
     if (name && analyzer.config.sinks[name]) return name;
     const prop = memberPropertyName(node);
     if (prop && analyzer.config.methodSinks && analyzer.config.methodSinks[prop]) return prop;
-    return null;
+    // Import-resolved member (`const e =
+    // require('child_process').exec`, `const e = cp.exec`
+    // where cp is bound to a module root).
+    return requireMemberName(node, analyzer);
   }
   if (node.type === 'Identifier') {
     // A bare-name sink bound to a new name (`const f =
@@ -1207,7 +1421,12 @@ function aliasSinkOf(node, analyzer) {
     // member-expression aliases resolved.)
     if (analyzer.config.sinks[node.name]) return node.name;
     const binding = analyzer.lookup(node.name);
-    return binding ? binding.aliasSink : null;
+    if (!binding) return null;
+    if (binding.aliasSink) return binding.aliasSink;
+    // A module that IS the sink (`const f = rq` where rq
+    // is bound to `require('request')`).
+    if (binding.module && binding.module.kind === 'bare') return binding.module.sink;
+    return null;
   }
   return null;
 }

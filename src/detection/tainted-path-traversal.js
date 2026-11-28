@@ -107,6 +107,12 @@ const SINK_ROOTS = {
   ],
 };
 
+// Import resolution (round 106): module name -> sink root.
+const MODULE_ROOTS = {
+  'fs': 'fs',
+  'node:fs': 'fs',
+};
+
 const CONFIG = {
   detectorName: 'tainted-path-traversal',
   vulnerabilityType: 'path traversal',
@@ -116,6 +122,7 @@ const CONFIG = {
   remediation: 'Never pass untrusted input as a filesystem path: resolve the path against an allow-listed base directory and verify the resolved path stays inside it (path.resolve + startsWith check), or map user input to an allow-list of known files.',
   sinks: SINKS,
   sinkRoots: SINK_ROOTS,
+  moduleRoots: MODULE_ROOTS,
 };
 
 const taintedPathTraversalDetector = createTaintDetector(CONFIG);
@@ -124,6 +131,7 @@ module.exports = taintedPathTraversalDetector;
 module.exports.taintedPathTraversalDetector = taintedPathTraversalDetector;
 module.exports.SINKS = SINKS;
 module.exports.SINK_ROOTS = SINK_ROOTS;
+module.exports.MODULE_ROOTS = MODULE_ROOTS;
 module.exports.MAX_CONTENT_CHARS = MAX_CONTENT_CHARS;
 module.exports.MAX_FINDINGS_PER_RECORD = MAX_FINDINGS_PER_RECORD;
 module.exports.findingIdFor = (sink, lineNumber, column, kind) => (

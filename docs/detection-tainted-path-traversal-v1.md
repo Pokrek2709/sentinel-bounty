@@ -172,12 +172,13 @@ Branch joins are OR: tainted on any path stays tainted.
   not recognized as a sanitizer, so contained reads can
   still be flagged; that is future work, not a silent
   gap.
-- **No import resolution.** A sink reached as
-  `require('fs').readFile(...)` is not resolved, and a
-  three-part call (`app.fs.readFile(...)`) is not
-  resolved either. Destructuring of a fixed root
-  (`const { readFile } = fs`) IS resolved — that is
-  not an import. Import resolution is round 106.
+- **Import resolution (round 106).** A sink reached as
+  `require('fs').readFile(...)` now resolves to
+  `fs.readFile`, and so do the ESM forms and module
+  aliases. A three-part call (`app.fs.readFile(...)`) is
+  still not resolved. Destructuring of a fixed root
+  (`const { readFile } = fs`) was already resolved. See
+  `docs/import-resolution-v1.md`.
 - **Judged argument only.** Only the first argument
   (the path) is judged — a tainted second argument
   (options, callback data) is not judged in this

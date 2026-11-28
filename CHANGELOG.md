@@ -8,6 +8,84 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 106: import resolution (require/ESM) on the shared taint engine (2026-11-29)
+
+- A sink reached through an import now resolves to its
+  canonical sink, for all seven parser-based detectors
+  at once, with no detector's finding rules changed
+  (sources, sanitizers, and the judged argument are
+  exactly as before). Four spellings resolve: a direct
+  require member (`require('child_process').exec(d)`),
+  a namespace alias (`const cp =
+  require('child_process'); cp.exec(d)`), a
+  destructured require (`const { exec } =
+  require('child_process'); exec(d)`), and the ESM
+  equivalents (`import { exec } from 'child_process'`,
+  `import cp from 'child_process'`, `import * as cp
+  from 'child_process'`). Direct calls are judged like
+  any direct sink call (finding only when the judged
+  argument is tainted); aliased calls follow the alias
+  rule (reported with any argument). Import bindings
+  are hoisted like function declarations; assignment
+  binds the module too (`let cp; cp =
+  require('child_process')`); an identifier re-alias
+  propagates the module binding; a bare-root identity
+  (`const cp = child_process`, `const mydb = db`) binds
+  as that root.
+- Per-detector import tables (`moduleRoots` /
+  `moduleBareSinks`, pinned by tests): command
+  execution `child_process` / `node:child_process`;
+  path traversal `fs` / `node:fs`; SSRF `http` /
+  `node:http`, `https` / `node:https`, `axios`, plus
+  bare sinks `request` → `request` and `node-fetch` →
+  `fetch`; SSTI `ejs`, `pug`, `nunjucks`,
+  `handlebars`; deserialize `js-yaml` → `yaml` only
+  (the `yaml` package is NOT mapped — its API is
+  `parse`, not `load`). SQL and XSS carry no table:
+  SQL sink roots are receiver variable names, not
+  modules, and XSS sinks are DOM globals.
+- The round-105 bare-sink collision quirk is
+  reconciled, not changed: a destructured name
+  colliding with a bare sink (`request`) is judged as
+  the bare sink, because the direct-sink check runs
+  first — whether the source is a bare identifier or
+  a require call.
+- Parser (`src/detection/js-parser.js`): import
+  declarations now parse with bindings tracked
+  (side-effect, default, namespace, and named imports
+  with `as` aliases, string-literal module
+  specifier); anything outside that set falls back to
+  the pre-round-106 structural skip, so a record with
+  an exotic import still scans. Dynamic import
+  (`import('mod')`) is skipped structurally. The
+  round-101 keyword limitation is unchanged: a bare
+  identifier named `get` does not parse, so a record
+  calling `get(...)` is skipped, not scanned.
+- Pinned exclusions (tested): dynamic require, a
+  concatenated module name, an unknown module, a
+  relative path, re-export (named and star), a
+  module-object assignment (`module.exports =
+  require(...)`), object-property indirection (the
+  deep-alias pin — identifier re-aliasing propagates,
+  property indirection does not), and a shadowed
+  `require`.
+- Pin changes: the round-100/103/104/105 pins that
+  said these import spellings were unresolved are
+  retired — the affected cases moved to
+  `tests/import-resolution.test.js` as positives, with
+  the move recorded in the detector test files and
+  the detector docs. SQL's `require('pg').query` and
+  deserialize's `require('yaml').load` stay pinned as
+  non-sinks.
+- Tests: 1297 total (1292 pass, 0 fail, 5 skip) —
+  9 new tests in `tests/import-resolution.test.js`;
+  verify-install 11/11.
+- Docs: new `docs/import-resolution-v1.md`; §10
+  addendum in `docs/parser-taint-scope-v1.md`;
+  `SKILL.md`, `docs/README.md`, and the detector docs
+  updated. No phase movement (F5 ~99%, remaining gap
+  is the second-language parser, round 108).
+
 ### Round 105: three AST detectors — tainted-SSTI, path-traversal, SSRF (2026-11-28)
 
 - Three parser-based detectors on the shared taint engine

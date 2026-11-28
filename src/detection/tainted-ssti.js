@@ -101,6 +101,14 @@ const SINK_ROOTS = {
   handlebars: ['compile'],
 };
 
+// Import resolution (round 106): module name -> sink root.
+const MODULE_ROOTS = {
+  'ejs': 'ejs',
+  'pug': 'pug',
+  'nunjucks': 'nunjucks',
+  'handlebars': 'handlebars',
+};
+
 const CONFIG = {
   detectorName: 'tainted-ssti',
   vulnerabilityType: 'server-side template injection',
@@ -110,6 +118,7 @@ const CONFIG = {
   remediation: 'Never pass untrusted input as a template string: keep templates as constant files or constant literals and pass user data only as the render data object; if a template must be dynamic, validate it against an allow-list of known templates.',
   sinks: SINKS,
   sinkRoots: SINK_ROOTS,
+  moduleRoots: MODULE_ROOTS,
 };
 
 const taintedSstiDetector = createTaintDetector(CONFIG);
@@ -118,6 +127,7 @@ module.exports = taintedSstiDetector;
 module.exports.taintedSstiDetector = taintedSstiDetector;
 module.exports.SINKS = SINKS;
 module.exports.SINK_ROOTS = SINK_ROOTS;
+module.exports.MODULE_ROOTS = MODULE_ROOTS;
 module.exports.MAX_CONTENT_CHARS = MAX_CONTENT_CHARS;
 module.exports.MAX_FINDINGS_PER_RECORD = MAX_FINDINGS_PER_RECORD;
 module.exports.findingIdFor = (sink, lineNumber, column, kind) => (

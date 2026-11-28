@@ -195,12 +195,13 @@ tainted on any path stays tainted.
   for exactly this reason — the operator triages it,
   and the validator's `false_positive` verdict exists
   for exactly that. See `docs/sanitizer-modeling-v1.md`.
-- **No import resolution.** A sink reached as
-  `require('ejs').render(...)` is not resolved, and a
-  three-part call (`app.ejs.render(...)`) is not
-  resolved either. Destructuring of a fixed root
-  (`const { render } = ejs`) IS resolved — that is
-  not an import. Import resolution is round 106.
+- **Import resolution (round 106).** A sink reached as
+  `require('ejs').render(...)` now resolves to
+  `ejs.render`, and so do the ESM forms and module
+  aliases. A three-part call (`app.ejs.render(...)`) is
+  still not resolved. Destructuring of a fixed root
+  (`const { render } = ejs`) was already resolved. See
+  `docs/import-resolution-v1.md`.
 - **Judged argument only.** Only the first argument
   (the template string) is judged — a tainted second
   argument (the data object) is not judged in this

@@ -108,6 +108,24 @@ const SINK_ROOTS = {
   axios: ['get', 'post', 'put', 'delete', 'request'],
 };
 
+// Import resolution (round 106): module name -> sink root.
+const MODULE_ROOTS = {
+  'http': 'http',
+  'node:http': 'http',
+  'https': 'https',
+  'node:https': 'https',
+  'axios': 'axios',
+};
+
+// Import resolution (round 106): module name -> bare sink.
+// The module itself IS the sink: `require('request')`
+// returns the request function, `require('node-fetch')`
+// returns fetch.
+const MODULE_BARE_SINKS = {
+  'request': 'request',
+  'node-fetch': 'fetch',
+};
+
 const CONFIG = {
   detectorName: 'tainted-ssrf',
   vulnerabilityType: 'server-side request forgery',
@@ -117,6 +135,8 @@ const CONFIG = {
   remediation: 'Never pass untrusted input as a request URL: validate the URL against an allow-list of hosts and schemes, resolve and re-check the host after DNS (or use a fixed egress proxy with an allow-list), and block private/link-local/metadata address ranges.',
   sinks: SINKS,
   sinkRoots: SINK_ROOTS,
+  moduleRoots: MODULE_ROOTS,
+  moduleBareSinks: MODULE_BARE_SINKS,
 };
 
 const taintedSsrfDetector = createTaintDetector(CONFIG);
@@ -125,6 +145,8 @@ module.exports = taintedSsrfDetector;
 module.exports.taintedSsrfDetector = taintedSsrfDetector;
 module.exports.SINKS = SINKS;
 module.exports.SINK_ROOTS = SINK_ROOTS;
+module.exports.MODULE_ROOTS = MODULE_ROOTS;
+module.exports.MODULE_BARE_SINKS = MODULE_BARE_SINKS;
 module.exports.MAX_CONTENT_CHARS = MAX_CONTENT_CHARS;
 module.exports.MAX_FINDINGS_PER_RECORD = MAX_FINDINGS_PER_RECORD;
 module.exports.findingIdFor = (sink, lineNumber, column, kind) => (

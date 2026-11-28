@@ -198,12 +198,15 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // NOT judged in this round — only the first argument
     // (the SQL string) is.
     'function h(a) { db.query("SELECT 1", a); }',
-    // require('pg').query is not resolved (no import
-    // resolution in this round).
+    // require('pg').query is not a sink: `pg` is not a
+    // known module for this detector — SQL has no import
+    // mapping, because its sink roots are receiver
+    // variable names (db/pool/connection/client/conn),
+    // not modules. (Round 106.)
     'function h(d) { require("pg").query(d); }',
-    // An object alias of the db root is not resolved
-    // either.
-    'const mydb = db; function h(d) { mydb.query(d); }',
+    // Round 106 moved the object-alias case out of this
+    // list: an alias of the db root now resolves (see
+    // tests/import-resolution.test.js).
   ];
   for (const content of contents) {
     const result = run(content);

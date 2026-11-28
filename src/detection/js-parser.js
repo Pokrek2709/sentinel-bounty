@@ -21,7 +21,9 @@
 // control flow (if/while/for/try/switch/throw), assignments,
 // calls, members (including optional chaining), new, await,
 // yield, literals (including templates with interpolations
-// and regex literals), objects, arrays, spread, import/export
+// and regex literals), objects, arrays, spread, import
+// declarations (bindings tracked since round 106; exotic
+// import forms fall back to the structural skip) and export
 // (skipped structurally). Anything outside the subset fails
 // with a JSParseError carrying line and column — the caller
 // (the detector) counts that record in `skipped`, it NEVER
@@ -637,18 +639,21 @@ class Parser {
         }
         case 'import': {
           const start = this.next();
-          // Skip to `;` at depth 0 (bindings are not tracked).
-          let depth = 0;
-          while (!this.atEof()) {
-            const t = this.peek();
-            if (t.value === '{' || t.value === '(' || t.value === '[') depth += 1;
-            else if (t.value === '}' || t.value === ')' || t.value === ']') depth -= 1;
-            else if (t.value === ';' && depth === 0) { this.next(); break; }
-            else if (t.type === 'name' && depth === 0 && (t.value === 'import' || t.value === 'export')) break;
-            this.next();
-            if (depth < 0) break;
+          // Dynamic import `import(...)` is an expression, not a
+          // declaration: skip it structurally as before.
+          if (this.at('(')) return this.skipImportStatement(start);
+          // Parse the declaration; anything outside the
+          // supported forms falls back to the old structural
+          // skip, so a record with an exotic import still
+          // scans instead of failing the parse.
+          const saved = this.pos;
+          try {
+            return this.parseImportDeclaration(start);
+          } catch (error) {
+            if (!(error instanceof JSParseError)) throw error;
+            this.pos = saved;
+            return this.skipImportStatement(start);
           }
-          return { type: 'ImportDeclaration', line: start.line, column: start.column };
         }
         case 'export': {
           const start = this.next();
@@ -710,6 +715,127 @@ class Parser {
     const expr = this.parseExpression();
     this.semicolon();
     return { type: 'ExpressionStatement', expression: expr, line: expr.line, column: expr.column };
+  }
+
+  // Skip an import statement to `;` at depth 0 without
+  // tracking bindings — the pre-round-106 behavior, kept as
+  // the fallback for dynamic import and for declaration
+  // forms outside the supported set.
+  skipImportStatement(start) {
+    let depth = 0;
+    while (!this.atEof()) {
+      const t = this.peek();
+      if (t.value === '{' || t.value === '(' || t.value === '[') depth += 1;
+      else if (t.value === '}' || t.value === ')' || t.value === ']') depth -= 1;
+      else if (t.value === ';' && depth === 0) { this.next(); break; }
+      else if (t.type === 'name' && depth === 0 && (t.value === 'import' || t.value === 'export')) break;
+      this.next();
+      if (depth < 0) break;
+    }
+    return { type: 'ImportDeclaration', specifiers: [], source: null, line: start.line, column: start.column };
+  }
+
+  // An imported name: any `name` token (keywords included —
+  // a module may export `get`, `default`, or `from`).
+  parseImportName() {
+    const token = this.peek();
+    if (token.type !== 'name') this.error('expected an imported name in import', token);
+    this.next();
+    return { type: 'Identifier', name: token.value, line: token.line, column: token.column };
+  }
+
+  // A local binding name: a `name` token that is NOT a
+  // subset keyword (`get`, `from`, `as`, ... cannot bind —
+  // the declaration falls back to the structural skip).
+  parseImportLocalName() {
+    const token = this.peek();
+    if (token.type !== 'name' || KEYWORDS.has(token.value)) {
+      this.error('expected a binding name in import', token);
+    }
+    this.next();
+    return { type: 'Identifier', name: token.value, line: token.line, column: token.column };
+  }
+
+  // The `{ a, b as c }` specifier list after the opening
+  // `{` was consumed.
+  parseImportNamedSpecifiers() {
+    const specifiers = [];
+    while (!this.at('}') && !this.atEof()) {
+      const imported = this.parseImportName();
+      let local = imported;
+      if (this.at('as')) {
+        this.next();
+        local = this.parseImportLocalName();
+      }
+      specifiers.push({ type: 'ImportSpecifier', imported, local, line: imported.line, column: imported.column });
+      if (!this.match(',')) break;
+    }
+    this.expect('}', "'}' after import specifiers");
+    return specifiers;
+  }
+
+  // Parse an import declaration after the `import` keyword
+  // was consumed. Supported forms (all with a string-literal
+  // module specifier):
+  //   import 'mod';
+  //   import Default from 'mod';
+  //   import * as ns from 'mod';
+  //   import { a, b as c } from 'mod';
+  //   import Default, { a } from 'mod';
+  //   import Default, * as ns from 'mod';
+  // Anything else throws JSParseError and the caller falls
+  // back to the structural skip.
+  parseImportDeclaration(start) {
+    let specifiers = [];
+    if (this.peek().type === 'string') {
+      const source = this.next();
+      this.semicolon();
+      return {
+        type: 'ImportDeclaration', specifiers, source: { type: 'Literal', value: source.value, line: source.line, column: source.column },
+        line: start.line, column: start.column,
+      };
+    }
+    if (this.at('*')) {
+      this.next();
+      this.expect('as', "'as' after * in import");
+      const local = this.parseImportLocalName();
+      specifiers.push({ type: 'ImportNamespaceSpecifier', local, line: local.line, column: local.column });
+    } else if (this.at('{')) {
+      this.next();
+      specifiers = this.parseImportNamedSpecifiers();
+    } else if (this.peek().type === 'name' && !KEYWORDS.has(this.peek().value)) {
+      const local = this.next();
+      specifiers.push({
+        type: 'ImportDefaultSpecifier',
+        local: { type: 'Identifier', name: local.value, line: local.line, column: local.column },
+        line: local.line, column: local.column,
+      });
+      if (this.at(',')) {
+        this.next();
+        if (this.at('*')) {
+          this.next();
+          this.expect('as', "'as' after * in import");
+          const ns = this.parseImportLocalName();
+          specifiers.push({ type: 'ImportNamespaceSpecifier', local: ns, line: ns.line, column: ns.column });
+        } else if (this.at('{')) {
+          this.next();
+          specifiers = specifiers.concat(this.parseImportNamedSpecifiers());
+        } else {
+          this.error("expected '{' or '*' after ',' in import", this.peek());
+        }
+      }
+    } else {
+      this.error('unsupported import form', this.peek());
+    }
+    this.expect('from', "'from' after import specifiers");
+    if (this.peek().type !== 'string') this.error('expected a string module specifier after from', this.peek());
+    const source = this.next();
+    this.semicolon();
+    return {
+      type: 'ImportDeclaration', specifiers,
+      source: { type: 'Literal', value: source.value, line: source.line, column: source.column },
+      line: start.line, column: start.column,
+    };
   }
 
   parseBlock() {

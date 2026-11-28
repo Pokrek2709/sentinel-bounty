@@ -200,12 +200,10 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // judged in this round — only the first argument (the
     // template string) is.
     'function h(a) { ejs.render("Hello", a); }',
-    // require('ejs').render is not resolved (no import
-    // resolution in this round).
-    'function h(d) { require("ejs").render(d); }',
-    // An object alias of the ejs root is not resolved
-    // either.
-    'const myejs = ejs; function h(d) { myejs.render(d); }',
+    // Round 106 moved the import cases out of this list:
+    // require('ejs').render and an object alias of the
+    // ejs root now resolve (see
+    // tests/import-resolution.test.js).
   ];
   for (const content of contents) {
     const result = run(content);

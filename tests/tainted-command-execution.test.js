@@ -160,12 +160,10 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // Tainted argument vector (second argument of spawn) is
     // NOT judged in this round — only the first argument is.
     'function h(a) { child_process.spawn("ls", a); }',
-    // require('child_process').exec is not resolved (no
-    // import resolution in this round).
-    'function h(d) { require("child_process").exec(d); }',
-    // An object alias of the child_process root is not
-    // resolved either.
-    'const cp = child_process; function h(d) { cp.exec(d); }',
+    // Round 106 moved the import cases out of this list:
+    // require('child_process').exec and an object alias of
+    // the child_process root now resolve (see
+    // tests/import-resolution.test.js).
   ];
   for (const content of contents) {
     const result = run(content);

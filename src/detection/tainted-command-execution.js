@@ -93,6 +93,16 @@ const SINK_ROOTS = {
   child_process: ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync'],
 };
 
+// Import resolution (round 106): module name -> sink root.
+// `require('child_process')` (or
+// `require('node:child_process')`) binds its local name to
+// the `child_process` root, so `cp.exec(...)` resolves to
+// `child_process.exec`.
+const MODULE_ROOTS = {
+  'child_process': 'child_process',
+  'node:child_process': 'child_process',
+};
+
 const CONFIG = {
   detectorName: 'tainted-command-execution',
   vulnerabilityType: 'os command injection',
@@ -102,6 +112,7 @@ const CONFIG = {
   remediation: 'Avoid shell execution: use an allow-listed argument vector with no shell (spawn/execFile with shell: false) and never interpolate untrusted input into a command string.',
   sinks: SINKS,
   sinkRoots: SINK_ROOTS,
+  moduleRoots: MODULE_ROOTS,
 };
 
 const taintedCommandExecutionDetector = createTaintDetector(CONFIG);
@@ -110,6 +121,7 @@ module.exports = taintedCommandExecutionDetector;
 module.exports.taintedCommandExecutionDetector = taintedCommandExecutionDetector;
 module.exports.SINKS = SINKS;
 module.exports.SINK_ROOTS = SINK_ROOTS;
+module.exports.MODULE_ROOTS = MODULE_ROOTS;
 module.exports.MAX_CONTENT_CHARS = MAX_CONTENT_CHARS;
 module.exports.MAX_FINDINGS_PER_RECORD = MAX_FINDINGS_PER_RECORD;
 module.exports.findingIdFor = (sink, lineNumber, column, kind) => (
