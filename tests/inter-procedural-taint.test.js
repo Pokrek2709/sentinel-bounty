@@ -1,6 +1,6 @@
 // Tests for round 101 (Phase 5): inter-procedural taint
 // (call graph) + sanitizer modeling, on the shared taint
-// engine all twelve parser-based detectors run on.
+// engine all thirteen parser-based detectors run on.
 //
 // Positive cases prove taint flows from a call site into a
 // callee (the chain names the cross-function flow), through
@@ -29,6 +29,7 @@ const xpath = require('../src/detection/tainted-xpath');
 const openRedirect = require('../src/detection/tainted-open-redirect');
 const xxe = require('../src/detection/tainted-xxe');
 const redos = require('../src/detection/tainted-redos');
+const prototypePollution = require('../src/detection/tainted-prototype-pollution');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -128,6 +129,14 @@ const DETECTORS = [
     call: (arg) => `RegExp(${arg})`,
     vuln: 'regular expression denial of service',
     cwe: 'CWE-1333',
+  },
+  {
+    name: 'tainted-prototype-pollution',
+    detect: prototypePollution,
+    sink: 'Object.assign',
+    call: (arg) => `Object.assign({}, ${arg})`,
+    vuln: 'prototype pollution',
+    cwe: 'CWE-1321',
   },
 ];
 
@@ -333,7 +342,7 @@ function defineTests(det) {
 
 for (const det of DETECTORS) defineTests(det);
 
-test('engine: all twelve detectors share one taint engine module', () => {
+test('engine: all thirteen detectors share one taint engine module', () => {
   assert.deepEqual([...engine.SANITIZERS].sort(), [
     'Boolean', 'Number', 'Number.parseFloat', 'Number.parseInt', 'parseFloat', 'parseInt',
   ]);
@@ -349,6 +358,7 @@ test('engine: all twelve detectors share one taint engine module', () => {
   assert.equal(openRedirect.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(xxe.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(redos.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(prototypePollution.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(deserialize.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(commandExec.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(sql.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
@@ -361,6 +371,7 @@ test('engine: all twelve detectors share one taint engine module', () => {
   assert.equal(openRedirect.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(xxe.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(redos.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(prototypePollution.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(typeof engine.createTaintDetector, 'function');
   assert.equal(typeof engine.TaintAnalyzer, 'function');
   assert.equal(engine.MAX_CALL_DEPTH, 8);

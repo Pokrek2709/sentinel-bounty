@@ -94,6 +94,7 @@ const { taintedXpathDetector } = require('./tainted-xpath');
 const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
 const { taintedXxeDetector } = require('./tainted-xxe');
 const { taintedRedosDetector } = require('./tainted-redos');
+const { taintedPrototypePollutionDetector } = require('./tainted-prototype-pollution');
 const solidityReentrancyDetector = require('./solidity-reentrancy');
 const solidityAccessControlDetector = require('./solidity-access-control');
 const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-initializer');
@@ -347,6 +348,10 @@ function runDetector(detector, input, defaults) {
 //   - 'tainted-redos' -> the twenty-seventh real detector
 //     (round 113), the twelfth parser-based one, source
 //     'tainted-redos'.
+//   - 'tainted-prototype-pollution' -> the twenty-eighth
+//     real detector (round 114), the thirteenth
+//     parser-based one, source
+//     'tainted-prototype-pollution'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -370,6 +375,7 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-open-redirect') return { detector: taintedOpenRedirectDetector, source: 'tainted-open-redirect' };
   if (spec === 'tainted-xxe') return { detector: taintedXxeDetector, source: 'tainted-xxe' };
   if (spec === 'tainted-redos') return { detector: taintedRedosDetector, source: 'tainted-redos' };
+  if (spec === 'tainted-prototype-pollution') return { detector: taintedPrototypePollutionDetector, source: 'tainted-prototype-pollution' };
   if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
   if (spec === 'solidity-access-control') return { detector: solidityAccessControlDetector, source: 'solidity-access-control' };
   if (spec === 'solidity-unprotected-initializer') return { detector: solidityUnprotectedInitializerDetector, source: 'solidity-unprotected-initializer' };

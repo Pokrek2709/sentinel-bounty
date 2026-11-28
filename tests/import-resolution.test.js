@@ -9,12 +9,15 @@
 // Only modules in each detector's import tables resolve
 // (moduleRoots / moduleBareSinks); dynamic require, a
 // relative path, an unknown module, and re-export stay
-// unresolved, pinned here. The round-105 quirk is
-// reconciled, not changed: a destructured name that
-// collides with a bare sink (`request`) is judged as the
-// bare sink, because the direct-sink check runs first —
-// whether the destructuring source is a bare identifier or
-// a require call.
+// unresolved, pinned here. Round 114 overturns the
+// round-105 collision rule: a destructured name that
+// collides with a bare sink (`request`) is now judged as
+// the ALIAS (`http.request`), because the alias check runs
+// before the bare-sink check — the old rule misattributed
+// the sink and suppressed the alias finding for clean
+// arguments, and the prototype-pollution detector needs
+// the alias to win (`const { merge } = _` must resolve
+// to `_.merge`, not to the bare `merge` sink).
 'use strict';
 
 const test = require('node:test');
@@ -31,6 +34,7 @@ const xpath = require('../src/detection/tainted-xpath');
 const openRedirect = require('../src/detection/tainted-open-redirect');
 const xxe = require('../src/detection/tainted-xxe');
 const redos = require('../src/detection/tainted-redos');
+const prototypePollution = require('../src/detection/tainted-prototype-pollution');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -87,6 +91,13 @@ test('import tables: the documented module allow-lists are exact', () => {
   });
   assert.deepEqual(xpath.MODULE_ROOTS, { 'xpath': 'xpath' });
   assert.deepEqual(xxe.MODULE_ROOTS, { 'libxmljs': 'libxmljs' });
+  assert.deepEqual(prototypePollution.MODULE_ROOTS, {
+    'lodash': '_',
+    'jquery': '$',
+  });
+  assert.deepEqual(prototypePollution.MODULE_BARE_SINKS, {
+    'deepmerge': 'merge',
+  });
   // Only js-yaml maps to the yaml root: its API really is
   // yaml.load / loadAll. The `yaml` package is NOT mapped —
   // its API is `parse`, not `load`.
@@ -122,6 +133,8 @@ test('import resolution: direct require member calls resolve to the canonical si
     [ldap, 'client.search', 'function h(d) { require("ldapjs").search("dc=example,dc=com", d); }'],
     [xpath, 'xpath.select', 'function h(d) { require("xpath").select(d, doc); }'],
     [xxe, 'libxmljs.parseXml', 'function h(d) { require("libxmljs").parseXml(d, { noent: true }); }'],
+    [prototypePollution, '_.merge', 'function h(d) { require("lodash").merge({}, d); }'],
+    [prototypePollution, '$.extend', 'function h(d) { require("jquery").extend(true, {}, d); }'],
   ];
   for (const [detect, sink, content] of cases) {
     assertOneFinding(run(detect, content), sink, 'tainted-arg', content);
@@ -165,6 +178,9 @@ test('import resolution: namespace aliases (require + bare-root identity) resolv
     [xpath, 'xpath.select', 'const x = require("xpath"); function h(d) { x.select(d, doc); }'],
     [xxe, 'libxmljs.parseXml', 'const x = require("libxmljs"); function h(d) { x.parseXml(d, { noent: true }); }'],
     [xxe, 'libxmljs.parseXml', 'const mylib = libxmljs; function h(d) { mylib.parseXml(d, { noent: true }); }'],
+    [prototypePollution, '_.merge', 'const _ = require("lodash"); function h(d) { _.merge({}, d); }'],
+    [prototypePollution, '_.merge', 'const mylodash = _; function h(d) { mylodash.merge({}, d); }'],
+    [prototypePollution, '$.extend', 'const $ = require("jquery"); function h(d) { $.extend(true, {}, d); }'],
     [sql, 'db.query', 'const mydb = db; function h(d) { mydb.query(d); }'],
   ];
   for (const [detect, sink, content] of cases) {
@@ -192,6 +208,10 @@ test('import resolution: namespace aliases (require + bare-root identity) resolv
     run(ssrf, 'const nf = require("node-fetch"); function h(u) { nf(u); }'),
     'fetch', 'aliased-call', 'require of node-fetch',
   );
+  assertOneFinding(
+    run(prototypePollution, 'const m = require("deepmerge"); function h(d) { m({}, d); }'),
+    'merge', 'aliased-call', 'require of a bare-sink module (deepmerge)',
+  );
 });
 
 // ------------------------------------------------------- pattern (c)
@@ -207,6 +227,7 @@ test('import resolution: destructured require resolves to the canonical sink', (
     [ldap, 'client.search', 'const { search } = require("ldapjs"); function h(d) { search("dc=example,dc=com", d); }'],
     [xpath, 'xpath.select', 'const { select } = require("xpath"); function h(d) { select(d, doc); }'],
     [xxe, 'libxmljs.parseXml', 'const { parseXml } = require("libxmljs"); function h(d) { parseXml(d, { noent: true }); }'],
+    [prototypePollution, '_.merge', 'const { merge } = require("lodash"); function h(d) { merge({}, d); }'],
   ];
   for (const [detect, sink, content] of cases) {
     assertOneFinding(run(detect, content), sink, 'aliased-call', content);
@@ -222,18 +243,26 @@ test('import resolution: destructured require resolves to the canonical sink', (
     run(commandExec, 'const e = require("child_process").exec; function h(d) { e(d); }'),
     'child_process.exec', 'aliased-call', 'member alias from a require call',
   );
-  // The round-105 quirk, reconciled for require sources:
-  // a destructured name colliding with a bare sink is
-  // judged as the bare sink (the direct-sink check runs
-  // first), so a tainted argument flags sink `request`
-  // (tainted-arg) and a clean argument flags nothing.
+  // Round 114 overturns the round-105 collision rule:
+  // a destructured name colliding with a bare sink is now
+  // judged as the ALIAS, not as the bare sink — the alias
+  // check runs before the bare-sink check in
+  // `checkSinkCall`. `const { request } = require('http')`
+  // IS `http.request`, not the `request` package, so the
+  // call flags as sink `http.request` (aliased-call) with
+  // any argument, like every other aliased call. The old
+  // rule misattributed the sink and suppressed the alias
+  // finding for clean arguments; the prototype-pollution
+  // detector made the overturn necessary (`const { merge }
+  // = _` must resolve to `_.merge`, not to the bare
+  // `merge` deepmerge sink).
   assertOneFinding(
     run(ssrf, 'const { request } = require("http"); function h(u) { request(u); }'),
-    'request', 'tainted-arg', 'colliding destructured name, tainted argument',
+    'http.request', 'aliased-call', 'colliding destructured name, tainted argument',
   );
-  assertNoFinding(
+  assertOneFinding(
     run(ssrf, 'const { request } = require("http"); request("https://example.com");'),
-    'colliding destructured name, clean argument',
+    'http.request', 'aliased-call', 'colliding destructured name, clean argument',
   );
 });
 
@@ -253,7 +282,7 @@ test('import resolution: ESM imports resolve (named, default, namespace)', () =>
     [deserialize, 'yaml.load', 'aliased-call', 'import { load } from "js-yaml"; function h(d) { load(d); }'],
     [deserialize, 'yaml.load', 'tainted-arg', 'import y from "js-yaml"; function h(d) { y.load(d); }'],
     [ssrf, 'http.get', 'tainted-arg', 'import http from "http"; function h(d) { http.get(d); }'],
-    [ssrf, 'request', 'tainted-arg', 'import { request } from "http"; function h(u) { request(u); }'],
+    [ssrf, 'http.request', 'aliased-call', 'import { request } from "http"; function h(u) { request(u); }'],
     [ssrf, 'request', 'aliased-call', 'import rq from "request"; function h(u) { rq(u); }'],
     [ldap, 'client.search', 'tainted-arg', 'import client from "ldapjs"; function h(d) { client.search("dc=example,dc=com", d); }'],
     [ldap, 'client.search', 'aliased-call', 'import { search } from "ldapjs"; function h(d) { search("dc=example,dc=com", d); }'],
@@ -263,6 +292,10 @@ test('import resolution: ESM imports resolve (named, default, namespace)', () =>
     [xxe, 'libxmljs.parseXml', 'tainted-arg', 'import libxmljs from "libxmljs"; function h(d) { libxmljs.parseXml(d, { noent: true }); }'],
     [xxe, 'libxmljs.parseXml', 'aliased-call', 'import { parseXml } from "libxmljs"; function h(d) { parseXml(d, { noent: true }); }'],
     [xxe, 'libxmljs.parseXml', 'tainted-arg', 'import * as libxmljs from "libxmljs"; function h(d) { libxmljs.parseXml(d, { noent: true }); }'],
+    [prototypePollution, '_.merge', 'tainted-arg', 'import _ from "lodash"; function h(d) { _.merge({}, d); }'],
+    [prototypePollution, '_.merge', 'aliased-call', 'import { merge } from "lodash"; function h(d) { merge({}, d); }'],
+    [prototypePollution, '_.merge', 'tainted-arg', 'import * as _ from "lodash"; function h(d) { _.merge({}, d); }'],
+    [prototypePollution, 'merge', 'aliased-call', 'import merge from "deepmerge"; function h(d) { merge({}, d); }'],
   ];
   for (const [detect, sink, kind, content] of cases) {
     assertOneFinding(run(detect, content), sink, kind, content);
@@ -317,6 +350,10 @@ test('import resolution: dynamic, relative, unknown, and re-exported imports sta
     [xxe, 'function h(d) { const x = require("libxmljs"); x.parseXml(d, { noent: false }); }'],
     // ReDoS has no import mapping at all.
     [redos, 'function h(d) { require("regexp").RegExp(d); }'],
+    // Prototype pollution has a mapping, but an unknown
+    // module or a relative path carries none.
+    [prototypePollution, 'function h(d) { const x = require("unknown-lib"); x.merge({}, d); }'],
+    [prototypePollution, 'function h(d) { const x = require("./lodash"); x.merge({}, d); }'],
     // A shadowed `require` disables the resolution (like
     // the sanitizer shadowing rule).
     [commandExec, 'function require(x) { return x; } function h(d) { require("child_process").exec(d); }'],
@@ -352,6 +389,20 @@ test('import resolution: a record calling a bare `get` is skipped, not scanned (
   const result = run(ssrf, 'import { get } from "http"; function h(u) { get(u); }');
   assert.equal(result.findings.length, 0, 'no findings for an unparsable record');
   assert.equal(result.skipped, 1, 'record skipped');
+});
+
+test('import resolution: a record calling a bare `set` is skipped, not scanned (parser keyword, round 114)', () => {
+  // The same round-101 keyword limitation, for the other
+  // accessor keyword: `set` cannot be a bare identifier,
+  // so a record that calls a destructured `_.set` does
+  // not parse at all — the member form (`_.set(...)`)
+  // parses and resolves normally, only the bare
+  // destructured call is unscanable. The record is
+  // skipped with a parse error, never scanned silently.
+  const result = run(prototypePollution, 'const { set } = require("lodash"); function h(p) { set({}, p, 1); }');
+  assert.equal(result.findings.length, 0, 'no findings for an unparsable record');
+  assert.equal(result.skipped, 1, 'record skipped');
+  assert.match(result.errors[0], /unexpected keyword set/);
 });
 
 // ------------------------------------------------------- inter-procedural

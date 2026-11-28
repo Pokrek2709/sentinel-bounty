@@ -96,26 +96,36 @@ child_process; cp.exec(...)`, `const mydb = db;
 mydb.query(...)`). This is the same name-based treatment
 the sink tables already apply to the bare root call.
 
-## The bare-sink collision rule (round-105 quirk, reconciled)
+## The bare-sink collision rule (round-105 quirk, overturned in round 114)
 
 A destructured name that collides with a bare sink is
-judged as the bare sink, not as the alias, because the
-direct-sink check runs first — whether the destructuring
-source is a bare identifier or a require call:
+judged as the ALIAS, not as the bare sink, because the
+alias check runs before the direct-sink check in
+`checkSinkCall` — whether the destructuring source is a
+bare identifier or a require call:
 
 - `const { request } = http; request(u)` with tainted `u`
-  → finding for sink `request`, kind `tainted-arg`.
+  → finding for sink `http.request`, kind `aliased-call`.
 - `const { request } = require('http');
   request("https://example.com")` with a clean argument
-  → no finding (a direct call needs a tainted judged
-  argument), even though the alias binding exists.
+  → finding for sink `http.request`, kind `aliased-call`,
+  like every other aliased call.
 - `const { request } = http; request("https://example.com")`
-  behaves identically (the round-105 pin, unchanged).
+  behaves identically.
 
-The collision only matters where a bare sink and a member
-sink share a name (`request` in SSRF). Non-colliding
-names resolve as aliases (`const { get } = require('http')`
-cannot be tested as a call — see below).
+Round 114 overturned the round-105 rule (which judged the
+collision as the bare sink). The old rule misattributed
+the sink — `const { request } = http` IS `http.request`,
+not the `request` package — and it suppressed the alias
+finding for clean arguments, an exception to the alias
+rule no other detector had. The overturn was necessary:
+the prototype-pollution detector's lodash shape
+(`const { merge } = _`) must resolve to `_.merge`, not
+to the bare `merge` deepmerge sink. The collision only
+matters where a bare sink and a member sink share a name
+(`request` in SSRF, `merge` in prototype pollution).
+Non-colliding names resolve as aliases (`const { get } =
+require('http')` cannot be tested as a call — see below).
 
 ## What stays unresolved (pinned by tests)
 

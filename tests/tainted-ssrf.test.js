@@ -109,6 +109,15 @@ test('detector: aliased sink calls are reported even with a clean argument', () 
     ['alias through identifier', 'const g = http.get; const s = g; s(x);', 's', 'http.get'],
     ['bare fetch alias', 'const f = fetch; f("https://example.com");', 'f', 'fetch'],
     ['destructured axios', 'const { post } = axios; post("https://example.com");', 'post', 'axios.post'],
+    // Round 114 overturns the round-105 collision rule:
+    // a destructured alias whose name collides with a bare
+    // sink name is now judged as the ALIAS, not as the
+    // bare sink — `request` destructured from `http` IS
+    // `http.request`, not the `request` package. The alias
+    // check runs before the bare-sink check, so the call
+    // flags even with a clean argument, like every other
+    // aliased call.
+    ['colliding destructured alias', 'const { request } = http; request("https://example.com");', 'request', 'http.request'],
   ];
   for (const [label, content, aliasName, sink] of cases) {
     const result = run(content);
@@ -206,13 +215,12 @@ test('detector: documented resolution limits are pinned (no finding)', () => {
     // Round 106 moved the import cases out of this list:
     // require('http').get and an object alias of the http
     // root now resolve (see
-    // tests/import-resolution.test.js).
-    // A destructured alias whose name collides with a
-    // BARE sink name (`request`) is judged as the bare
-    // sink, not as the alias: the direct-sink check runs
-    // first, so a clean argument is not flagged even
-    // though the alias binding exists.
-    'const { request } = http; request("https://example.com");',
+    // tests/import-resolution.test.js). The colliding
+    // destructured alias (`const { request } = http`)
+    // moved OUT of this list in round 114: it is now
+    // judged as the alias (`http.request`) and flags even
+    // with a clean argument — see the aliased-calls test
+    // above.
   ];
   for (const content of contents) {
     const result = run(content);

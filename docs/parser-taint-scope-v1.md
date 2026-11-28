@@ -435,8 +435,10 @@ over all seven parser-based detectors.
   a three-part call, a tainted second argument, and a
   destructured alias whose name collides with a bare
   sink name (`const { request } = http` is judged as
-  the bare `request` sink, not as the alias, because
-  the direct-sink check runs first). A bare identifier
+  the alias `http.request`, not as the bare `request`
+  sink — round 114 overturned the round-105 rule that
+  judged it as the bare sink, because the alias check
+  now runs first). A bare identifier
   literally named `get` does not parse (the round-101
   keyword limitation — `unexpected keyword get`), so a
   record calling `get(...)` directly is skipped and
@@ -491,11 +493,14 @@ parser-based detector at once:
   an exotic import still scans. Import bindings are
   hoisted like function declarations. Dynamic import
   (`import('mod')`) is skipped structurally.
-- **The round-105 quirk is reconciled, not changed:**
+- **The round-105 quirk is overturned in round 114:**
   a destructured name colliding with a bare sink
-  (`request`) is judged as the bare sink, because the
-  direct-sink check runs first — whether the source is
-  a bare identifier or a require call.
+  (`request`) is now judged as the ALIAS
+  (`http.request`), because the alias check runs before
+  the bare-sink check — whether the source is a bare
+  identifier or a require call. The old rule
+  misattributed the sink and suppressed the alias
+  finding for clean arguments.
 - **Engine changes (additive, in
   `src/detection/taint-engine.js`):** bindings carry a
   fourth field (`module`: `{ kind: 'root', root }` or
@@ -1033,3 +1038,146 @@ caller keeps the default.
   step is round 114 (prototype pollution), the last
   JavaScript class on the approved map before the
   language rounds (Python, PHP).
+
+## 18. Round-114 addendum (2026-11-29) — one JavaScript class: prototype pollution
+
+The last JavaScript class on the approved map before
+the language rounds (Python, PHP). The detector runs
+on the shared taint engine
+(`src/detection/taint-engine.js`) as a thin config
+plus four additive engine capabilities; documented in
+`docs/detection-tainted-prototype-pollution-v1.md`.
+
+- **Prototype pollution
+  (`tainted-prototype-pollution`, CWE-1321, severity
+  high):** an attacker-controlled object or key
+  reaching an unsafe property-writing sink. Sinks:
+  `Object.assign` (every source from index 1),
+  `_.merge` / `_.defaultsDeep` (every source from
+  index 1), `_.set` (the path, index 1), `$.extend`
+  (every source from index 2 — the deep flag is
+  argument 0), `merge` / `merge.all` (deepmerge,
+  from index 1 / index 0), dynamic-key assignment
+  (`obj[key] = value`, kind `tainted-key-assign`),
+  dangerous-key-chain assignment (kind
+  `dangerous-key-assign`), and tainted object spread
+  (`{ ...tainted }`, kind `tainted-spread`). A sink
+  call through an alias reports kind `aliased-call`
+  with any argument. Import resolution applies:
+  lodash → `_`, jquery → `$`, deepmerge → bare sink
+  `merge`. A static, known-safe key is clean; a
+  null-prototype target (`Object.create(null)`) is
+  clean for merge sinks and key findings (not for
+  `$.extend`, whose target position is ambiguous); a
+  merge that filters `__proto__` / `constructor` /
+  `prototype` in the same function is clean; a merge
+  after `Object.freeze` on the prototype is clean.
+  The dangerous-key rule is: `__proto__` anywhere in
+  the chain, a consecutive `constructor` →
+  `prototype` pair, or the root `Object.prototype` —
+  a lone leaf `constructor` or `prototype` is clean.
+
+**Engine extension 1 — `argIndexFrom` (merge
+sinks).** A sink entry may carry `argIndexFrom`:
+every argument from that index onward is judged
+(`Object.assign` / `_.merge` / `_.defaultsDeep` /
+`merge` from 1, `$.extend` from 2). Config-driven
+and additive: detectors that declare no
+`argIndexFrom` behave exactly as before.
+
+**Engine extension 2 — `flagAssignmentKeys`
+(assignment sinks).** A detector may set
+`flagAssignmentKeys: true` in its config: a
+computed-key assignment whose key is tainted
+reports kind `tainted-key-assign`, and an
+assignment whose target chain is dangerous reports
+kind `dangerous-key-assign` (the rule above). A
+tainted key on a null-prototype target is
+suppressed. Only the prototype-pollution detector
+sets it.
+
+**Engine extension 3 — `flagTaintedSpread`
+(spread sinks).** A detector may set
+`flagTaintedSpread: true`: a tainted object spread
+reports kind `tainted-spread`. The finding is
+conservative and documented as such — spreading
+`__proto__` copies it as an own property, it does
+not change the new object's prototype — but a
+tainted spread into a merge target is the same data
+flow the merge sinks flag. Only the
+prototype-pollution detector sets it.
+
+**Engine extension 4 — `nullProtoTargetSafe` +
+null-prototype binding tracking.** A sink entry may
+carry `nullProtoTargetSafe: true`: a sink whose
+target argument is a null-prototype object (via
+`Object.create(null)`, an identifier copy, or a
+branch join) is suppressed for key findings and
+merge sinks. `$.extend` does not carry it. The
+binding tracker records `nullProto` on bindings and
+merges it across branch joins like taint.
+
+**Engine change — alias check runs before the
+bare-sink check (overturns the round-105 collision
+rule).** `checkSinkCall` now checks the alias
+binding FIRST when it is non-null, and only then
+the direct bare-sink name. A destructured alias
+whose name collides with a bare sink name (`const
+{ merge } = _` vs the bare `merge` deepmerge sink,
+`const { request } = http` vs the bare `request`
+SSRF sink) is judged as the ALIAS, not as the bare
+sink. The round-105 rule judged the collision as
+the bare sink; round 114 overturns it, because the
+old rule misattributed the sink — `const { request
+} = http` IS `http.request`, not the `request`
+package — and it suppressed the alias finding for
+clean arguments, an exception to the alias rule no
+other detector had. The prototype-pollution
+detector made the overturn necessary: its lodash
+shape (`const { merge } = require('lodash')`) must
+resolve to `_.merge`. The SSRF colliding case now
+reports sink `http.request`, kind `aliased-call`,
+with any argument; the pinned tests in
+`tests/tainted-ssrf.test.js` and
+`tests/import-resolution.test.js` and the three docs
+that stated the old rule
+(`docs/import-resolution-v1.md`,
+`docs/parser-taint-scope-v1.md` §9 and §10,
+`docs/detection-tainted-ssrf-v1.md`) were updated
+in the same round. The earlier detectors are
+otherwise unchanged.
+
+**Parser note — `set` is a keyword (round-101
+limitation, second instance).** Like `get`, a bare
+identifier literally named `set` does not parse
+(`unexpected keyword set`), so a record calling a
+destructured `_.set` bare does not parse at all and
+is skipped, never scanned silently. The member form
+(`_.set(...)`) parses and resolves normally. Pinned
+in `tests/import-resolution.test.js`.
+
+**`renderMember` extended.** A computed key that is
+itself a member expression (`o[d.key]`) now renders
+instead of collapsing to the fallback, so evidence
+targets stay precise. The earlier detectors are
+unchanged.
+
+- **Deliberate exclusions, pinned by tests:**
+  key-path splitting and loop assignment
+  (`key.split('.')` then per-segment assignment),
+  a key filter living in a helper function, a
+  literal dangerous key stored in a variable (no
+  constant propagation), deep-merge depth and
+  recursion, prototype pollution via `JSON.parse`
+  (flagged at the merge, not the parse), a bare
+  `set` call (parser keyword — record skipped), a
+  clean source, a sanitized key, a static safe key,
+  a null-prototype target, a same-function key
+  filter, `Object.freeze` on the prototype, a safe
+  chain leaf (`Foo.prototype.constructor`,
+  `fn.prototype = {}`), an unknown / relative /
+  dynamic require.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset. The next
+  step is round 115 (Python parser + tainted
+  pickle), the first language round.

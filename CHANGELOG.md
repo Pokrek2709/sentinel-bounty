@@ -166,6 +166,79 @@ v0.x tag line (see `docs/release-process-v1.md`).
   in `tests/import-resolution.test.js`);
   verify-install 11/11.
 
+### Round 114: tainted-prototype-pollution detector on the shared taint engine (2026-11-29)
+
+- One JavaScript detector on the shared taint engine (round
+  113's §17 "next step"), the last JavaScript class on the
+  approved map before the language rounds (Python, PHP):
+  - `tainted-prototype-pollution` (twenty-eighth real
+    detector, thirteenth parser-based detector): an
+    attacker-controlled object or key reaching an unsafe
+    property-writing sink (CWE-1321 Improperly Controlled
+    Modification of Object Prototype Attributes, severity
+    high), one finding per sink site. Sinks:
+    `Object.assign` (every source from index 1),
+    `_.merge` / `_.defaultsDeep` (every source from index
+    1), `_.set` (the path, index 1), `$.extend` (every
+    source from index 2), `merge` / `merge.all`
+    (deepmerge), dynamic-key assignment (`obj[key] =
+    value`, kind `tainted-key-assign`), dangerous-key-
+    chain assignment (kind `dangerous-key-assign`:
+    `__proto__` anywhere, a consecutive `constructor` →
+    `prototype` pair, or the root `Object.prototype` — a
+    lone leaf `constructor` / `prototype` is clean), and
+    tainted object spread (`{ ...tainted }`, kind
+    `tainted-spread`, conservative: a spread copies
+    `__proto__` as an own property, it does not change
+    the new object's prototype). A static safe key, a
+    null-prototype target (`Object.create(null)`, not
+    for `$.extend`), a same-function key filter, and
+    `Object.freeze` on the prototype are clean.
+    Import resolution applies (lodash → `_`, jquery →
+    `$`, deepmerge → bare sink `merge`). Not modeled:
+    key-path splitting and loop assignment, a key filter
+    in a helper function, a literal dangerous key stored
+    in a variable, deep-merge depth, a bare destructured
+    `set` call (parser keyword — the record is skipped,
+    like `get` since round 101).
+- Shared engine, extended four times (the third round to
+  extend it, after rounds 104 and 113): a per-sink
+  `argIndexFrom` (judge every argument from that index
+  onward — multi-source merge sinks), a per-detector
+  `flagAssignmentKeys` (tainted computed-key assignment
+  and dangerous-key-chain assignment as new finding
+  kinds), a per-detector `flagTaintedSpread` (tainted
+  object spread as a new finding kind), and a per-sink
+  `nullProtoTargetSafe` with null-prototype binding
+  tracking (target tracking through identifiers, copies,
+  and branch joins). `renderMember` now renders a
+  computed key that is itself a member expression
+  (`o[d.key]`) instead of collapsing to the fallback.
+  All extensions are additive: detectors that declare
+  none of them behave exactly as before.
+- Engine change — alias check runs before the bare-sink
+  check, overturning the round-105 collision rule: a
+  destructured alias whose name collides with a bare
+  sink name (`const { merge } = _`, `const { request }
+  = http`) is now judged as the ALIAS, not as the bare
+  sink. The old rule misattributed the sink and
+  suppressed the alias finding for clean arguments;
+  the prototype-pollution detector made the overturn
+  necessary (its lodash shape must resolve to
+  `_.merge`). The SSRF colliding case now reports sink
+  `http.request`, kind `aliased-call`, with any
+  argument; the pinned tests and the three docs that
+  stated the old rule were updated in the same round.
+- Tests: 1815 total (1810 pass, 0 fail, 5 skip) — 50 new
+  tests (`tests/tainted-prototype-pollution.test.js`
+  (27), battery entry in
+  `tests/inter-procedural-taint.test.js` (22), the
+  bare-`set` keyword pin and lodash/jquery/deepmerge
+  cases in `tests/import-resolution.test.js`, the
+  colliding-alias updates in `tests/tainted-ssrf.test.js`
+  and `tests/import-resolution.test.js`);
+  verify-install 11/11.
+
 ### Round 110: Solidity rounding, tx.origin and weak-randomness detectors (2026-11-29)
 
 - Three Solidity detectors on the same subset parser (round

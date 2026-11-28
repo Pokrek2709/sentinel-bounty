@@ -63,7 +63,21 @@
 // sink-checked like calls (round 113: `new RegExp(...)`
 // is the primary ReDoS sink); no earlier detector declares
 // a sink named like a constructor, so earlier detectors
-// behave exactly as before. A config may also carry import
+// behave exactly as before. A sink entry may name
+// `argIndexFrom` (round 114): every argument from that
+// index on is judged (merge sinks judge their sources
+// from index 1, `$.extend` from index 2 — its deep flag
+// occupies index 0); one finding per call site, the
+// first tainted source's chain wins. A config may set
+// `flagAssignmentKeys` (round 114): a computed member
+// assignment whose key expression is tainted is a
+// finding, and so is an assignment whose target chain
+// carries a dangerous prototype key (`__proto__`
+// anywhere, the ordered pair `constructor` ->
+// `prototype`, or a root of `Object.prototype`). A
+// config may set `flagTaintedSpread` (round 114): a
+// spread of a tainted value inside an object literal
+// (`{...tainted}`) is a finding. A config may also carry import
 // tables for round-106 import resolution: `moduleRoots`
 // (module name -> sink root, e.g. 'child_process' ->
 // 'child_process') and `moduleBareSinks` (module name ->
@@ -109,6 +123,34 @@
 //   literal carrying one of the named properties with a
 //   strictly equal literal value; anything else (absent,
 //   variable, without the property) is not a finding.
+// - A sink entry may name `argIndexFrom` (round 114):
+//   every argument from that index on is judged (merge
+//   sinks: `Object.assign` / `_.merge` / `_.defaultsDeep`
+//   / `merge` judge sources from index 1, `$.extend`
+//   from index 2); one finding per call site, the first
+//   tainted source's chain wins.
+// - A config may set `flagAssignmentKeys` (round 114):
+//   a computed member assignment whose key expression is
+//   tainted is a finding, and so is an assignment whose
+//   target chain carries a dangerous prototype key
+//   (`__proto__` anywhere, the ordered pair
+//   `constructor` -> `prototype`, or a root of
+//   `Object.prototype`). A target created by
+//   `Object.create(null)` — tracked on the binding as
+//   `nullProto`, through identifier copies and branch
+//   agreement — is exempt from both key findings: a
+//   null-prototype object has no `__proto__` setter, so
+//   the write lands as an own property. A merge sink
+//   entry may carry `nullProtoTargetSafe` (round 114):
+//   when its target argument (index 0) is such an
+//   object, the call is not a finding.
+// - A config may set `flagTaintedSpread` (round 114): a
+//   spread of a tainted value inside an object literal
+//   (`{...tainted}`) is a finding. Spread copies
+//   `__proto__` as an own property (no prototype
+//   change), so the finding is conservative: the merged
+//   object carries attacker-controlled keys into any
+//   later [[Set]]-based merge.
 // - Assignment sinks (`el.innerHTML = x`) are judged on
 //   the assigned value; method sinks
 //   (`el.insertAdjacentHTML(...)`) match by method name
@@ -207,6 +249,116 @@ function memberPropertyName(node) {
   return null;
 }
 
+// Prototype-pollution key helpers (round 114).
+//
+// `Object.create(null)` builds an object with no prototype
+// and no `__proto__` setter, so a dynamic or dangerous-key
+// write lands as an own property — the prototype-pollution
+// key checks exempt such a target. `isNullProtoCreation`
+// recognizes the direct call shape only (an alias of
+// `Object.create` is not modeled); `bindingNullProto`
+// also follows an identifier copy (`const p = o` where
+// `o` is null-prototype); `isNullProtoTarget` answers
+// whether the object of an assignment / the target
+// argument of a merge call is such an object.
+function isNullProtoCreation(node) {
+  if (!node || node.type !== 'CallExpression') return false;
+  if (memberName(node.callee) !== 'Object.create') return false;
+  const arg = (node.arguments || [])[0];
+  return Boolean(arg && arg.type === 'Literal' && arg.value === null);
+}
+
+function bindingNullProto(initNode, analyzer) {
+  if (!initNode) return false;
+  if (isNullProtoCreation(initNode)) return true;
+  if (initNode.type === 'Identifier') {
+    const binding = analyzer.lookup(initNode.name);
+    return Boolean(binding && binding.nullProto);
+  }
+  return false;
+}
+
+function isNullProtoTarget(node, analyzer) {
+  if (!node) return false;
+  if (isNullProtoCreation(node)) return true;
+  if (node.type === 'Identifier') {
+    const binding = analyzer.lookup(node.name);
+    return Boolean(binding && binding.nullProto);
+  }
+  return false;
+}
+
+// Whether the root identifier of a member chain is bound
+// to an object created by `Object.create(null)` (round
+// 114). Used for the chained form of the null-prototype
+// exemption: `o.__proto__.x = ...` throws when `o` is
+// null-prototype, because the intermediate is undefined
+// — so the write cannot pollute anything.
+function isNullProtoChainRoot(node, analyzer) {
+  if (!node || node.type !== 'MemberExpression') return false;
+  const { root } = memberChainSegments(node);
+  if (root === null) return false;
+  const binding = analyzer.lookup(root);
+  return Boolean(binding && binding.nullProto);
+}
+
+// The member-chain segments of an assignment target,
+// root-first: `a.__proto__.polluted` -> { root: 'a',
+// segments: ['__proto__', 'polluted'] }. A segment is a
+// property name (a static identifier, or a string literal
+// used as a computed key) or null (a dynamic key — a
+// variable, a call — whose name cannot be established
+// statically; null breaks adjacency for the pair rule
+// below). The root is the innermost identifier, or null
+// when the chain is not rooted at one (`(f()).__proto__`).
+function memberChainSegments(node) {
+  const segments = [];
+  let current = node;
+  while (current && current.type === 'MemberExpression') {
+    if (!current.computed && current.property.type === 'Identifier') {
+      segments.unshift(current.property.name);
+    } else if (current.computed && current.property.type === 'Literal'
+      && typeof current.property.value === 'string') {
+      segments.unshift(current.property.value);
+    } else {
+      segments.unshift(null);
+    }
+    current = current.object;
+  }
+  return {
+    root: current && current.type === 'Identifier' ? current.name : null,
+    segments,
+  };
+}
+
+// The dangerous prototype path of an assignment target,
+// or null. A write is a prototype write when its target
+// chain (a) is rooted at `Object.prototype` (a direct
+// write onto Object.prototype itself), (b) carries
+// `__proto__` anywhere (the prototype itself, or a
+// property reached through it), or (c) carries the
+// ordered adjacent pair `constructor` -> `prototype`
+// (reaching the prototype of the constructor's
+// instances). A lone leaf `constructor` or `prototype`
+// is NOT dangerous (`Foo.prototype.constructor = Foo`
+// and `fn.prototype = {...}` are ordinary JavaScript),
+// and a dynamic segment between `constructor` and
+// `prototype` breaks the pair. The returned text is the
+// rendered target (identifier names only), never a
+// literal value.
+function dangerousKeyPath(node) {
+  if (!node || node.type !== 'MemberExpression') return null;
+  const { root, segments } = memberChainSegments(node);
+  if (root === 'Object' && segments[0] === 'prototype') return renderMember(node) || 'Object.prototype';
+  if (segments.includes('__proto__')) return renderMember(node) || '__proto__';
+  for (let i = 0; i + 1 < segments.length; i += 1) {
+    if (segments[i] === 'constructor' && segments[i + 1] === 'prototype') {
+      return renderMember(node) || 'constructor.prototype';
+    }
+  }
+  return null;
+}
+
 function capChain(chain) {
   return chain.length > MAX_TAINT_CHAIN ? [...chain.slice(0, MAX_TAINT_CHAIN), '…'] : chain;
 }
@@ -223,6 +375,14 @@ function renderMember(node) {
   if (node.computed && node.property.type === 'Literal' && typeof node.property.value === 'string') return `${object}['${node.property.value}']`;
   if (node.computed && node.property.type === 'Literal' && typeof node.property.value === 'number') return `${object}[${node.property.value}]`;
   if (node.computed && node.property.type === 'Identifier') return `${object}[${node.property.name}]`;
+  // Round 114: a computed key that is itself a member
+  // expression renders too (`o[d.key]`), so an
+  // assignment target with a member key keeps its text
+  // instead of collapsing to the fallback.
+  if (node.computed && node.property.type === 'MemberExpression') {
+    const key = renderMember(node.property);
+    if (key !== null) return `${object}[${key}]`;
+  }
   return null;
 }
 
@@ -244,7 +404,7 @@ function cloneTaint(taint) {
   return { tainted: taint.tainted, chain: [...taint.chain] };
 }
 
-// A binding: { tainted, chain, aliasSink, fnTarget, module } —
+// A binding: { tainted, chain, aliasSink, fnTarget, module, nullProto } —
 // aliasSink is the canonical sink name this identifier is
 // bound to (or null); fnTarget is the call-graph record of
 // the user function this identifier is bound to (or null),
@@ -257,8 +417,13 @@ function cloneTaint(taint) {
 // the identifier IS the sink itself (`const rq =
 // require('request')` — `rq(...)` resolves to bare sink
 // `request`). Round 106; see docs/import-resolution-v1.md.
-function bindingFor(taint, aliasSink = null, fnTarget = null, module = null) {
-  return { tainted: taint.tainted, chain: [...taint.chain], aliasSink, fnTarget, module };
+// nullProto (round 114) is true when the identifier is
+// bound to an object created by `Object.create(null)` —
+// such an object has no `__proto__` setter, so a dynamic
+// or dangerous-key write lands as an own property; the
+// prototype-pollution key checks exempt it.
+function bindingFor(taint, aliasSink = null, fnTarget = null, module = null, nullProto = false) {
+  return { tainted: taint.tainted, chain: [...taint.chain], aliasSink, fnTarget, module, nullProto };
 }
 
 function cloneBinding(binding) {
@@ -268,6 +433,7 @@ function cloneBinding(binding) {
     aliasSink: binding.aliasSink,
     fnTarget: binding.fnTarget,
     module: binding.module || null,
+    nullProto: Boolean(binding.nullProto),
   };
 }
 
@@ -459,6 +625,9 @@ class TaintAnalyzer {
           aliasSink: left.aliasSink === right.aliasSink ? left.aliasSink : null,
           fnTarget: left.fnTarget === right.fnTarget ? left.fnTarget : null,
           module: sameModule(left.module, right.module) ? left.module : null,
+          // A null-prototype object survives the join only
+          // when both paths agree it is one (round 114).
+          nullProto: Boolean(left.nullProto) && Boolean(right.nullProto),
         });
       }
       merged.push(scope);
@@ -479,11 +648,16 @@ class TaintAnalyzer {
     }
     // The sink label lives in whichever sink table the
     // sink came from (`sinks`, `methodSinks`, or
-    // `assignmentSinks`).
+    // `assignmentSinks`). The round-114 key-assignment and
+    // spread kinds are not table sinks — they carry their
+    // own labels in their branches below — so a missing
+    // entry yields null instead of a throw; every
+    // pre-existing kind is always emitted with a table
+    // sink, so those titles are unchanged.
     const sinkEntry = sinks[sink]
       || (this.config.methodSinks && this.config.methodSinks[sink])
       || (this.config.assignmentSinks && this.config.assignmentSinks[sink]);
-    const sinkLabel = sinkEntry.label;
+    const sinkLabel = sinkEntry ? sinkEntry.label : null;
     const where = `line ${line}, column ${column}`;
     let description;
     let title;
@@ -533,6 +707,60 @@ class TaintAnalyzer {
         column,
         target: taintInfo.call,
         property: taintInfo.property,
+        taint: { source: taintInfo.chain[0], chain: [...taintInfo.chain] },
+      }];
+    } else if (kind === 'tainted-key-assign') {
+      // Round 114: a computed member assignment whose
+      // key expression is tainted — the key is
+      // attacker-controlled, so it can name a prototype
+      // property such as `__proto__` and pollute the
+      // prototype. The value is irrelevant: even a
+      // constant value written under an attacker-chosen
+      // key pollutes.
+      title = 'Tainted dynamic property key in supplied JavaScript';
+      description = `A dynamic property assignment (${detectorName}) was found in operator-supplied JavaScript at ${where}, with a tainted property key. Taint flow: ${taintInfo.chain.join(' → ')}. The key is attacker-controlled, so it can name a prototype property such as __proto__ and pollute the prototype. The detector parses the code and tracks the flow; it never executes the code. Whether the assignment is reachable with attacker-controlled input in production is unproven — verify out of band before reporting.`;
+      evidence = [{
+        type: 'ast-assign',
+        sink,
+        kind,
+        line,
+        column,
+        target: taintInfo.call,
+        property: taintInfo.property,
+        taint: { source: taintInfo.chain[0], chain: [...taintInfo.chain] },
+      }];
+    } else if (kind === 'dangerous-key-assign') {
+      // Round 114: a member assignment writing through a
+      // dangerous prototype key — a static pattern, not a
+      // taint flow, so the evidence carries the key path
+      // (identifier names only) and no taint chain.
+      title = 'Dangerous prototype key in supplied JavaScript';
+      description = `A property assignment (${detectorName}) was found in operator-supplied JavaScript at ${where}, writing through the prototype path ${taintInfo.property}. The path names a prototype property (__proto__, or the constructor -> prototype path), so the assignment writes onto a prototype rather than an own property. The detector parses the code; it never executes it. Whether the assignment is reachable in production is unproven — verify out of band before reporting.`;
+      evidence = [{
+        type: 'ast-assign',
+        sink,
+        kind,
+        line,
+        column,
+        target: taintInfo.call,
+        property: taintInfo.property,
+      }];
+    } else if (kind === 'tainted-spread') {
+      // Round 114: a spread of a tainted value inside an
+      // object literal. Spread copies `__proto__` as an
+      // own property (no prototype change), so the
+      // finding is conservative: the merged object
+      // carries attacker-controlled keys into any later
+      // [[Set]]-based merge.
+      title = 'Tainted object spread in supplied JavaScript';
+      description = `An object spread (${detectorName}) was found in operator-supplied JavaScript at ${where}, spreading a tainted value into a new object. Taint flow: ${taintInfo.chain.join(' → ')}. The spread copies attacker-controlled keys into the merged object — including __proto__ as an own property — so the merged object carries attacker-controlled prototype keys into any later merge. The detector parses the code and tracks the flow; it never executes the code. Whether the spread is reachable with attacker-controlled input in production is unproven — verify out of band before reporting.`;
+      evidence = [{
+        type: 'ast-spread',
+        sink,
+        kind,
+        line,
+        column,
+        target: taintInfo.call,
         taint: { source: taintInfo.chain[0], chain: [...taintInfo.chain] },
       }];
     }
@@ -964,6 +1192,10 @@ class TaintAnalyzer {
           aliasSink,
           fnTarget,
           module,
+          // Round 114: `Object.create(null)` (or a copy
+          // of such a binding) marks the name as
+          // null-prototype.
+          bindingNullProto(initNode, this),
         ));
         return;
       }
@@ -1174,10 +1406,15 @@ class TaintAnalyzer {
             aliasSink,
             fnTarget,
             module,
+            // Round 114: a plain assignment re-binds the
+            // name, so a null-prototype creation (or a
+            // copy of one) re-marks it; any other value
+            // clears the mark.
+            node.operator === '=' ? bindingNullProto(node.right, this) : false,
           ));
         } else if (node.left.type === 'MemberExpression') {
           this.evalExpr(node.left.object);
-          if (node.left.computed) this.evalExpr(node.left.property);
+          const keyTaint = node.left.computed ? this.evalExpr(node.left.property) : clean();
           // An assignment to a sink property
           // (`el.innerHTML = x`) is judged on the assigned
           // value: the property is the sink, the receiver
@@ -1193,6 +1430,54 @@ class TaintAnalyzer {
               property: prop,
               chain: rightTaint.chain,
             }, null);
+          }
+          // Round 114: prototype-pollution key checks, for
+          // detectors that opt in with
+          // `flagAssignmentKeys`. A computed key that is
+          // tainted is attacker-controlled, so it can name
+          // `__proto__`; a static dangerous key
+          // (`__proto__`, the `constructor` -> `prototype`
+          // path, or a root of `Object.prototype`) is a
+          // prototype write even with a clean value. A
+          // direct write onto an object created by
+          // `Object.create(null)` is exempt from both: it
+          // has no `__proto__` setter, so the write lands
+          // as an own property. So is a chained write
+          // whose first segment is a prototype-chain
+          // property of such an object
+          // (`o.__proto__.x`, `o.constructor.prototype.x`)
+          // — the intermediate is undefined there, so the
+          // write throws instead of polluting. (That
+          // assumes the dangerous first segment was not
+          // assigned as an own property earlier — the
+          // engine does not track own-property
+          // assignment.) Any assignment operator counts
+          // (`=`, `+=`, …) — all of them write through
+          // the key.
+          if (this.config.flagAssignmentKeys && !isNullProtoTarget(node.left.object, this)) {
+            const { segments } = memberChainSegments(node.left);
+            const firstDangerous = segments[0] === '__proto__'
+              || segments[0] === 'constructor'
+              || segments[0] === 'prototype';
+            const exemptChained = firstDangerous && isNullProtoChainRoot(node.left, this);
+            if (!exemptChained) {
+              if (node.left.computed && keyTaint.tainted) {
+                this.emitFinding('dynamic-property-assignment', node.left, 'tainted-key-assign', {
+                  call: renderMember(node.left) || 'assignment',
+                  property: renderMember(node.left) || '?',
+                  chain: keyTaint.chain,
+                }, null);
+              } else {
+                const dangerous = dangerousKeyPath(node.left);
+                if (dangerous) {
+                  this.emitFinding('dynamic-property-assignment', node.left, 'dangerous-key-assign', {
+                    call: renderMember(node.left) || 'assignment',
+                    property: dangerous,
+                    chain: [],
+                  }, null);
+                }
+              }
+            }
           }
         } else {
           this.assignPattern(node.left, rightTaint);
@@ -1225,8 +1510,22 @@ class TaintAnalyzer {
       case 'ObjectExpression': {
         let result = clean();
         for (const prop of node.properties || []) {
-          if (prop.type === 'SpreadElement') result = joinTaint(result, this.evalExpr(prop.argument));
-          else result = joinTaint(result, this.evalExpr(prop.value));
+          if (prop.type === 'SpreadElement') {
+            const argTaint = this.evalExpr(prop.argument);
+            // Round 114: a spread of a tainted value
+            // inside an object literal (`{...tainted}`) is
+            // a finding for detectors that opt in with
+            // `flagTaintedSpread`. Array spreads and call
+            // spreads are not object merges and are not
+            // judged here.
+            if (this.config.flagTaintedSpread && argTaint.tainted) {
+              this.emitFinding('object-spread', prop, 'tainted-spread', {
+                call: 'object spread',
+                chain: argTaint.chain,
+              }, null);
+            }
+            result = joinTaint(result, argTaint);
+          } else result = joinTaint(result, this.evalExpr(prop.value));
         }
         return result;
       }
@@ -1276,11 +1575,38 @@ class TaintAnalyzer {
   // Judge one direct sink call against its sink entry:
   // the sink's judged argument (the first argument by
   // default; a sink entry may name another index with
-  // `argIndex`). A call with no judged argument, or a
-  // clean one, is not a finding. `callNode` is the call
+  // `argIndex`, or every argument from an index on with
+  // `argIndexFrom` — round 114, for merge sinks whose
+  // sources start at index 1, or 2 for `$.extend`'s deep
+  // form). A call with no judged argument, or a clean
+  // one, is not a finding. `callNode` is the call
   // expression itself (its position is the finding's, and
-  // a `dangerousOptions` gate reads its arguments).
+  // a `dangerousOptions` gate reads its arguments). A
+  // sink entry may carry `nullProtoTargetSafe` (round
+  // 114): when its target argument (index 0) is an
+  // object created by `Object.create(null)`, the call is
+  // not a finding — the merge lands as own properties.
   judgeSinkCall(sink, sinkEntry, callNode, callText, argTaints) {
+    if (sinkEntry && sinkEntry.nullProtoTargetSafe
+      && isNullProtoTarget((callNode.arguments || [])[0], this)) return;
+    if (sinkEntry && typeof sinkEntry.argIndexFrom === 'number') {
+      for (let i = sinkEntry.argIndexFrom; i < argTaints.length; i += 1) {
+        const judged = argTaints[i];
+        if (judged && judged.tainted) {
+          // Round 113: a sink entry may gate on a dangerous
+          // options literal (XXE: libxmljs `noent: true`).
+          // Without the literal, the dangerous configuration
+          // cannot be established, so no finding.
+          if (sinkEntry && sinkEntry.dangerousOptions && !optionsEnable(callNode, sinkEntry.dangerousOptions)) return;
+          this.emitFinding(sink, callNode, 'tainted-arg', {
+            call: callText,
+            chain: judged.chain,
+            argIndex: i,
+          }, null);
+        }
+      }
+      return;
+    }
     const index = sinkEntry && typeof sinkEntry.argIndex === 'number' ? sinkEntry.argIndex : 0;
     const judged = argTaints[index];
     if (judged && judged.tainted) {
@@ -1335,22 +1661,22 @@ class TaintAnalyzer {
       return;
     }
     if (callee.type === 'Identifier') {
-      // A bare-name sink (`unserialize(d)`) is a direct sink
-      // call; anything else is judged by its alias binding.
-      if (sinks[callee.name]) {
-        this.judgeSinkCall(callee.name, sinks[callee.name], node, callee.name, argTaints);
-        return;
-      }
-      if (methodSinks && methodSinks[callee.name]) {
-        this.judgeSinkCall(callee.name, methodSinks[callee.name], node, callee.name, argTaints);
-        return;
-      }
       const binding = this.lookup(callee.name);
       // An alias of a sink — a destructured member
       // (`const { exec } = child_process`), a member alias
       // (`const e = child_process.exec`), a bare-name alias
       // (`const f = fetch`), or a module that IS the sink
       // (`const rq = require('request')`, round 106).
+      // The alias is judged FIRST (round 114): a name
+      // that is both a bare sink and an alias target
+      // (`const { merge } = _` binds `merge` to `_.merge`,
+      // while bare `merge` is the deepmerge sink) must be
+      // judged as the alias — the direct bare-sink path
+      // would demand a tainted argument and misattribute
+      // the finding. An identifier bound to nothing, or
+      // to a non-sink, falls through to the direct checks
+      // below, so unaliased bare sinks behave exactly as
+      // before.
       const aliasSink = binding
         && (binding.aliasSink
           || (binding.module && binding.module.kind === 'bare' ? binding.module.sink : null));
@@ -1363,11 +1689,28 @@ class TaintAnalyzer {
         // Round 113: the same dangerous-options gate as
         // the direct path.
         if (entry && entry.dangerousOptions && !optionsEnable(node, entry.dangerousOptions)) return;
+        // Round 114: the same null-prototype-target
+        // exemption as the direct path — a merge into an
+        // object created by `Object.create(null)` lands
+        // as own properties.
+        if (entry && entry.nullProtoTargetSafe
+          && isNullProtoTarget((node.arguments || [])[0], this)) return;
         const index = entry && typeof entry.argIndex === 'number' ? entry.argIndex : 0;
         const judged = argTaints[index] || argTaints[0];
         this.emitFinding(aliasSink, callee, 'aliased-call', judged, {
           name: callee.name,
         });
+        return;
+      }
+      // A bare-name sink (`unserialize(d)`) is a direct sink
+      // call; a bare method-sink name likewise.
+      if (sinks[callee.name]) {
+        this.judgeSinkCall(callee.name, sinks[callee.name], node, callee.name, argTaints);
+        return;
+      }
+      if (methodSinks && methodSinks[callee.name]) {
+        this.judgeSinkCall(callee.name, methodSinks[callee.name], node, callee.name, argTaints);
+        return;
       }
     }
   }

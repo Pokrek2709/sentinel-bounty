@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|tainted-xxe|tainted-redos|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|solidity-unchecked-call|solidity-cross-function-reentrancy|tainted-xxe|tainted-redos|tainted-prototype-pollution|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1688,7 +1688,16 @@ async function runDetect(args) {
   // replace / split), reporting a sink call only when
   // its first argument (the pattern) is tainted or the
   // call is reached through an alias, never carrying a
-  // literal value; a path loads
+  // literal value; `tainted-prototype-pollution` (round
+  // 114) is the twenty-eighth real detector and the
+  // thirteenth parser-based one — it reuses the same
+  // taint engine on merge sinks (`Object.assign`,
+  // `_.merge` / `_.set` / `_.defaultsDeep`, `$.extend`,
+  // `merge` / `merge.all`), dynamic-key assignments,
+  // dangerous prototype keys, and tainted object
+  // spreads, reporting a sink only when its judged
+  // argument is tainted or the call is reached through
+  // an alias, never carrying a literal value; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a

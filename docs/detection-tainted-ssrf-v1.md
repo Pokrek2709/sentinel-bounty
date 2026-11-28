@@ -165,12 +165,13 @@ non-resolution). Two quirks stay, pinned by tests:
 
 - **Name collision:** a destructured alias whose name
   collides with a bare sink name (`const { request } =
-  http`) is judged as the BARE sink, not as the alias —
-  the direct-sink check runs before the alias check, so
-  `request("https://example.com")` is not flagged even
-  though the alias binding exists. A tainted argument
-  still flags (as a direct `tainted-arg` finding, not
-  as an alias).
+  http`) is judged as the ALIAS (`http.request`), not
+  as the bare sink — the alias check runs before the
+  direct-sink check (round 114 overturned the round-105
+  rule that judged it as the bare sink), so
+  `request("https://example.com")` flags as an
+  `aliased-call` finding even with a clean argument,
+  like every other aliased call.
 - **`get` is a parser keyword:** a bare identifier
   literally named `get` does not parse (round-101
   limitation — `unexpected keyword get`), so a record
@@ -222,9 +223,10 @@ non-resolution). Two quirks stay, pinned by tests:
   A three-part call (`app.http.get(...)`) is still not
   resolved. Destructuring of a fixed root
   (`const { put } = axios`) was already resolved. The
-  bare-sink collision rule stands: a destructured name
-  colliding with a bare sink (`request`) is judged as
-  the bare sink. See `docs/import-resolution-v1.md`.
+  bare-sink collision rule changed in round 114: a
+  destructured name colliding with a bare sink
+  (`request`) is now judged as the alias
+  (`http.request`). See `docs/import-resolution-v1.md`.
 - **Judged argument only.** Only the first argument
   (the URL) is judged — a tainted second argument
   (options, body, config) is not judged in this
