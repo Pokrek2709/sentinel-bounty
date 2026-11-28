@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|solidity-rounding|solidity-tx-origin|solidity-weak-randomness|solidity-oracle-dependence|solidity-signature-replay|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1642,7 +1642,22 @@ async function runDetect(args) {
   // block.number / blockhash / block.difficulty /
   // block.prevrandao / block.coinbase) inside a hash call,
   // a modulo, or a seed initializer (CWE-338), one finding
-  // per entropy-source site; a path loads
+  // per entropy-source site; `solidity-oracle-dependence`
+  // (round 111) is the twenty-second real detector and the
+  // seventh Solidity detector — it runs a separate analysis
+  // over the same subset AST, flagging a single-source price
+  // (`getReserves`, `getAmountsOut` / `getAmountsIn`,
+  // `latestAnswer` / `latestRoundData`) used in arithmetic
+  // with no TWAP, median, or staleness check in the same
+  // function (CWE-829), one finding per price-call site;
+  // `solidity-signature-replay` (round 111) is the
+  // twenty-third real detector and the eighth Solidity
+  // detector — it runs a separate analysis over the same
+  // subset AST, flagging a compared `ecrecover`
+  // authorization whose signed message carries no nonce,
+  // no deadline, and no EIP-712 domain separator (CWE-294),
+  // one finding per ecrecover site, in function and
+  // modifier bodies; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a

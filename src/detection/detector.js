@@ -98,6 +98,8 @@ const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-i
 const solidityRoundingDetector = require('./solidity-rounding');
 const solidityTxOriginDetector = require('./solidity-tx-origin');
 const solidityWeakRandomnessDetector = require('./solidity-weak-randomness');
+const solidityOracleDependenceDetector = require('./solidity-oracle-dependence');
+const soliditySignatureReplayDetector = require('./solidity-signature-replay');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -302,6 +304,23 @@ function runDetector(detector, input, defaults) {
 //     block.prevrandao / block.coinbase) inside a hash
 //     call, a modulo, or a seed initializer (CWE-338),
 //     source 'solidity-weak-randomness'.
+//   - 'solidity-oracle-dependence' -> the twenty-second
+//     real detector (round 111), the seventh SOLIDITY
+//     detector — it runs a separate analysis over the
+//     Solidity subset AST, flagging a single-source price
+//     (`getReserves`, `getAmountsOut` / `getAmountsIn`,
+//     `latestAnswer` / `latestRoundData`) used in
+//     arithmetic with no TWAP, median, or staleness
+//     check in the same function (CWE-829), source
+//     'solidity-oracle-dependence'.
+//   - 'solidity-signature-replay' -> the twenty-third
+//     real detector (round 111), the eighth SOLIDITY
+//     detector — it runs a separate analysis over the
+//     Solidity subset AST, flagging a compared
+//     `ecrecover` authorization whose signed message
+//     carries no nonce, no deadline, and no EIP-712
+//     domain separator (CWE-294), source
+//     'solidity-signature-replay'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -329,6 +348,8 @@ function getDetector(spec, skillRoot) {
   if (spec === 'solidity-rounding') return { detector: solidityRoundingDetector, source: 'solidity-rounding' };
   if (spec === 'solidity-tx-origin') return { detector: solidityTxOriginDetector, source: 'solidity-tx-origin' };
   if (spec === 'solidity-weak-randomness') return { detector: solidityWeakRandomnessDetector, source: 'solidity-weak-randomness' };
+  if (spec === 'solidity-oracle-dependence') return { detector: solidityOracleDependenceDetector, source: 'solidity-oracle-dependence' };
+  if (spec === 'solidity-signature-replay') return { detector: soliditySignatureReplayDetector, source: 'solidity-signature-replay' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');

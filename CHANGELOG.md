@@ -8,6 +8,46 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 111: Solidity oracle-dependence and signature-replay detectors (2026-11-29)
+
+- Two Solidity detectors on the same subset parser (round
+  110's §14 "next step"), each with its own CWE — the
+  Solidity detectors keep diverging in CWE, because the
+  flaws are different kinds:
+  - `solidity-oracle-dependence` (twenty-second real
+    detector, seventh Solidity detector): a single-source
+    price (`getReserves`, `getAmountsOut` /
+    `getAmountsIn`, `latestAnswer` / `latestRoundData`)
+    used in arithmetic with no TWAP, median, or staleness
+    check in the same function (CWE-829 Inclusion of
+    Functionality from Untrusted Control Sphere, severity
+    high — not CWE-20, which is too generic to say
+    anything about trusting the source), one finding per
+    price-call site. A TWAP / median call or a staleness
+    check on `updatedAt` in the same function is clean; a
+    price used only for display, only returned, or only
+    in a comparison is clean.
+  - `solidity-signature-replay` (twenty-third real
+    detector, eighth Solidity detector): a compared
+    `ecrecover` authorization whose signed message
+    carries no nonce, no deadline, and no EIP-712 domain
+    separator (CWE-294 Authentication Bypass by
+    Capture-replay, severity high — not CWE-347, because
+    the signature IS verified correctly and what is
+    missing is the message's uniqueness), one finding per
+    ecrecover site, in function and modifier bodies. ANY
+    ONE of a nonce, a deadline, or an EIP-712 binding in
+    the same body is clean; an uncompared ecrecover is
+    out of scope.
+- Shared this round, not duplicated: the name-based
+  assignment tracking both detectors use — and the parser
+  fact it exposed (a plain declaration's initial value
+  lives on the declarator, a tuple declaration's at
+  statement level; both shapes are read now). The first
+  test run caught the plain-declaration shape being
+  missed; the fix is pinned by the two "through a
+  variable" tests.
+
 ### Round 110: Solidity rounding, tx.origin and weak-randomness detectors (2026-11-29)
 
 - Three Solidity detectors on the same subset parser (round

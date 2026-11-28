@@ -764,3 +764,77 @@ field.
   subset grammar. The next step is more Solidity classes
   on the same parser (round 111: oracle dependence,
   signature replay).
+
+## 15. Round-111 addendum (2026-11-29) — two Solidity classes: oracle dependence, signature replay
+
+Two more Solidity classes land on the same subset parser
+(round 110's §14 "next step"), each with its own CWE —
+the Solidity detectors keep diverging in CWE, because
+the flaws are different kinds:
+
+- `solidity-oracle-dependence` (twenty-second real
+  detector, seventh Solidity detector): a single-source
+  price (`getReserves`, `getAmountsOut` /
+  `getAmountsIn`, `latestAnswer` / `latestRoundData`)
+  used in arithmetic with no TWAP, median, or staleness
+  check in the same function (CWE-829 Inclusion of
+  Functionality from Untrusted Control Sphere, severity
+  high — not CWE-20, which is too generic to say
+  anything about trusting the source), one finding per
+  price-call site. The price result is tracked to
+  arithmetic name-based (direct, or through a variable
+  it was assigned to — plain and tuple declarations,
+  plain assignments), not by data flow. A TWAP /
+  median call or a staleness check on `updatedAt` in
+  the same function is clean; a price used only for
+  display, only returned, or only in a comparison is
+  clean. See
+  `docs/detection-solidity-oracle-dependence-v1.md`.
+- `solidity-signature-replay` (twenty-third real
+  detector, eighth Solidity detector): a compared
+  `ecrecover` authorization whose signed message
+  carries no nonce, no deadline, and no EIP-712 domain
+  separator (CWE-294 Authentication Bypass by
+  Capture-replay, severity high — not CWE-347, because
+  the signature IS verified correctly and what is
+  missing is the message's uniqueness), one finding per
+  ecrecover site, in function and modifier bodies.
+  "Compared" means the call sits inside a `==` / `!=`
+  comparison directly, or a variable it was assigned to
+  appears in one; an uncompared ecrecover authorizes
+  nothing and is out of scope. ANY ONE of a nonce, a
+  deadline, or an EIP-712 binding in the same body is
+  clean — the safe pattern is all three together, but a
+  consumed nonce alone already prevents replay. See
+  `docs/detection-solidity-signature-replay-v1.md`.
+
+Shared this round, not duplicated: the name-based
+assignment tracking both detectors use (a price call's
+result, or an ecrecover result, bound to a variable
+name and followed into arithmetic / a comparison) —
+and the parser fact it exposed: a plain declaration's
+initial value lives on the declarator
+(`declarations[i].initialValue`, statement-level
+`initialValue` null), while a tuple declaration's
+lives at statement level. Both detectors read both
+shapes; the first test run caught the plain-declaration
+shape being missed, and the fix is pinned by the two
+"compared through a variable" tests.
+
+- **Deliberate exclusions, pinned by tests:**
+  oracle dependence — comparison-only use (the price
+  gates a threshold, it is not computed with), a bare
+  `price()` / `spotPrice()` call (too ambiguous to name
+  as a source), cross-function protection, modifier
+  bodies; signature replay — an uncompared ecrecover
+  (CWE-347 territory), library wrappers
+  (`ECDSA.recover`, `SignatureChecker`), signature
+  malleability (CWE-347 territory), a nonce consumed
+  in another function.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset — and, by the
+  same logic, `@solidity-parser/parser` (evaluated,
+  not adopted) if the Solidity detector set outgrows the
+  subset grammar. The next step is more Solidity classes
+  on the same parser (round 112: unchecked external
+  calls, cross-function reentrancy).
