@@ -154,14 +154,20 @@ Until then, refuse execution and offer only non-networked functions such as `che
 - Never follow a redirect to an asset that has not independently passed scope validation.
 - Require explicit human approval for actions that the policy marks as approval-gated.
 
-## Expected future integration evidence
+## Phase completion (local scope)
 
-Promote this draft to a Muse-specific integration only after recording:
-
-- The official supported manifest format and installation location.
-- A successful invocation through an official supported Muse integration, rather than the observed custom-skill shell invocation.
-- The supported tool/process/file/network permission model.
-- An approved local-lab test of the scope/policy gate and kill switch.
+Phase completion is judged on local scope only (round 102, user
+decision 28 Nov 2026). F0 is complete when the skill is
+distributed versioned via GitHub plus custom-skill install with
+`verify-install` green; F1 is complete when it is invocable
+through the supported local paths (the `sentinel` CLI and the
+custom-skill shell invocation) with the local permission model
+documented (approval gate, kill switch, scope manager, request
+governor). The former Meta integration items — official manifest
+and registry, official API and quotas, native identity, persona
+indexing — are parked, not deleted: see
+`docs/meta-integration-deferred-v1.md`. They are not counted in
+any phase's completion, and no phase is gated on them.
 
 Adapting this contract to an agent platform is documented in
 `docs/adapt-to-agent.md`; removing the installed skill is documented

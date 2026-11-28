@@ -155,7 +155,11 @@ section is kept so the history reads correctly:
   for that target only (see
   [scope-list-default-path-v1](scope-list-default-path-v1.md)).
 
-What remains for Phase 3 as a whole is the Meta-side ceiling
-(official manifest, quotas, native identity) — not reachable by
-rounds — and any future scope-rule additions the operator wants
-(e.g. per-target method budgets beyond the existing rate limit).
+What remains for Phase 3 as a whole is any future scope-rule
+additions the operator wants (e.g. per-target method budgets
+beyond the existing rate limit). The former Meta-side ceiling
+(official manifest, quotas, native identity) is parked with the
+Meta integration items (see
+`docs/meta-integration-deferred-v1.md`) and is not counted in
+Phase 3 completion, which is judged on local scope only
+(round 102).

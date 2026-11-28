@@ -51,6 +51,16 @@ what was fixed, and what is still deliberately left out.
   without a definition fails loudly (`not_verified`) instead of drifting
   silently.
 
+## Round 102 note
+
+The two Meta rows in the audit table above (Muse Secure VM
+attestation, Muse skill invocation) are parked with the Meta
+integration items (round 102, user decision 28 Nov 2026; see
+`docs/meta-integration-deferred-v1.md`). They remain in the
+table as the record of what the checker reports for those
+capabilities; they are no longer completion items, and
+`check-env`'s local-scope job is unchanged.
+
 ## Round 97 note
 
 Five untested branches found by inspection and pinned by tests in

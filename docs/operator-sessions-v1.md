@@ -128,9 +128,10 @@ lazily.
 ## What sessions do not do
 
 - No Meta service is called, and no official Muse API, quota, or
-  native identity is involved — those are the F1 items deferred to
-  the final stage. A session is local liveness, not platform
-  identity.
+  native identity is involved — those are the F1 items parked with
+  the Meta integration items (see
+  `docs/meta-integration-deferred-v1.md`). A session is local
+  liveness, not platform identity.
 - No auto-renewal: a session that lapses must be started again.
 - No cross-machine sessions: the store is one state directory on
   one machine.

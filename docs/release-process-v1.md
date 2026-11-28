@@ -17,7 +17,7 @@ says.
 4. Bump `package.json` `version` to the release version, so the
    tag line and the package agree.
 5. Run the full suite (`npm test`, 0 fail), the win32 simulation,
-   and `verify-install` (10/10 since round 98). A release never
+   and `verify-install` (11/11 since round 99). A release never
    ships on a red suite.
 6. Commit the release (CHANGELOG + version bump + any last
    packaging changes) with a `feat(round-N)` / `chore(release)`
@@ -41,11 +41,13 @@ line:
   builds a feature.
 - **PATCH** (`0.2.0` → `0.2.1`) when the release is fixes only,
   with no new capability.
-- **MAJOR stays 0** until the two things that make this a 1.0
-  are done: the Meta integration items (official manifest and
-  registry, API and quotas, native identity) and a first real
-  fetch against a real registered target. 1.0.0 before either
-  would claim a stability the project does not have.
+- **MAJOR stays 0** until a first real fetch against a real
+  registered target is done. 1.0.0 before that would claim a
+  stability the project does not have: the fetch path is built
+  and drilled (rounds 93–94) but unproven against a real target.
+  The former Meta integration items are parked (round 102, see
+  `docs/meta-integration-deferred-v1.md`) and are not part of
+  the 1.0 gate; F0/F1 completion is judged on local scope only.
 
 Three other `1.0.0` numbers in the repo are NOT the release
 version and must not be confused with it:
@@ -109,11 +111,12 @@ only — and has no entry):
   local operator sessions (`sentinel session`, token /
   heartbeat / lease / rotation, fetch binding).
 
-What is still NOT in any release: the official Meta skill
-release (needs Meta's manifest), and a first real fetch (needs
-the user's word, a registered target, and a verified
-authorization reference). Both are recorded as the remaining
-work, not as shipped.
+What is still NOT in any release: a first real fetch (needs the
+user's word, a registered target, and a verified authorization
+reference). It is recorded as the remaining work, not as shipped.
+The former Meta integration items are parked (round 102, see
+`docs/meta-integration-deferred-v1.md`) and are not part of any
+release gate.
 
 ## Release notes — v0.1.0 (2026-11-28)
 

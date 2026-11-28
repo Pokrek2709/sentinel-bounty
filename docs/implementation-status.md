@@ -22,6 +22,20 @@ Since it, two rows changed:
   fix was confirmed green on Windows CI (run 46052614644 for
   `fd4ed99`, conclusion success).
 
+## Status update — 2026-11-28 (round 102)
+
+The table below is the 2026-11-21 snapshot, preserved as written.
+Since the round-97 addendum, one thing changed:
+
+- **The Meta integration items are parked.** Round 102 (user
+  decision 28 Nov 2026) removes them from the skill's active
+  scope: the Phase 0/1/3 rows' Meta items (official manifest
+  and registry, official API and quotas, native identity) no
+  longer count toward completion, which is judged on local scope
+  only. The items are preserved verbatim in
+  [meta-integration-deferred-v1](meta-integration-deferred-v1.md).
+  The snapshot table is preserved as written.
+
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | 0: Muse Secure VM feasibility | Partial | A direct custom-skill trial produced [capability evidence](muse-capability-evidence-2026-11-18.md). Official manifest integration, quotas, and Sentinel cancellation remain open. |

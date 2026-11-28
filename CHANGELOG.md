@@ -8,6 +8,50 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 102: park Meta integration items — local-only F0/F1 completion criteria (2026-11-28)
+
+- Meta integration items parked, not deleted (user decision 28 Nov
+  2026): the "Expected future integration evidence" section of
+  `SKILL.md` (official manifest format + installation location,
+  official-integration invocation, supported permission model,
+  approved local-lab test) moves verbatim to the new
+  `docs/meta-integration-deferred-v1.md`, with persona indexing
+  as a fifth parked item and a restoration rule. `SKILL.md` (both
+  copies, byte-identical) now carries a "Phase completion (local
+  scope)" section instead.
+- F0/F1 completion criteria rewritten to local scope only: F0 is
+  complete when the skill is distributed versioned via GitHub
+  plus custom-skill install with `verify-install` green; F1 is
+  complete when it is invocable through the supported local paths
+  (the `sentinel` CLI and the custom-skill shell invocation) with
+  the local permission model documented. The same criteria are
+  applied to the knock-on phases (F2: check-env reports local
+  capabilities accurately; F3: scope/policy cover local
+  registration and enforcement; F8: release process and CI guards
+  in place and green).
+- Phase movement (criteria change, no behavior change): F0 ~60% →
+  100%, F1 ~80% → 100%, F2 ~99% → 100%, F3 ~99% → 100%,
+  F8 ~99% → 100% — each phase's only remaining items were the
+  parked Meta items. F4 (~90%, first real fetch), F5 (~99%,
+  second language parser), F6 (~95%), F7 (~99%, HackerOne/
+  Bugcrowd templates unverified against the live platforms'
+  forms) are unchanged. The 1.0 release gate now rests on a
+  first real fetch only (`docs/release-process-v1.md`).
+- Reconciliation of every Meta reference in the repo (see the
+  inventory in `docs/meta-integration-deferred-v1.md`): six docs
+  rewritten (SKILL.md, release-process, operator-sessions,
+  scope-explain, scope-list-default-path, controlled-wrapper);
+  dated addenda over preserved records (implementation-status,
+  check-env-audit); the docs index lists the new doc. Historical
+  records (CHANGELOG, capability evidence, PRD/SAD) and factual
+  status statements (README, adapt-to-agent) are retained as
+  written and listed in the inventory with reasons.
+- Incidental fix found while editing: `docs/release-process-v1.md`
+  still said `verify-install` is "10/10 since round 98" — the
+  eleventh check landed in round 99; now "11/11 since round 99".
+  No detector, policy, kill-switch, invocation-path, or release
+  behavior changed in this round.
+
 ### Round 101: inter-procedural taint + sanitizer modeling on a shared engine (2026-11-28)
 
 - Shared taint engine extracted (`src/detection/taint-engine.js`):
