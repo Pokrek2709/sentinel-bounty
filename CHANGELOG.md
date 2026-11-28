@@ -8,6 +8,67 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 108: Solidity subset parser + reentrancy detector (2026-11-29)
+
+- The second language lands: a hand-written stdlib-only
+  Solidity subset parser (`src/detection/sol-parser.js`,
+  tokenizer + recursive-descent, modeled on the
+  JavaScript subset parser) covering contracts (with
+  inheritance lists), state variables (including
+  `mapping`), functions (constructor / receive /
+  fallback), modifiers, and the statements and
+  expressions reentrancy detection needs (including
+  call options `{value: ...}`, tuple declarations, and
+  `msg.sender` / `msg.value` / `block.timestamp` /
+  `tx.origin`). Unsupported syntax (inline assembly,
+  try/catch, struct-constructor arguments) fails with a
+  named `SolParseError`, never silently skipped.
+  `@solidity-parser/parser` was evaluated (MIT,
+  community-standard grammar) and NOT adopted — no
+  vendoring story exists yet; it remains the documented
+  upgrade path if the detector set outgrows the subset
+  grammar.
+- First Solidity detector: `solidity-reentrancy`
+  (CWE-841, SWC-107, severity high — the
+  behavioral-workflow CWE, not the broader
+  race-condition CWE-362), a separate segment-based
+  analysis over the Solidity AST, NOT a reuse of the
+  JavaScript taint engine (which is JavaScript-specific).
+  It flags a function that performs an external call
+  (`.call` / `.transfer` / `.send` on any receiver)
+  and then writes state, one finding per call site,
+  branch-sensitive (branch events never leak out of the
+  branch; return / revert / break / continue end a
+  segment), with local/parameter shadowing and same-file
+  inherited state variables. `nonReentrant` guards,
+  constructors, and write-before-call
+  (checks-effects-interactions) are clean. Its envelope
+  is its own function following `createTaintDetector`'s
+  pattern (that factory's `scanRecord` parses
+  JavaScript); shared code is limited to the
+  language-neutral pieces (`findingIdFor`, the caps,
+  `normalizeRawFinding`). A record whose `language` is
+  present but not Solidity is refused; an unparseable
+  record is counted in `skipped`.
+- Pinned exclusions (tested): `delegatecall` /
+  `staticcall` are not sinks this round; cross-function
+  reentrancy, storage-reference aliasing, cross-iteration
+  writes, and `this.` calls are not modeled; base
+  contracts from another file are not resolved.
+- Tests: 1462 total (1457 pass, 0 fail, 5 skip) —
+  41 new tests (`tests/sol-parser.test.js`,
+  `tests/solidity-reentrancy.test.js`); verify-install
+  11/11.
+- Docs: two new docs
+  (`docs/solidity-parser-v1.md`,
+  `docs/detection-solidity-reentrancy-v1.md`); §12
+  addendum in `docs/parser-taint-scope-v1.md`;
+  `SKILL.md` (both copies, byte-identical) and
+  `docs/README.md` updated. Phase movement: F5 ~99% →
+  100% — the last F5 gap (the second-language parser)
+  is closed; the remaining Solidity limits are
+  per-detector scope, not a phase gap.
+
 ### Round 107: tainted-LDAP, XPath and open-redirect detectors on the shared taint engine (2026-11-29)
 
 - Three parser-based detectors on the shared taint engine

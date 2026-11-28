@@ -92,6 +92,7 @@ const { taintedSsrfDetector } = require('./tainted-ssrf');
 const { taintedLdapDetector } = require('./tainted-ldap');
 const { taintedXpathDetector } = require('./tainted-xpath');
 const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
+const solidityReentrancyDetector = require('./solidity-reentrancy');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -255,6 +256,12 @@ function runDetector(detector, input, defaults) {
 //   - 'tainted-open-redirect' -> the fifteenth real detector
 //     (round 107), the tenth parser-based one, source
 //     'tainted-open-redirect'.
+//   - 'solidity-reentrancy' -> the sixteenth real detector
+//     (round 108), the first SOLIDITY detector — it does NOT
+//     reuse the JavaScript taint engine (which is
+//     JavaScript-specific); it runs a separate analysis
+//     over the Solidity subset AST (sol-parser.js),
+//     source 'solidity-reentrancy'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -276,6 +283,7 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-ldap') return { detector: taintedLdapDetector, source: 'tainted-ldap' };
   if (spec === 'tainted-xpath') return { detector: taintedXpathDetector, source: 'tainted-xpath' };
   if (spec === 'tainted-open-redirect') return { detector: taintedOpenRedirectDetector, source: 'tainted-open-redirect' };
+  if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');

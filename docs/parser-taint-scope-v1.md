@@ -576,3 +576,46 @@ over all ten parser-based detectors.
   grammar outgrows the subset, or a second language
   parser. The next step is the second-language parser
   itself: Solidity (round 108, reentrancy).
+
+## 12. Round-108 addendum (2026-11-29) — the second language: Solidity
+
+The second-language parser §5 left open is now built:
+a hand-written stdlib-only Solidity subset parser
+(`src/detection/sol-parser.js`, see
+`docs/solidity-parser-v1.md`) — tokenizer +
+recursive-descent, the same shape as the JavaScript
+subset parser, covering contracts, state variables,
+functions (constructor / receive / fallback), modifiers,
+and the statements and expressions reentrancy detection
+needs (including call options `{value: ...}`, tuple
+declarations, and `msg.sender` / `msg.value` /
+`block.timestamp` / `tx.origin`). Unsupported syntax
+(assembly, try/catch, struct-constructor arguments)
+fails with a named `SolParseError`, never silently
+skipped.
+
+The first Solidity detector, `solidity-reentrancy`
+(CWE-841, SWC-107), runs a separate segment-based
+analysis over that AST — it does NOT reuse the
+JavaScript taint engine, which is JavaScript-specific.
+Its envelope is its own function following
+`createTaintDetector`'s pattern, because that factory's
+`scanRecord` parses JavaScript and runs `TaintAnalyzer`.
+Shared code is limited to the language-neutral pieces:
+`findingIdFor`, the content / finding caps, and
+`normalizeRawFinding`. See
+`docs/detection-solidity-reentrancy-v1.md`.
+
+- **Deliberate exclusions, pinned by tests:**
+  `delegatecall` / `staticcall` are not sinks this
+  round; cross-function reentrancy, storage-reference
+  aliasing, cross-iteration writes, and `this.` calls
+  are not modeled; base contracts from another file are
+  not resolved.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset — and, by the
+  same logic, `@solidity-parser/parser` (evaluated,
+  not adopted this round) if the Solidity detector set
+  outgrows the subset grammar. The next step is more
+  Solidity classes on the same parser (round 109:
+  access control).
