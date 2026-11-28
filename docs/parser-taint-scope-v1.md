@@ -281,3 +281,35 @@ section is the dated update.
   parser; import resolution. The second AST detector
   class (tainted command execution) shipped in round
   100 on the same engine.
+
+## 7. Round-103 addendum (2026-11-28) — the third AST class on the shared engine
+
+The third AST detector class shipped in round 103, and
+it is the first one built on the shared engine without
+touching it: `tainted-sql` is a thin wrapper over
+`createTaintDetector(config)` with only its sink table
+and finding metadata (CWE-89, severity high). No engine
+change was needed — the round-101 engine already carried
+every behavior the new class relies on (inter-procedural
+flow, return-value taint, sanitizer modeling, alias
+resolution). The inter-procedural test battery now
+parameterizes over all three parser-based detectors.
+
+- **Sinks:** ten two-part member calls — `db`, `pool`,
+  `connection`, `client`, `conn`, each with `query` and
+  `execute`. The receiver list is the tested surface,
+  not a pattern: a bare `query(...)` is deliberately
+  not a sink (the name is too generic), a three-part
+  call (`app.db.query(...)`) is not resolved, and
+  `prepare` is not a sink in this round.
+- **Parameterized queries are safe by construction:**
+  only the first argument (the SQL string) is judged,
+  so a constant SQL string with placeholders plus a
+  parameter array is never flagged — even when the
+  bound parameters are tainted. No special case is
+  needed; the rule is the same first-argument rule as
+  rounds 95/100.
+- **Still open from §5:** Acorn (vendored) if the
+  grammar outgrows the subset, or a second language
+  parser; import resolution (round 106). The next AST
+  class is tainted XSS (round 104).

@@ -1,6 +1,6 @@
 // Tests for round 101 (Phase 5): inter-procedural taint
 // (call graph) + sanitizer modeling, on the shared taint
-// engine both parser-based detectors run on.
+// engine all three parser-based detectors run on.
 //
 // Positive cases prove taint flows from a call site into a
 // callee (the chain names the cross-function flow), through
@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const engine = require('../src/detection/taint-engine');
 const deserialize = require('../src/detection/tainted-deserialize');
 const commandExec = require('../src/detection/tainted-command-execution');
+const sql = require('../src/detection/tainted-sql');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -38,6 +39,14 @@ const DETECTORS = [
     call: (arg) => `child_process.exec(${arg})`,
     vuln: 'os command injection',
     cwe: 'CWE-78',
+  },
+  {
+    name: 'tainted-sql',
+    detect: sql,
+    sink: 'db.query',
+    call: (arg) => `db.query(${arg})`,
+    vuln: 'sql injection',
+    cwe: 'CWE-89',
   },
 ];
 
@@ -243,14 +252,16 @@ function defineTests(det) {
 
 for (const det of DETECTORS) defineTests(det);
 
-test('engine: both detectors share one taint engine module', () => {
+test('engine: all three detectors share one taint engine module', () => {
   assert.deepEqual([...engine.SANITIZERS].sort(), [
     'Boolean', 'Number', 'Number.parseFloat', 'Number.parseInt', 'parseFloat', 'parseInt',
   ]);
   assert.equal(deserialize.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(commandExec.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(sql.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(deserialize.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(commandExec.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(sql.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(typeof engine.createTaintDetector, 'function');
   assert.equal(typeof engine.TaintAnalyzer, 'function');
   assert.equal(engine.MAX_CALL_DEPTH, 8);

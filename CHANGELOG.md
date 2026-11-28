@@ -8,6 +8,41 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 103: third AST detector — tainted-sql (2026-11-28)
+
+- Third parser-based detector (`tainted-sql`, CWE-89,
+  severity high): tracks taint from function parameters and
+  `process.argv` to SQL query sinks on the shared taint
+  engine (`src/detection/taint-engine.js`) — the first
+  detector built on the engine without touching it: the new
+  module is a thin wrapper over `createTaintDetector(config)`
+  with only its sink table and finding metadata. No engine
+  change was needed.
+- Sinks (JavaScript, the common driver call-site shapes):
+  `db`, `pool`, `connection`, `client`, `conn`, each with
+  `query` and `execute` (10 sinks). A sink call is reported
+  only when its first argument is tainted (`tainted-arg`,
+  chain proves the flow, inter-procedural since round 101)
+  or when it is reached through an alias (`aliased-call`:
+  `const q = db.query`, `const { query } = db`). A
+  parameterized query — constant SQL with placeholders plus
+  a parameter array — is not flagged: only the first
+  argument is judged, so the safe pattern falls out of the
+  same rule. Deliberate exclusions, pinned by tests: a bare
+  `query(...)` is not a sink (too generic), a three-part
+  call (`app.db.query(...)`) is not resolved, `prepare` is
+  not a sink in this round, and a tainted second argument
+  (the parameter vector) is not judged.
+- Tests: 19 new tests in `tests/tainted-sql.test.js` (all
+  ten sink spellings, taint flows, aliases, parameterized
+  queries, sanitizer, envelope, resolution limits); the
+  round-101 inter-procedural battery now parameterizes over
+  all three parser-based detectors (tainted-sql joins
+  tainted-deserialize and tainted-command-execution), so
+  the shared-engine coverage grows with the detector set.
+  Full suite green; no behavior change to the two existing
+  AST detectors.
+
 ### Round 102: park Meta integration items — local-only F0/F1 completion criteria (2026-11-28)
 
 - Meta integration items parked, not deleted (user decision 28 Nov
