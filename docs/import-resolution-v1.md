@@ -62,8 +62,11 @@ the exact allow-lists).
 | tainted-ssrf | `http`, `node:http` → `http`; `https`, `node:https` → `https`; `axios` → `axios` | `request` → `request`; `node-fetch` → `fetch` |
 | tainted-ssti | `ejs` → `ejs`; `pug` → `pug`; `nunjucks` → `nunjucks`; `handlebars` → `handlebars` | — |
 | tainted-deserialize | `js-yaml` → `yaml` | — |
+| tainted-ldap (round 107) | `ldapjs`, `ldapts` → `client` | — |
+| tainted-xpath (round 107) | `xpath` → `xpath` | — |
 | tainted-sql | — (none) | — (none) |
 | tainted-xss | — (none) | — (none) |
+| tainted-open-redirect (round 107) | — (none) | — (none) |
 
 Why SQL and XSS have no table: SQL sink roots are
 receiver variable names (`db`, `pool`, `connection`,
@@ -72,7 +75,9 @@ matches by name whatever `db` came from, and no driver
 module exposes `.query` on the module object itself
 (`require('pg').query` is not a sink). XSS sinks are DOM
 globals (`document.write`, `innerHTML`), not module
-members.
+members. Open redirect (round 107) has no table for the
+same reason as SQL: `res` / `response` / `reply` / `ctx`
+are request-handler parameters, not modules.
 
 Why only `js-yaml` maps to `yaml`: its API really is
 `yaml.load` / `loadAll`. The `yaml` package is NOT

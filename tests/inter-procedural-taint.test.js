@@ -1,6 +1,6 @@
 // Tests for round 101 (Phase 5): inter-procedural taint
 // (call graph) + sanitizer modeling, on the shared taint
-// engine all seven parser-based detectors run on.
+// engine all ten parser-based detectors run on.
 //
 // Positive cases prove taint flows from a call site into a
 // callee (the chain names the cross-function flow), through
@@ -24,6 +24,9 @@ const xss = require('../src/detection/tainted-xss');
 const ssti = require('../src/detection/tainted-ssti');
 const pathTraversal = require('../src/detection/tainted-path-traversal');
 const ssrf = require('../src/detection/tainted-ssrf');
+const ldap = require('../src/detection/tainted-ldap');
+const xpath = require('../src/detection/tainted-xpath');
+const openRedirect = require('../src/detection/tainted-open-redirect');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -83,6 +86,30 @@ const DETECTORS = [
     call: (arg) => `fetch(${arg})`,
     vuln: 'server-side request forgery',
     cwe: 'CWE-918',
+  },
+  {
+    name: 'tainted-ldap',
+    detect: ldap,
+    sink: 'client.search',
+    call: (arg) => `client.search('dc=example,dc=com', ${arg})`,
+    vuln: 'ldap injection',
+    cwe: 'CWE-90',
+  },
+  {
+    name: 'tainted-xpath',
+    detect: xpath,
+    sink: 'xpath.select',
+    call: (arg) => `xpath.select(${arg}, doc)`,
+    vuln: 'xpath injection',
+    cwe: 'CWE-643',
+  },
+  {
+    name: 'tainted-open-redirect',
+    detect: openRedirect,
+    sink: 'res.redirect',
+    call: (arg) => `res.redirect(${arg})`,
+    vuln: 'open redirect',
+    cwe: 'CWE-601',
   },
 ];
 
@@ -288,7 +315,7 @@ function defineTests(det) {
 
 for (const det of DETECTORS) defineTests(det);
 
-test('engine: all seven detectors share one taint engine module', () => {
+test('engine: all ten detectors share one taint engine module', () => {
   assert.deepEqual([...engine.SANITIZERS].sort(), [
     'Boolean', 'Number', 'Number.parseFloat', 'Number.parseInt', 'parseFloat', 'parseInt',
   ]);
@@ -299,6 +326,9 @@ test('engine: all seven detectors share one taint engine module', () => {
   assert.equal(ssti.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(pathTraversal.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(ssrf.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(ldap.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(xpath.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
+  assert.equal(openRedirect.MAX_CONTENT_CHARS, engine.MAX_CONTENT_CHARS);
   assert.equal(deserialize.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(commandExec.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(sql.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
@@ -306,6 +336,9 @@ test('engine: all seven detectors share one taint engine module', () => {
   assert.equal(ssti.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(pathTraversal.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(ssrf.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(ldap.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(xpath.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
+  assert.equal(openRedirect.MAX_FINDINGS_PER_RECORD, engine.MAX_FINDINGS_PER_RECORD);
   assert.equal(typeof engine.createTaintDetector, 'function');
   assert.equal(typeof engine.TaintAnalyzer, 'function');
   assert.equal(engine.MAX_CALL_DEPTH, 8);

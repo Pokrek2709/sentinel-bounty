@@ -521,3 +521,58 @@ parser-based detector at once:
   grammar outgrows the subset, or a second language
   parser. The next AST class is tainted LDAP + XPath +
   open redirect (round 107).
+
+## 11. Round-107 addendum (2026-11-29) — three AST classes on the shared engine
+
+Three AST detector classes shipped in round 107, all
+thin wrappers over `createTaintDetector(config)` with
+their sink tables and finding metadata, no engine change
+— round 104's config tables (`sinks`, `methodSinks`,
+`assignmentSinks`, per-sink `argIndex`) already cover
+everything these three need:
+
+- **LDAP** (`tainted-ldap`, CWE-90, severity high):
+  `client.search` — the SECOND argument (the filter /
+  options) judged, because ldapjs takes
+  `(base, options, callback)` and the filter lives in
+  `options` (a string filter, or an object whose
+  properties' taint joins). The first argument (the
+  search base DN) is NOT judged — a tainted base is DN
+  injection, a different shape from the classic filter
+  injection. Import tables: `ldapjs` / `ldapts` →
+  root `client`.
+- **XPath** (`tainted-xpath`, CWE-643, severity high):
+  `xpath.select` / `xpath.select1` / `xpath.evaluate`,
+  `document.evaluate` — first argument (the
+  expression) judged. A bare `select(...)` or
+  `evaluate(...)` is deliberately not a sink (both
+  names are too generic). Import table: `xpath` →
+  root `xpath`.
+- **Open redirect** (`tainted-open-redirect`, CWE-601,
+  severity high): `res.redirect` / `response.redirect`
+  / `reply.redirect` / `ctx.redirect` — first argument
+  (the URL) judged. No import table: the receivers are
+  request-handler parameters, not modules.
+
+The inter-procedural test battery now parameterizes
+over all ten parser-based detectors.
+
+- **Deliberate exclusions, pinned by tests:** LDAP —
+  a tainted base DN, a single-argument call (no judged
+  argument), `client.bind` / `add` / `modify` / `del`,
+  a bare `search(...)`, a three-part call, an unknown
+  module, a relative path; XPath — a tainted context
+  node (second argument), a bare `select(...)` /
+  `evaluate(...)`, `document.querySelector` (CSS, not
+  XPath), `xpath.parse` (parses, does not evaluate), a
+  three-part call; open redirect — a tainted URL in
+  second position of `res.redirect(status, url)`, a
+  bare `redirect(...)`, `res.render` (a view name),
+  a `window.location` assignment (an assignment shape,
+  not a call), a three-part call. LDAP filter escaping
+  (RFC 4515) and URL allow-list checks are NOT modeled
+  as sanitizers.
+- **Still open from §5:** Acorn (vendored) if the
+  grammar outgrows the subset, or a second language
+  parser. The next step is the second-language parser
+  itself: Solidity (round 108, reentrancy).

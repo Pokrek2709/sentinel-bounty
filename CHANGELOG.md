@@ -8,6 +8,68 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 107: tainted-LDAP, XPath and open-redirect detectors on the shared taint engine (2026-11-29)
+
+- Three parser-based detectors on the shared taint engine
+  (`src/detection/taint-engine.js`), all thin wrappers
+  with no engine change (round 104's config tables
+  already cover them): `tainted-ldap` (CWE-90,
+  severity high — LDAP search sink `client.search`,
+  judging its SECOND argument, the filter / options,
+  because ldapjs takes `(base, options, callback)` and
+  the filter lives in `options`, either as a string or
+  as an object whose properties' taint joins; a tainted
+  search base is not judged — DN injection is a
+  different shape); `tainted-xpath` (CWE-643, severity
+  high — XPath evaluation sinks `xpath.select` /
+  `select1` / `evaluate` and `document.evaluate`,
+  first argument, the expression, judged; a tainted
+  context node is not judged); `tainted-open-redirect`
+  (CWE-601, severity high — HTTP redirect sinks
+  `res.redirect` / `response.redirect` /
+  `reply.redirect` / `ctx.redirect`, first argument,
+  the URL, judged; a tainted URL in second position of
+  the two-argument form is not judged). Each reports a
+  sink call only when the judged argument is tainted or
+  the call is reached through an alias, and a direct
+  sink call with a clean judged argument is not
+  reported (the regex detector already flags it).
+- Import tables (round 106 mechanism): LDAP `ldapjs` /
+  `ldapts` → root `client`; XPath `xpath` → root
+  `xpath`; open redirect carries no table — `res` /
+  `response` / `reply` / `ctx` are request-handler
+  parameters, not modules.
+- Pinned exclusions (tested): LDAP — a tainted base DN,
+  a single-argument call, `client.bind` / `add` /
+  `modify` / `del`, a bare `search(...)`, a three-part
+  call, an unknown module, a relative path; XPath — a
+  tainted context node, a bare `select(...)` /
+  `evaluate(...)`, `document.querySelector` (CSS, not
+  XPath), `xpath.parse` (parses, does not evaluate), a
+  three-part call; open redirect — a tainted URL in
+  second position of `res.redirect(status, url)`, a
+  bare `redirect(...)`, `res.render` (a view name), a
+  `window.location` assignment, a three-part call. LDAP
+  filter escaping (RFC 4515) and URL allow-list checks
+  are NOT modeled as sanitizers.
+- Tests: 1421 total (1416 pass, 0 fail, 5 skip) —
+  58 new tests across three detector test files
+  (`tests/tainted-ldap.test.js`, `tests/tainted-xpath.test.js`,
+  `tests/tainted-open-redirect.test.js`), plus 66 new
+  parameterized cases in the inter-procedural battery
+  (three new detectors × 22 templates, now covering all
+  ten parser-based detectors) and import-resolution
+  cases for the new tables; verify-install 11/11.
+- Docs: three new detector docs
+  (`docs/detection-tainted-ldap-v1.md`,
+  `docs/detection-tainted-xpath-v1.md`,
+  `docs/detection-tainted-open-redirect-v1.md`); §11
+  addendum in `docs/parser-taint-scope-v1.md`;
+  `SKILL.md` (both copies), `docs/README.md`, and
+  `docs/import-resolution-v1.md` updated. No phase
+  movement (F5 ~99%, remaining gap is the
+  second-language parser, round 108).
+
 ### Round 106: import resolution (require/ESM) on the shared taint engine (2026-11-29)
 
 - A sink reached through an import now resolves to its

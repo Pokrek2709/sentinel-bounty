@@ -26,6 +26,9 @@ const xss = require('../src/detection/tainted-xss');
 const ssti = require('../src/detection/tainted-ssti');
 const pathTraversal = require('../src/detection/tainted-path-traversal');
 const ssrf = require('../src/detection/tainted-ssrf');
+const ldap = require('../src/detection/tainted-ldap');
+const xpath = require('../src/detection/tainted-xpath');
+const openRedirect = require('../src/detection/tainted-open-redirect');
 
 const IDS = { session_id: 's1', target_id: 't1', asset_id: 'a1' };
 
@@ -76,15 +79,23 @@ test('import tables: the documented module allow-lists are exact', () => {
     'nunjucks': 'nunjucks',
     'handlebars': 'handlebars',
   });
+  assert.deepEqual(ldap.MODULE_ROOTS, {
+    'ldapjs': 'client',
+    'ldapts': 'client',
+  });
+  assert.deepEqual(xpath.MODULE_ROOTS, { 'xpath': 'xpath' });
   // Only js-yaml maps to the yaml root: its API really is
   // yaml.load / loadAll. The `yaml` package is NOT mapped —
   // its API is `parse`, not `load`.
   assert.deepEqual(deserialize.MODULE_ROOTS, { 'js-yaml': 'yaml' });
   // SQL and XSS have no import mapping: SQL sink roots are
   // receiver variable names (db/pool/...), not modules, and
-  // XSS sinks are DOM globals, not module members.
+  // XSS sinks are DOM globals, not module members. Open
+  // redirect has none either: res / response / reply / ctx
+  // are request-handler parameters, not modules.
   assert.equal(sql.MODULE_ROOTS, undefined);
   assert.equal(xss.MODULE_ROOTS, undefined);
+  assert.equal(openRedirect.MODULE_ROOTS, undefined);
 });
 
 // ------------------------------------------------------- pattern (a)
@@ -102,6 +113,8 @@ test('import resolution: direct require member calls resolve to the canonical si
     [ssti, 'pug.compile', 'function h(d) { require("pug").compile(d); }'],
     [ssti, 'nunjucks.renderString', 'function h(d) { require("nunjucks").renderString(d); }'],
     [deserialize, 'yaml.load', 'function h(d) { require("js-yaml").load(d); }'],
+    [ldap, 'client.search', 'function h(d) { require("ldapjs").search("dc=example,dc=com", d); }'],
+    [xpath, 'xpath.select', 'function h(d) { require("xpath").select(d, doc); }'],
   ];
   for (const [detect, sink, content] of cases) {
     assertOneFinding(run(detect, content), sink, 'tainted-arg', content);
@@ -141,6 +154,8 @@ test('import resolution: namespace aliases (require + bare-root identity) resolv
     [ssti, 'ejs.render', 'const e = require("ejs"); function h(d) { e.render(d); }'],
     [ssti, 'ejs.render', 'const myejs = ejs; function h(d) { myejs.render(d); }'],
     [deserialize, 'yaml.load', 'const y = require("js-yaml"); function h(d) { y.load(d); }'],
+    [ldap, 'client.search', 'const c = require("ldapjs"); function h(d) { c.search("dc=example,dc=com", d); }'],
+    [xpath, 'xpath.select', 'const x = require("xpath"); function h(d) { x.select(d, doc); }'],
     [sql, 'db.query', 'const mydb = db; function h(d) { mydb.query(d); }'],
   ];
   for (const [detect, sink, content] of cases) {
@@ -180,6 +195,8 @@ test('import resolution: destructured require resolves to the canonical sink', (
     [ssti, 'ejs.render', 'const { render } = require("ejs"); function h(d) { render(d); }'],
     [deserialize, 'yaml.load', 'const { load } = require("js-yaml"); function h(d) { load(d); }'],
     [deserialize, 'yaml.loadAll', 'const { loadAll } = require("js-yaml"); function h(d) { loadAll(d); }'],
+    [ldap, 'client.search', 'const { search } = require("ldapjs"); function h(d) { search("dc=example,dc=com", d); }'],
+    [xpath, 'xpath.select', 'const { select } = require("xpath"); function h(d) { select(d, doc); }'],
   ];
   for (const [detect, sink, content] of cases) {
     assertOneFinding(run(detect, content), sink, 'aliased-call', content);
@@ -228,6 +245,11 @@ test('import resolution: ESM imports resolve (named, default, namespace)', () =>
     [ssrf, 'http.get', 'tainted-arg', 'import http from "http"; function h(d) { http.get(d); }'],
     [ssrf, 'request', 'tainted-arg', 'import { request } from "http"; function h(u) { request(u); }'],
     [ssrf, 'request', 'aliased-call', 'import rq from "request"; function h(u) { rq(u); }'],
+    [ldap, 'client.search', 'tainted-arg', 'import client from "ldapjs"; function h(d) { client.search("dc=example,dc=com", d); }'],
+    [ldap, 'client.search', 'aliased-call', 'import { search } from "ldapjs"; function h(d) { search("dc=example,dc=com", d); }'],
+    [xpath, 'xpath.select', 'tainted-arg', 'import xpath from "xpath"; function h(d) { xpath.select(d, doc); }'],
+    [xpath, 'xpath.select', 'aliased-call', 'import { select } from "xpath"; function h(d) { select(d, doc); }'],
+    [xpath, 'xpath.select', 'tainted-arg', 'import * as xpath from "xpath"; function h(d) { xpath.select(d, doc); }'],
   ];
   for (const [detect, sink, kind, content] of cases) {
     assertOneFinding(run(detect, content), sink, kind, content);

@@ -89,6 +89,9 @@ const { taintedXssDetector } = require('./tainted-xss');
 const { taintedSstiDetector } = require('./tainted-ssti');
 const { taintedPathTraversalDetector } = require('./tainted-path-traversal');
 const { taintedSsrfDetector } = require('./tainted-ssrf');
+const { taintedLdapDetector } = require('./tainted-ldap');
+const { taintedXpathDetector } = require('./tainted-xpath');
+const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -245,6 +248,13 @@ function runDetector(detector, input, defaults) {
 //     'tainted-path-traversal'.
 //   - 'tainted-ssrf' -> the twelfth real detector (round 105),
 //     the seventh parser-based one, source 'tainted-ssrf'.
+//   - 'tainted-ldap' -> the thirteenth real detector (round 107),
+//     the eighth parser-based one, source 'tainted-ldap'.
+//   - 'tainted-xpath' -> the fourteenth real detector (round 107),
+//     the ninth parser-based one, source 'tainted-xpath'.
+//   - 'tainted-open-redirect' -> the fifteenth real detector
+//     (round 107), the tenth parser-based one, source
+//     'tainted-open-redirect'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -263,6 +273,9 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-ssti') return { detector: taintedSstiDetector, source: 'tainted-ssti' };
   if (spec === 'tainted-path-traversal') return { detector: taintedPathTraversalDetector, source: 'tainted-path-traversal' };
   if (spec === 'tainted-ssrf') return { detector: taintedSsrfDetector, source: 'tainted-ssrf' };
+  if (spec === 'tainted-ldap') return { detector: taintedLdapDetector, source: 'tainted-ldap' };
+  if (spec === 'tainted-xpath') return { detector: taintedXpathDetector, source: 'tainted-xpath' };
+  if (spec === 'tainted-open-redirect') return { detector: taintedOpenRedirectDetector, source: 'tainted-open-redirect' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');
