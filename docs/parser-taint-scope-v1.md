@@ -1181,3 +1181,82 @@ unchanged.
   JavaScript grammar outgrows the subset. The next
   step is round 115 (Python parser + tainted
   pickle), the first language round.
+
+## 19. Round-115 addendum (2026-11-29) — the third language: Python
+
+The first language round after the JavaScript set closed
+in round 114. A hand-written stdlib-only Python subset
+parser (`src/detection/py-parser.js`, documented in
+`docs/python-parser-v1.md`) plus the first Python
+detector, `tainted-pickle` (CWE-502, severity high),
+documented in `docs/detection-tainted-pickle-v1.md`.
+
+- **Python subset parser:** tokenizer + recursive-descent
+  parser with INDENT / DEDENT / NEWLINE tokens (the
+  classic CPython approach), implicit continuation inside
+  `()`, `[]`, `{}` and explicit `\` continuation (which
+  suppresses the next line's indent processing). Covered:
+  imports (including parenthesized from-imports and
+  relative imports, level recorded, never resolved across
+  files), function definitions (defaults, annotations,
+  `*args`, `**kwargs`, bare `*` and `/` markers, nested
+  defs), assignment (chained, tuple unpacking, starred
+  targets, annotated, augmented), `if` / `elif` / `else`,
+  `for` / `while` (with `else`), `try` / `except` / `else`
+  / `finally`, `with`, `return` / `break` / `continue` /
+  `pass` / `raise` / `assert` / `del` / `global` /
+  `nonlocal`, and expressions (literals, f-strings with
+  conversions / format specs / debug specifiers,
+  attribute / subscript / slice, calls with positional /
+  keyword / `*args` / `**kwargs`, list / dict / set /
+  tuple displays, binary / unary / boolean / comparison /
+  conditional). Fails loudly on class definitions,
+  decorators, lambdas, comprehensions, generator
+  expressions, `async` / `await`, `yield`, the walrus
+  operator, and matrix multiplication.
+- **Tainted pickle (`tainted-pickle`, CWE-502, severity
+  high):** tainted data reaching `pickle.load` / `loads`,
+  `marshal.load` / `loads`, `yaml.load` (without a safe
+  Loader), or `shelve.open`. Sources: function
+  parameters, `input()`, `sys.argv`, Flask `request`
+  attributes (`args` / `form` / `data` / `json` /
+  `values` / `files` / `cookies` / `get_json()` /
+  `get_data()`, via `request`, `flask.request`, or an
+  alias). `os.environ` is NOT a source. Sanitizers:
+  `int` / `float` / `str` / `bool` / `len` / `hash` /
+  `repr` / `json.loads` / `json.load` /
+  `int.from_bytes` and `.decode()` / `.hex()`. Taint
+  flows inter-procedurally through known functions and
+  their return values (memoized per tainted-parameter
+  mask, recursion cut, call-graph depth capped at 8 —
+  the JavaScript engine's rules), and a helper never
+  called is still analyzed with its parameters as
+  sources. Import resolution applies (module aliases,
+  from-import bindings, assignment aliases, the last
+  collected flow-insensitively at module level). A sink
+  reached through a name binding reports kind
+  `aliased-call` with any argument; a direct member
+  call reports kind `tainted-arg` only when its judged
+  argument is tainted. A bare `loads(...)` with no
+  import binding is not a sink (`json.loads` is the
+  commonest `loads`). `yaml.load` with
+  `Loader=yaml.SafeLoader` / `CSafeLoader` is clean.
+  `pickle.Unpickler(...).load()` and `dill` are out of
+  scope; methods are not resolved through the call
+  graph; object-attribute taint is not modeled.
+- **Deliberate exclusions, pinned by tests:**
+  `pickle.Unpickler`, `dill`, a bare `loads` with no
+  import binding (including `from json import loads`),
+  `os.environ` as a source, a bare `request` object as
+  a source, a constant argument to a direct sink call,
+  a sanitized argument, a `yaml.load` with a safe
+  Loader, a class definition in the record (record
+  skipped), a method call as the inter-procedural
+  hop, a recursive call propagating taint, an
+  object-attribute write followed by a read.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset; a vendored
+  full Python parser if the Python detector set
+  outgrows the subset. The next step is round 116
+  (PHP parser + tainted include/unserialize), the
+  fourth language round.

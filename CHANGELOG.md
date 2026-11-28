@@ -8,6 +8,76 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 115: Python subset parser and tainted-pickle detector (2026-11-29)
+
+- First language round after the JavaScript set closed in
+  round 114. The third language on the project: a
+  hand-written stdlib-only Python subset parser
+  (`src/detection/py-parser.js`, `docs/python-parser-v1.md`)
+  — tokenizer + recursive-descent parser with INDENT /
+  DEDENT / NEWLINE tokens (the classic CPython approach),
+  implicit continuation inside `()`, `[]`, `{}` and
+  explicit `\` continuation (which suppresses the next
+  line's indent processing), covering imports (including
+  parenthesized from-imports and relative imports, level
+  recorded, never resolved across files), function
+  definitions (defaults, annotations, `*args`, `**kwargs`,
+  bare `*` and `/` markers, nested defs), assignment
+  (chained, tuple unpacking, starred targets, annotated,
+  augmented), `if` / `elif` / `else`, `for` / `while`
+  (with `else`), `try` / `except` / `else` / `finally`,
+  `with`, `return` / `break` / `continue` / `pass` /
+  `raise` / `assert` / `del` / `global` / `nonlocal`, and
+  expressions (literals, f-strings with conversions /
+  format specs / debug specifiers, attribute / subscript /
+  slice, calls, list / dict / set / tuple displays,
+  binary / unary / boolean / comparison / conditional).
+  Fails loudly on class definitions, decorators, lambdas,
+  comprehensions, generator expressions, `async` /
+  `await`, `yield`, the walrus operator, and matrix
+  multiplication. No external Python parser adopted
+  (stdlib-only).
+- `tainted-pickle` (twenty-ninth real detector, FIRST
+  Python detector, CWE-502 Deserialization of Untrusted
+  Data, severity high): runs a separate taint analysis
+  over the Python subset AST — NOT the JavaScript taint
+  engine, which is JavaScript-specific — flagging
+  tainted data reaching `pickle.load` / `loads`,
+  `marshal.load` / `loads`, `yaml.load` (without a safe
+  Loader), or `shelve.open`. Sources: function
+  parameters (round-95 fallback: a helper never called,
+  or called only with clean arguments, is still analyzed
+  with its parameters as sources), `input()`,
+  `sys.argv`, Flask `request` attributes (`args` /
+  `form` / `data` / `json` / `values` / `files` /
+  `cookies` / `get_json()` / `get_data()`). `os.environ`
+  is NOT a source. Sanitizers: `int` / `float` / `str` /
+  `bool` / `len` / `hash` / `repr` / `json.loads` /
+  `json.load` / `int.from_bytes` and `.decode()` /
+  `.hex()`. Taint flows inter-procedurally through known
+  functions and their return values (memoized per
+  tainted-parameter mask, recursion cut, call-graph
+  depth capped at 8); import resolution applies
+  (module aliases, from-import bindings, assignment
+  aliases collected flow-insensitively at module
+  level); a sink reached through a name binding reports
+  kind `aliased-call` with any argument, a direct
+  member call reports kind `tainted-arg` only when its
+  judged argument is tainted. A bare `loads(...)` with
+  no import binding is NOT a sink. `yaml.load` with
+  `Loader=yaml.SafeLoader` / `CSafeLoader` is clean.
+  `pickle.Unpickler(...).load()` and `dill` are out of
+  scope; methods are not resolved through the call
+  graph; object-attribute taint is not modeled. One
+  finding per sink site, confidence `potential`, never
+  carrying a literal value or source line.
+- The detector is wired into `src/detection/detector.js`,
+  `bin/sentinel.js` (usage line and description),
+  `SKILL.md` (both copies, byte-identical), and
+  `docs/README.md`; the scope document gains addendum
+  §19. Total detectors now 29 (5 regex + 13
+  parser-based JavaScript + 10 Solidity + 1 Python).
+
 ### Round 111: Solidity oracle-dependence and signature-replay detectors (2026-11-29)
 
 - Two Solidity detectors on the same subset parser (round

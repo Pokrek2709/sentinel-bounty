@@ -95,6 +95,7 @@ const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
 const { taintedXxeDetector } = require('./tainted-xxe');
 const { taintedRedosDetector } = require('./tainted-redos');
 const { taintedPrototypePollutionDetector } = require('./tainted-prototype-pollution');
+const taintedPickleDetector = require('./tainted-pickle');
 const solidityReentrancyDetector = require('./solidity-reentrancy');
 const solidityAccessControlDetector = require('./solidity-access-control');
 const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-initializer');
@@ -352,6 +353,13 @@ function runDetector(detector, input, defaults) {
 //     real detector (round 114), the thirteenth
 //     parser-based one, source
 //     'tainted-prototype-pollution'.
+//   - 'tainted-pickle' -> the twenty-ninth real detector
+//     (round 115), the FIRST PYTHON detector — it runs a
+//     separate taint analysis over the Python subset AST
+//     (py-parser.js), NOT the JavaScript taint engine,
+//     flagging tainted data reaching pickle / marshal /
+//     yaml.load / shelve deserialization sinks (CWE-502),
+//     source 'tainted-pickle'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -376,6 +384,7 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-xxe') return { detector: taintedXxeDetector, source: 'tainted-xxe' };
   if (spec === 'tainted-redos') return { detector: taintedRedosDetector, source: 'tainted-redos' };
   if (spec === 'tainted-prototype-pollution') return { detector: taintedPrototypePollutionDetector, source: 'tainted-prototype-pollution' };
+  if (spec === 'tainted-pickle') return { detector: taintedPickleDetector, source: 'tainted-pickle' };
   if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
   if (spec === 'solidity-access-control') return { detector: solidityAccessControlDetector, source: 'solidity-access-control' };
   if (spec === 'solidity-unprotected-initializer') return { detector: solidityUnprotectedInitializerDetector, source: 'solidity-unprotected-initializer' };
