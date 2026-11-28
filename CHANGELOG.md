@@ -8,6 +8,45 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 100: second AST detector — tainted-command-execution (2026-11-28)
+
+- Second parser-based detector (`tainted-command-execution`,
+  seventh real detector): reuses the taint engine proven by
+  `tainted-deserialize` (round 95) — the same hand-written
+  stdlib-only subset parser (`src/detection/js-parser.js`)
+  and the same analyzer design, parameterized by this
+  detector's sink table — on command-execution sinks
+  (`child_process.exec`, `execSync`, `spawn`, `spawnSync`,
+  `execFile`, `execFileSync`; the JS-relevant subset of
+  `dangerous-call`'s command-exec pattern). A sink call is
+  reported only when its first argument is tainted (from a
+  function parameter or `process.argv`) or the call is
+  reached through an alias (`const e = child_process.exec`,
+  `const { exec } = child_process`); a direct sink call
+  with a clean argument is not reported (the regex detector
+  already flags it), and a finding never carries a literal
+  value or a source line. Registered in
+  `src/detection/detector.js` (`getDetector`) and in the
+  `sentinel detect` help text and comment block; the
+  round-99 CLI-help-vs-registry test covers the new id.
+  Documented limits (same as round 95, plus one new):
+  JavaScript only, intra-procedural only, no sanitizer
+  modeling, no import resolution
+  (`require('child_process').exec` and `const cp =
+  child_process` are not resolved), and only the first
+  argument is judged — a tainted argument vector (second
+  argument of `spawn` / `execFile`) is not covered in this
+  round. `child_process.fork` is not a sink. The analyzer
+  stays a per-detector copy (the repo's self-contained
+  detector pattern); a shared-engine refactor is future
+  work, listed in the new detector doc
+  (`docs/detection-tainted-command-execution-v1.md`). 17 new
+  tests in `tests/tainted-command-execution.test.js`. No
+  phase moves beyond F5: the second AST class was the
+  named next step toward F5 100%, which still needs
+  inter-procedural taint, sanitizer modeling, and a second
+  language.
+
 ### Round 99: CI hardening + regression (2026-11-28)
 
 - CI hardening for the lessons of the four-red-run saga (rounds
