@@ -93,6 +93,8 @@ const { taintedLdapDetector } = require('./tainted-ldap');
 const { taintedXpathDetector } = require('./tainted-xpath');
 const { taintedOpenRedirectDetector } = require('./tainted-open-redirect');
 const solidityReentrancyDetector = require('./solidity-reentrancy');
+const solidityAccessControlDetector = require('./solidity-access-control');
+const solidityUnprotectedInitializerDetector = require('./solidity-unprotected-initializer');
 
 // The skill root: src/detection/detector.js sits two levels below it.
 const DEFAULT_SKILL_ROOT = path.resolve(__dirname, '..', '..');
@@ -262,6 +264,21 @@ function runDetector(detector, input, defaults) {
 //     JavaScript-specific); it runs a separate analysis
 //     over the Solidity subset AST (sol-parser.js),
 //     source 'solidity-reentrancy'.
+//   - 'solidity-access-control' -> the seventeenth real
+//     detector (round 109), the second SOLIDITY detector —
+//     it runs a separate analysis over the Solidity subset
+//     AST, flagging an external/public function that
+//     performs a sensitive operation (state write,
+//     fund-moving call, selfdestruct, delegatecall) with
+//     no access control (CWE-862), source
+//     'solidity-access-control'.
+//   - 'solidity-unprotected-initializer' -> the eighteenth
+//     real detector (round 109), the third SOLIDITY
+//     detector — it runs a separate analysis over the
+//     Solidity subset AST, flagging an external/public
+//     initialize() with neither the `initializer` /
+//     `reinitializer` modifier nor any access control
+//     (CWE-862), source 'solidity-unprotected-initializer'.
 //   - a function -> the function itself, source 'inline'.
 //   - a string path -> loadDetector(path, skillRoot).
 // Anything else throws DETECTOR_INVALID_DETECTOR.
@@ -284,6 +301,8 @@ function getDetector(spec, skillRoot) {
   if (spec === 'tainted-xpath') return { detector: taintedXpathDetector, source: 'tainted-xpath' };
   if (spec === 'tainted-open-redirect') return { detector: taintedOpenRedirectDetector, source: 'tainted-open-redirect' };
   if (spec === 'solidity-reentrancy') return { detector: solidityReentrancyDetector, source: 'solidity-reentrancy' };
+  if (spec === 'solidity-access-control') return { detector: solidityAccessControlDetector, source: 'solidity-access-control' };
+  if (spec === 'solidity-unprotected-initializer') return { detector: solidityUnprotectedInitializerDetector, source: 'solidity-unprotected-initializer' };
   if (typeof spec === 'function') return { detector: spec, source: 'inline' };
   if (typeof spec === 'string') return loadDetector(spec, skillRoot);
   throw new Error('DETECTOR_INVALID_DETECTOR: detector must be "stub", a function, or a module path string.');

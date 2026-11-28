@@ -619,3 +619,68 @@ Shared code is limited to the language-neutral pieces:
   outgrows the subset grammar. The next step is more
   Solidity classes on the same parser (round 109:
   access control).
+
+## 13. Round-109 addendum (2026-11-29) — two Solidity access-control classes
+
+Two more Solidity classes land on the same subset parser
+(round 108's §12 "next step"), both CWE-862 (Missing
+Authorization — the absence of a check, not a wrong one;
+CWE-284 is the broader parent and stays out of scope
+until a detector judges a check that exists):
+
+- `solidity-access-control` (seventeenth real detector,
+  second Solidity detector): an external/public function
+  that performs a sensitive operation — a state write, a
+  fund-moving call (`.call` / `.transfer` / `.send` on any
+  receiver), a `selfdestruct`, or a `.delegatecall` — with
+  no access control at all (no onlyOwner/role modifier, no
+  `require(msg.sender == ...)` check, no if-revert guard),
+  one finding per function on the earliest operation. See
+  `docs/detection-solidity-access-control-v1.md`.
+- `solidity-unprotected-initializer` (eighteenth real
+  detector, third Solidity detector): an external/public
+  `initialize()` with neither the `initializer` /
+  `reinitializer` modifier nor any access control, one
+  finding per function. Either protection alone is enough
+  to stay silent. See
+  `docs/detection-solidity-unprotected-initializer-v1.md`.
+
+The guard rule is shared, not duplicated: `hasAccessControl`
+in `src/detection/sol-guards.js` (modifiers allow-list,
+require sender-equality / role-call, if-revert on
+`msg.sender != ...`), plus `effectiveStateVars` (own +
+same-file bases, transitive, cycle-guarded) — the
+Solidity-side analogue of the shared JavaScript taint
+engine, so the two detectors cannot drift apart on what
+counts as a guard. The reentrancy detector keeps its own
+copies (it predates this module); do not refactor it.
+
+The parser grows two small additive pieces to support
+these detectors: FunctionDefinition nodes now record
+`visibility` (`external` / `public` / `internal` /
+`private`, null when unqualified — internal by the
+language default), and `revert` statements now parse
+(`revert NotOwner();`, `revert("reason");`, `revert();`)
+as RevertStatement nodes — the if-revert guard the
+detectors recognize is now actually parseable (before
+this round `revert` was a reserved word with no statement
+form, so the guard could never fire through the parser).
+
+- **Deliberate exclusions, pinned by tests:**
+  `require(tx.origin == ...)` is NOT a guard (round 110
+  territory); `assert`, `nonReentrant`, `whenNotPaused`,
+  and `onlyInitializing` are NOT guards; a guard placed
+  after the sensitive operation still counts (no
+  control-flow / reachability proof); cross-function
+  access control is not modeled (round 112); `this.`
+  calls are not modeled; a function that is public by
+  design (deposit, vote, claim) is still flagged — the
+  detector cannot tell intent, and the finding is a
+  candidate for manual review.
+- **Still open from §5:** Acorn (vendored) if the
+  JavaScript grammar outgrows the subset — and, by the
+  same logic, `@solidity-parser/parser` (evaluated,
+  not adopted) if the Solidity detector set outgrows the
+  subset grammar. The next step is more Solidity classes
+  on the same parser (round 110: rounding, tx.origin,
+  weak randomness).

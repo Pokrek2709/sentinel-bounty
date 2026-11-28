@@ -66,6 +66,62 @@ test('parser: function header with visibility, mutability, modifiers, returns', 
   assert.deepEqual(fn.modifiers, ['nonReentrant']);
 });
 
+test('parser: function visibility is recorded (round 109)', () => {
+  const ast = parse(`
+    contract C {
+      function a() external {}
+      function b() public {}
+      function c() internal {}
+      function d() private {}
+      function e() {}
+    }
+  `);
+  const fns = ast.body[0].functions;
+  assert.deepEqual(
+    fns.map((f) => f.visibility),
+    ['external', 'public', 'internal', 'private', null],
+  );
+});
+
+test('parser: visibility is recorded when a modifier comes first (round 109)', () => {
+  const ast = parse(`
+    contract C {
+      function f() nonReentrant external {}
+      function g() public override {}
+    }
+  `);
+  const fns = ast.body[0].functions;
+  assert.deepEqual(fns.map((f) => f.visibility), ['external', 'public']);
+  assert.deepEqual(fns[0].modifiers, ['nonReentrant']);
+});
+
+test('parser: revert statements — custom error, string reason, empty call (round 109)', () => {
+  const ast = parse(`
+    contract C {
+      function f() external {
+        if (msg.sender != owner) revert NotOwner();
+        revert("failed");
+        revert();
+      }
+    }
+  `);
+  const body = ast.body[0].functions[0].body.body;
+  assert.equal(body[0].type, 'IfStatement');
+  assert.equal(body[0].consequent.type, 'RevertStatement');
+  assert.equal(body[0].consequent.argument.type, 'CallExpression');
+  assert.equal(body[0].consequent.argument.callee.name, 'NotOwner');
+  assert.equal(body[1].type, 'RevertStatement');
+  // `revert("failed")` is a call to `revert` with the
+  // reason string as its argument.
+  assert.equal(body[1].argument.type, 'CallExpression');
+  assert.equal(body[1].argument.callee.name, 'revert');
+  assert.equal(body[1].argument.arguments[0].type, 'Literal');
+  assert.equal(body[1].argument.arguments[0].value, 'failed');
+  assert.equal(body[2].type, 'RevertStatement');
+  assert.equal(body[2].argument.type, 'CallExpression');
+  assert.equal(body[2].argument.callee.name, 'revert');
+});
+
 test('parser: constructor, receive, fallback', () => {
   const ast = parse(`
     contract C {

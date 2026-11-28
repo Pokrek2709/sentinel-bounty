@@ -127,7 +127,7 @@ function usage() {
     '  sentinel report stats <report.json> [--json]',
     '  sentinel report render <report.json> --format markdown|json|html|csv|summary|jsonl [--out <file>]',
     '  sentinel report-diff <old-report.json> <new-report.json> [--format markdown|json] [--out <diff.md>]',
-    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
+    '  sentinel detect [--detector stub|secret-scan|dangerous-call|insecure-crypto|hardcoded-credential|insecure-transport|tainted-deserialize|tainted-command-execution|tainted-sql|tainted-xss|tainted-ssti|tainted-path-traversal|tainted-ssrf|tainted-ldap|tainted-xpath|tainted-open-redirect|solidity-reentrancy|solidity-access-control|solidity-unprotected-initializer|<path>] --input <record.json> [--session-id <id>] [--target-id <id>] [--asset-id <id>] [--out <findings.json>]',
     '  sentinel verify-install [--state-dir <path>] [--skill-dir <path>] [--fix]',
     '',
     'The checker performs no network requests and does not invoke security tools.',
@@ -1611,7 +1611,20 @@ async function runDetect(args) {
   // analysis over the Solidity subset AST (sol-parser.js),
   // flagging a function that performs an external call
   // (.call / .transfer / .send) and then writes state
-  // (CWE-841, SWC-107), one finding per call site; a path loads
+  // (CWE-841, SWC-107), one finding per call site;
+  // `solidity-access-control` (round 109) is the seventeenth
+  // real detector and the second Solidity detector — it runs
+  // a separate analysis over the same subset AST, flagging
+  // an external/public function that performs a sensitive
+  // operation (state write, fund-moving call, selfdestruct,
+  // delegatecall) with no access control (CWE-862), one
+  // finding per function; `solidity-unprotected-initializer`
+  // (round 109) is the eighteenth real detector and the third
+  // Solidity detector — it runs a separate analysis over the
+  // same subset AST, flagging an external/public initialize()
+  // with neither the `initializer` / `reinitializer`
+  // modifier nor any access control (CWE-862), one finding
+  // per initialize function; a path loads
   // a custom detector module
   // from inside the skill directory (refused with a named
   // DETECTOR_* error when it is missing, malformed, a

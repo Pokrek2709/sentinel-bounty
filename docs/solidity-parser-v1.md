@@ -35,12 +35,20 @@ same test posture (valid code parses, unsupported syntax fails loudly).
   `fallback`, modifiers (name + arguments recorded; bodies parsed).
 - Function headers: visibility, mutability, `virtual` / `override`,
   modifiers in any order, `returns (...)`. Interface functions without
-  bodies are accepted (`body: null`).
+  bodies are accepted (`body: null`). FunctionDefinition nodes record
+  `visibility` (`external` / `public` / `internal` / `private`, null
+  when unqualified — internal by the language default) since round
+  109; the access-control detectors only flag external/public
+  functions.
 - Statements: blocks, variable declarations (including tuple
   declarations `(uint a, uint b) = ...` with empty slots),
   assignments (simple and compound), `if` / `else`, `for` / `while` /
   `do-while`, `return` / `break` / `continue`, `emit`, `unchecked {}`
-  blocks, `delete`.
+  blocks, `delete`, `revert` (round 109: `revert NotOwner();`,
+  `revert("reason");`, `revert();` parse as RevertStatement nodes —
+  before that `revert` was a reserved word with no statement form, so
+  the if-revert guard the access-control detectors recognize could
+  never fire through the parser).
 - Expressions: literals (numbers with `_` separators, fractions,
   exponents, and units — `1 ether`, `30 days`; strings; booleans),
   member / index / call (including call options `{value: ...}` —

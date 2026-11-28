@@ -8,6 +8,83 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 109: Solidity access-control and unprotected-initializer detectors (2026-11-29)
+
+- Two Solidity access-control detectors on the same subset
+  parser (round 108's §12 "next step"), both CWE-862
+  (Missing Authorization — the absence of a check, not a
+  wrong one; CWE-284 is the broader parent and stays out
+  of scope until a detector judges a check that exists),
+  severity high, one finding per function, confidence
+  `potential`:
+  - `solidity-access-control` (seventeenth real detector,
+    second Solidity detector): an external/public function
+    that performs a sensitive operation — a state write, a
+    fund-moving call (`.call` / `.transfer` / `.send` on
+    any receiver), a `selfdestruct`, or a `.delegatecall`
+    — with no access control at all, flagged on the
+    earliest operation in source order. A function that is
+    public by design (deposit, vote, claim) is still
+    flagged — the detector cannot tell intent, and the
+    finding is a candidate for manual review.
+  - `solidity-unprotected-initializer` (eighteenth real
+    detector, third Solidity detector): an external/public
+    `initialize()` with neither the `initializer` /
+    `reinitializer` modifier nor any access control.
+    Either protection alone is enough to stay silent.
+- The guard rule is shared, not duplicated
+  (`src/detection/sol-guards.js`, new): `hasAccessControl`
+  — an allow-list of access-control modifiers
+  (`onlyOwner`, `onlyRole`, ...), `require(msg.sender ==
+  ...)` or a role call (`hasRole` / `isAdmin` /
+  `isAuthorized` / `isWhitelisted`) mentioning
+  `msg.sender`, `if (msg.sender != ...) revert(...)` —
+  plus `effectiveStateVars` (own + same-file bases,
+  transitive, cycle-guarded). The reentrancy detector
+  keeps its own copies (it predates this module); it was
+  not refactored. Both detectors are separate analyses
+  over the Solidity AST, NOT reuses of the JavaScript
+  taint engine; their envelopes are their own functions
+  following `createTaintDetector`'s pattern, sharing only
+  the language-neutral pieces (`findingIdFor`, the caps,
+  `normalizeRawFinding`).
+- The parser grows two small additive pieces:
+  FunctionDefinition nodes now record `visibility`
+  (`external` / `public` / `internal` / `private`, null
+  when unqualified — internal by the language default),
+  and `revert` statements now parse (`revert
+  NotOwner();`, `revert("reason");`, `revert();`) as
+  RevertStatement nodes — the if-revert guard the
+  detectors recognize is now actually parseable (before
+  this round `revert` was a reserved word with no
+  statement form, so the guard could never fire through
+  the parser).
+- Pinned exclusions (tested): `require(tx.origin == ...)`
+  is NOT a guard (round 110 territory); `assert`,
+  `nonReentrant`, `whenNotPaused`, and `onlyInitializing`
+  are NOT guards; a guard placed after the sensitive
+  operation still counts (no control-flow / reachability
+  proof); cross-function access control and `this.` calls
+  are not modeled; a base from another file is not
+  resolved; the initializer detector does not verify the
+  contract is actually upgradeable.
+- Tests: 1527 total (1522 pass, 0 fail, 5 skip) — 65 new
+  tests (`tests/sol-parser.test.js`,
+  `tests/sol-guards.test.js`,
+  `tests/solidity-access-control.test.js`,
+  `tests/solidity-unprotected-initializer.test.js`);
+  verify-install 11/11.
+- Docs: two new docs
+  (`docs/detection-solidity-access-control-v1.md`,
+  `docs/detection-solidity-unprotected-initializer-v1.md`);
+  §13 addendum in `docs/parser-taint-scope-v1.md`;
+  `docs/solidity-parser-v1.md` (visibility + revert),
+  `SKILL.md` (both copies, byte-identical) and
+  `docs/README.md` updated. Phase movement: F5 stays
+  100% (two more Solidity classes on the same parser;
+  the remaining Solidity limits are per-detector scope,
+  not a phase gap).
+
 ### Round 108: Solidity subset parser + reentrancy detector (2026-11-29)
 
 - The second language lands: a hand-written stdlib-only

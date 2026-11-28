@@ -86,6 +86,15 @@ const TYPE_QUALIFIERS = new Set([
   'payable', 'pure', 'view', 'virtual',
 ]);
 
+// Visibility qualifiers (a subset of TYPE_QUALIFIERS):
+// recorded on FunctionDefinition nodes since round 109 —
+// the access-control detectors only flag external/public
+// functions (an internal/private function cannot be called
+// by anyone directly; a function with no visibility
+// qualifier is internal by the language default, so its
+// visibility is null).
+const VISIBILITY = new Set(['external', 'public', 'internal', 'private']);
+
 // Number-literal units (`1 ether`, `30 days`). Consumed by
 // the expression parser after a numeric literal.
 const NUMBER_UNITS = new Set([
@@ -658,6 +667,7 @@ class Parser {
     }
     const params = this.parseParams();
     const modifiers = [];
+    let visibility = null;
     // Header tokens until `{` (body) or `;` (no body).
     for (;;) {
       if (this.at('{') || this.at(';') || this.atEof()) break;
@@ -673,7 +683,8 @@ class Parser {
       }
       if (this.peek().type === 'name'
         && (TYPE_QUALIFIERS.has(this.peek().value) || this.peek().value === 'override')) {
-        this.next();
+        const qualifier = this.next();
+        if (VISIBILITY.has(qualifier.value)) visibility = qualifier.value;
         continue;
       }
       if (this.peek().type === 'name' && !RESERVED.has(this.peek().value)) {
@@ -692,7 +703,7 @@ class Parser {
     }
     return {
       type: 'FunctionDefinition', name: name.name, kind, params,
-      modifiers, body, line: start.line, column: start.column,
+      modifiers, visibility, body, line: start.line, column: start.column,
     };
   }
 
@@ -816,6 +827,44 @@ class Parser {
           const call = this.parseCallLike();
           this.semicolon();
           return { type: 'EmitStatement', call, line: start.line, column: start.column };
+        }
+        case 'revert': {
+          // `revert;` is not valid Solidity, but the subset
+          // parser is lenient: a bare `revert` parses with a
+          // null argument. Real forms:
+          //   `revert("reason");` (string reason),
+          //   `revert();` (empty call),
+          //   `revert NotOwner();` / `revert NotOwner(x);`
+          //   (custom error call).
+          // `revert` is a reserved word, so it cannot be an
+          // expression primary — it needs its own statement
+          // case (added round 109, so the if-revert guard
+          // the access-control detectors recognize is
+          // actually parseable).
+          const start = this.next();
+          let argument = null;
+          if (!this.at(';')) {
+            if (this.peek().type === 'string') {
+              argument = this.parsePrimary();
+            } else if (this.peek().type === 'punct' && this.peek().value === '(') {
+              // `revert();` — an empty revert call,
+              // represented as a call to `revert` with no
+              // arguments (parseArguments expects the '(').
+              const args = this.parseArguments();
+              argument = {
+                type: 'CallExpression',
+                callee: { type: 'Identifier', name: 'revert', line: start.line, column: start.column },
+                arguments: args,
+                line: start.line, column: start.column,
+              };
+            } else if (this.peek().type === 'name' && !RESERVED.has(this.peek().value)) {
+              argument = this.parseExpression();
+            } else {
+              this.error("expected a revert reason or custom error after 'revert'", this.peek());
+            }
+          }
+          this.semicolon();
+          return { type: 'RevertStatement', argument, line: start.line, column: start.column };
         }
         case 'assembly':
           this.error('inline assembly is not supported by the subset parser', token);
