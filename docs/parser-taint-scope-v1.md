@@ -244,3 +244,40 @@ identifier names only).
   subset, or a second language parser.
 - Import resolution (mapping imported names to
   their module members).
+
+## 6. Round-101 addendum (2026-11-28) — what §5's first two items became
+
+The first two §5 items are done, and the engine is now
+shared rather than copied per detector. The §4/§5 text
+above is kept as written (the round-95 record); this
+section is the dated update.
+
+- **Inter-procedural taint: done (round 101).**
+  `src/detection/taint-engine.js` is the single shared
+  engine both parser detectors run on (the round-95/100
+  per-detector copies are gone; all pre-existing tests
+  still pass on it). Taint flows from a call site into a
+  callee, through return values, IIFEs, and function
+  aliases; a helper never called (or called only with
+  clean arguments) is still analyzed once with its
+  parameters as sources (the round-95 fallback). The
+  chain proves the cross-function flow. See
+  `docs/inter-procedural-taint-v1.md` for the model,
+  the termination guards (recursion set, depth cap 8,
+  memoization), and the remaining limits: methods are
+  not resolved through the graph, no import resolution,
+  no `this` modeling, first-flow-wins chains.
+- **Sanitizer modeling: done (round 101).**
+  `Number`, `parseInt`, `parseFloat`, `Boolean`,
+  `Number.parseInt`, `Number.parseFloat` cleanse taint
+  (their return values cannot carry a string payload);
+  encoding and content-preserving calls
+  (`encodeURIComponent`, `encodeURI`, `String`,
+  `JSON.stringify`, string methods) do not. A user
+  binding shadowing a sanitizer name disables it.
+  See `docs/sanitizer-modeling-v1.md`.
+- **Still open from §5:** Acorn (vendored) if the
+  grammar outgrows the subset, or a second language
+  parser; import resolution. The second AST detector
+  class (tainted command execution) shipped in round
+  100 on the same engine.

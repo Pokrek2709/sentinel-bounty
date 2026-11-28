@@ -8,6 +8,73 @@ v0.x tag line (see `docs/release-process-v1.md`).
 
 ## [Unreleased]
 
+### Round 101: inter-procedural taint + sanitizer modeling on a shared engine (2026-11-28)
+
+- Shared taint engine extracted (`src/detection/taint-engine.js`):
+  the round-95/100 per-detector analyzer copies are gone;
+  `tainted-deserialize` and `tainted-command-execution`
+  are thin wrappers over `createTaintDetector(config)` with
+  their sink tables and finding metadata. All 35 pre-existing
+  parser-detector tests pass on the shared engine unchanged
+  (no behavior change from the refactor).
+- Inter-procedural taint (call graph): taint flows from a
+  call site into a callee, through return values, IIFEs, and
+  function aliases; a helper never called (or called only
+  with clean arguments) is still analyzed once with its
+  parameters as sources (the round-95 fallback). The evidence
+  chain proves the cross-function flow (e.g. `parameter 'req'
+  of function 'handle' -> req.body -> parameter 'd' of
+  function 'parse'`). Termination guards: a recursion set
+  (direct and mutual recursion fall back to the unknown-call
+  convention), a depth cap of 8 nested call-site analyses
+  (deeper helpers are still flagged via the fallback), and
+  per-function memoization (tainted / clean / fallback).
+  Methods are not resolved through the graph, there is no
+  `this` modeling and no import resolution, and when several
+  flows reach one sink site the first chain wins
+  (deterministic, pinned by a test). Documented in
+  `docs/inter-procedural-taint-v1.md`.
+- Sanitizer modeling (explicit allow-list in the engine):
+  `Number`, `parseInt`, `parseFloat`, `Boolean`,
+  `Number.parseInt`, `Number.parseFloat` cleanse taint
+  (their return values cannot carry a string payload);
+  encoding and content-preserving calls
+  (`encodeURIComponent`, `encodeURI`, `String`,
+  `JSON.stringify`, string methods) do NOT cleanse, and a
+  user binding shadowing a sanitizer name disables it.
+  An unknown `validate()` is still not modeled. Documented
+  in `docs/sanitizer-modeling-v1.md`, with each allow-list
+  entry and each exclusion pinned by a test.
+- 45 new tests in `tests/inter-procedural-taint.test.js`
+  (parameterized over both detectors, plus one shared-engine
+  test): cross-function and multi-hop flows with exact chains,
+  hoisting, fallback pins, recursion and depth-cap termination,
+  IIFE / arrow-var / alias resolution, return-taint identity /
+  constant / global-source, sanitizer positives, negatives,
+  shadowing, wrapper-through-sanitizer, and nested sinks
+  inside sanitizer arguments.
+- Docs: two new docs (`docs/inter-procedural-taint-v1.md`,
+  `docs/sanitizer-modeling-v1.md`); dated §6 addendum in
+  `docs/parser-taint-scope-v1.md` (the §5 items are done);
+  the two detector docs updated (inter-procedural behavior,
+  sanitizer allow-list) and one correction carried in both:
+  earlier versions wrongly said unknown-call return values
+  were clean — the engine has always returned tainted for
+  an unknown call with a tainted argument. `SKILL.md`
+  (sixth/seventh detector paragraphs + See-list) updated
+  and copied byte-identical to
+  `skills/sentinel-bounty/SKILL.md`.
+- Limits that stand: JavaScript only; no import resolution
+  (round-100 pins: `require('child_process').exec`,
+  `const cp = child_process`); only the first argument is
+  judged (tainted argument vectors still not covered);
+  methods not resolved through the call graph; no
+  reachability proof. No phase moves beyond F5: the
+  inter-procedural engine is the second AST capability
+  the F5 100% target needs (a second language parser is
+  still open). No Meta items touched; no F6/policy change;
+  no new release tag.
+
 ### Round 100: second AST detector — tainted-command-execution (2026-11-28)
 
 - Second parser-based detector (`tainted-command-execution`,

@@ -83,10 +83,21 @@ member access on a tainted base, binary / logical /
 conditional expressions, template interpolations, array /
 object literals, `await`, unary `-` / `+` / `~`. `!`,
 `typeof`, `void`, `delete` cleanse (they produce a boolean
-or nothing, not the data). Return values of unknown calls
-are clean (an under-approximation — it trades missed
-findings for fewer false positives). Branch joins are OR:
-tainted on any path stays tainted.
+or nothing, not the data). Return values of known
+functions are computed: an identity wrapper propagates
+taint, a constant-returning wrapper does not, a wrapper
+returning a global source propagates it. Return values of
+unknown calls are tainted when any argument is tainted
+(an over-approximation, chain extended with
+`callee(...)`). A sanitizer call (`Number`, `parseInt`,
+`parseFloat`, `Boolean`, `Number.parseInt`,
+`Number.parseFloat`) returns clean — see
+`docs/sanitizer-modeling-v1.md`. Branch joins are OR:
+tainted on any path stays tainted. (Correction, round
+101: earlier versions of this doc said unknown-call
+returns were clean — that was wrong; the engine has
+always returned tainted for an unknown call with a
+tainted argument.)
 
 ## What the parser sees that a regex cannot — and what it cannot
 
@@ -100,27 +111,49 @@ tainted on any path stays tainted.
   to its sink. Reassigning the alias to a non-sink value
   clears it (`let l = yaml.load; l = 5; l(x)` is not a
   finding).
-- A wrapper function IS analyzed: `function parse(d) {
-  return yaml.load(d); }` flags the sink because `d` is a
-  parameter (a source by rule) — the detector does not
-  need to see the call site `parse(userInput)` to flag
-  it, and it does not claim the wrapper is reachable
-  from one.
+- A wrapper function IS analyzed through the call
+  graph (round 101): `function parse(d) {
+  return yaml.load(d); }` called as `parse(userInput)`
+  flags the sink with the cross-function chain
+  (`parameter 'req' of function 'handle' →
+  req.body → parameter 'd' of function 'parse'`), and
+  the fallback still flags the sink when the wrapper
+  is never called or called only with clean arguments —
+  then with the parameter chain only, and without
+  claiming the wrapper is reachable from a tainted
+  call. See `docs/inter-procedural-taint-v1.md`.
 
 ## Known limitations (documented, not hidden)
 
 - **JavaScript only.** A second language needs a second
   parser.
-- **Intra-procedural only.** Taint does not flow from a
-  call site into a callee, and a sink inside a helper is
-  flagged only because the helper's parameter is a source
-  by rule — not because the call graph was analyzed.
-- **No sanitizer modeling.** A `validate()` or allow-list
-  call does not cleanse taint; code that validates before
-  deserializing can still be flagged. The finding is
-  confidence `potential` for exactly this reason — the
-  operator triages it, and the validator's
-  `false_positive` verdict exists for exactly that.
+- **Inter-procedural (round 101).** Taint flows from a
+  call site into a callee, through return values, IIFEs,
+  and function aliases, on the shared engine
+  (`src/detection/taint-engine.js`); the chain proves
+  the flow. A sink inside a helper never called, or
+  called only with clean arguments, is still flagged
+  via the parameters-as-sources fallback. Remaining
+  limits: methods are not resolved through the call
+  graph (analyzed with parameters-as-sources when
+  their class is walked), no `this` modeling, and
+  when several flows reach one sink site the first
+  chain wins (see `docs/inter-procedural-taint-v1.md`).
+- **Sanitizer modeling (round 101).** `Number`,
+  `parseInt`, `parseFloat`, `Boolean`,
+  `Number.parseInt`, `Number.parseFloat` cleanse
+  taint — their return values cannot carry a string
+  payload. Encoding and content-preserving calls
+  (`encodeURIComponent`, `encodeURI`, `String`,
+  `JSON.stringify`, string methods) do NOT cleanse;
+  a user binding shadowing a sanitizer name disables
+  it. An unknown `validate()` is still not modeled,
+  so code that validates before deserializing can
+  still be flagged; the finding is confidence
+  `potential` for exactly this reason — the operator
+  triages it, and the validator's `false_positive`
+  verdict exists for exactly that. See
+  `docs/sanitizer-modeling-v1.md`.
 - **No import resolution.** A sink imported under its own
   name (`import { load } from 'js-yaml'`) is not resolved
   to `yaml.load`. Destructuring of a name already in scope
